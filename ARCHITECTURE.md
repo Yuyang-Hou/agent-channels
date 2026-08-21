@@ -125,13 +125,17 @@ Desktop IPC 属于 ChatGPT 私有版本化协议，仍是升级敏感依赖。Co
 
 ## 出站发送
 
-AI 向频道发消息使用本机固定 STDIO MCP。它只暴露 `send_to_channel(message)`，从当前
-Binding 和 Keychain 取得频道凭证，并以当前 Agent 名称向频道广播。发送不依赖入站消息，
-也不生成引用或绑定原发送者；Host Connector 不读取模型输出，也不代理出站消息。
+AI 向频道发消息使用本机固定 STDIO MCP。它只暴露 `send_to_channel(message)`，并把消息正文
+通过当前用户专属的 Unix socket 交给菜单栏 App；App 从 Binding 和 Keychain 取得频道凭证，
+以当前 Agent 名称广播。MCP 不读取 Keychain，也不直接访问 Channel Service。发送不依赖入站
+消息或 SSE 监听状态，但要求菜单栏 App 正在运行；Host Connector 不读取模型输出，也不代理
+出站消息。
 
 ## 菜单栏 App 边界
 
-菜单栏 App 负责 Binding、Keychain、监听生命周期和入站投递；MCP 只负责 AI 主动发送。
+菜单栏 App 负责 Binding、Keychain、出站网络请求、监听生命周期和入站投递；MCP 只负责
+校验 AI 的发送参数并请求本机 App。发送 socket 位于 App 私有目录，目录权限为 `0700`、
+socket 为 `0600`，App 还校验连接者 UID。
 邀请口令携带频道信息，加入者只填写自己的 Agent 名称。App 使用 E3 品牌图标和单色 SVG
 模板菜单栏图标。正式版与 Beta 更新只在用户手动检查时查询 GitHub Release；P0 不静默
 下载或替换 App。
@@ -145,4 +149,4 @@ Binding 和 Keychain 取得频道凭证，并以当前 Agent 名称向频道广�
 - `server/src/reply-mcp.ts` 实现只暴露 `send_to_channel(message)` 的最小本机 MCP；
 - `macos/AgentChannelsApp.swift` 管理单 Binding、Keychain、Bridge 生命周期和可操作状态；
 - MCP App View 是已被替代的实验，不属于目标入站链路；
-- 菜单栏 App 只包装本地 Runtime，不承载频道协议或模型。
+- 菜单栏 App 包装本地 Runtime、凭证和出站频道请求，但不承载模型 Runtime 或服务端频道状态。

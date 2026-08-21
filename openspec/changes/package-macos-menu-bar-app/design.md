@@ -7,10 +7,11 @@ Agent Channels.app (SwiftUI/AppKit)
   -> Keychain + local binding.json
   -> embedded agent-channels-bridge listen-here
   -> Channel SSE -> Codex Desktop IPC -> bound task
+  -> local send.sock -> Channel REST broadcast
 
 ChatGPT task
   -> fixed STDIO channel MCP
-  -> send_to_channel(message) -> Channel REST broadcast
+  -> send_to_channel(message) -> local send.sock (message only)
 ```
 
 菜单栏壳只管理配置、生命周期和状态；现有 Bridge 继续拥有 SSE、游标、过滤和 Host 投递。
@@ -21,10 +22,11 @@ sidecar 由 Bun 编译为自包含 Mach-O，避免重写已经验收的 TypeScri
 - Keychain：频道 token 与可选 owner password。
 - `binding.json`：版本、origin、channel、callsign、task id 和 Keychain locator；不含
   secret。
+- `send.sock`：App 运行期间存在的本机发送入口；父目录 `0700`、socket `0600`，仅接受同 UID。
 - `inbox.jsonl`：本机诊断与最近投递记录，不作为永久聊天历史。
 
 App 通过 stdin 把监听 secret 交给 sidecar；不得把 secret 放进 argv 或环境变量。STDIO MCP
-使用 Binding 中的 Keychain locator 在发送时读取 token。
+不读取 Keychain 或 Binding 中的凭证定位，只从 `--config` 路径推导同目录 `send.sock`。
 
 ## Binding And Preflight
 
@@ -37,10 +39,11 @@ ready。owner 缺失时提示用户在 ChatGPT 打开该 task 一次；协议不
 接收与发送是两条独立链路。App 订阅频道并把普通消息投递给绑定 task；入站正文继续标记为
 不可信外部输入，但不再创建 `reply_ref`，也不要求 AI 回复。
 
-固定 STDIO MCP 只暴露 `send_to_channel(message)`。工具从当前 Binding 和 Keychain 取得频道、
-callsign 与凭证，幂等加入后向 `all` 广播；模型不能提供 origin、token、session 或目标频道。
-明确失败可以重新发送；请求已发出但回执不确定时返回明确的“不确定”结果，并要求 AI 不自动
-重试，避免重复消息。该工具无需 App 正在监听，也不依赖之前收到过消息。
+固定 STDIO MCP 只暴露 `send_to_channel(message)`。MCP 把版本号与正文交给本机 App；App 从
+当前 Binding 和 Keychain 取得频道、callsign 与凭证，幂等加入后向 `all` 广播。模型和 MCP
+正文都不包含 origin、token、owner password 或 session。明确失败可以重新发送；请求交给 App
+后若回执不确定则返回明确的“不确定”结果，并阻止自动重试。该工具无需 App 开启 SSE 监听，
+也不依赖之前收到过消息，但菜单栏 App 必须运行。
 
 ## MCP Installation
 
@@ -73,6 +76,7 @@ App 使用 GitHub Release 公共 API 手动检查更新，不引入 updater 依�
 - 红色：凭证失效、协议不兼容或投递结果不确定。
 - 暂停关闭 SSE 但保留 Binding、Keychain 与游标。
 - mutating IPC 回执不确定时停止自动重放，并让用户选择跳过或重试。
+- SSE 临时断开时显示重连状态；重新连接成功必须清除该连接错误，不能保留过期警告。
 
 ## 暂定视觉方向：E3 传信鸽
 

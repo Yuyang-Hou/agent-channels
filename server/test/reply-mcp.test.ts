@@ -1,25 +1,17 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createReplyMcpHandler,
-  parseReplyMcpConfig,
   runChannelMcp,
-  type ReplyMcpConfig,
+  sendViaLocalApp,
+  type LocalSendResult,
 } from "../src/reply-mcp.js";
 
-function fixture(): ReplyMcpConfig {
-  return {
-    origin: "https://channels.example",
-    channel: "quiet-otter-3a8f",
-    callsign: "frontend",
-    keychainService: "Agent Channels",
-    keychainAccount: "binding-1",
-    ownerPasswordAccount: "binding-1-owner",
-  };
-}
+const closers: Array<() => Promise<void>> = [];
 
 function toolCall(message = "API is ready") {
   return {
@@ -33,42 +25,52 @@ function toolCall(message = "API is ready") {
   };
 }
 
-function joinResponse() {
-  return new Response(JSON.stringify({ session_id: "session-1" }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
+async function startLocalAppServer(
+  reply: (request: Record<string, unknown>) => Record<string, unknown>,
+): Promise<string> {
+  const directory = mkdtempSync(join(tmpdir(), "agent-channels-app-"));
+  const socketPath = join(directory, "send.sock");
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    let input = "";
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk) => {
+      input += chunk;
+      const newline = input.indexOf("\n");
+      if (newline < 0) return;
+      const request = JSON.parse(input.slice(0, newline)) as Record<string, unknown>;
+      socket.end(`${JSON.stringify(reply(request))}\n`);
+    });
   });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, () => {
+      server.off("error", reject);
+      chmodSync(socketPath, 0o600);
+      resolve();
+    });
+  });
+  closers.push(() => new Promise<void>((resolve) => {
+    for (const socket of sockets) socket.destroy();
+    server.close(() => resolve());
+  }));
+  return socketPath;
 }
 
-function sendResponse(id = 42) {
-  return new Response(JSON.stringify({ ok: true, id }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
-}
+afterEach(async () => {
+  await Promise.all(closers.splice(0).map((close) => close()));
+});
 
 describe("channel MCP", () => {
-  it("exposes only send_to_channel and broadcasts as the bound callsign", async () => {
-    const requests: Array<{ url: string; init?: RequestInit }> = [];
-    const fetchMock: typeof fetch = vi.fn(async (input, init) => {
-      requests.push({ url: String(input), init });
-      return requests.length === 1 ? joinResponse() : sendResponse();
-    }) as typeof fetch;
-    const readSecret = vi.fn((service: string, account: string) => {
-      expect(service).toBe("Agent Channels");
-      expect(account).toBe("binding-1");
-      return "channel-token";
-    });
-    const readOptionalSecret = vi.fn((service: string, account: string) => {
-      expect(service).toBe("Agent Channels");
-      expect(account).toBe("binding-1-owner");
-      return "owner-secret";
-    });
-    const handle = createReplyMcpHandler(fixture(), {
-      fetch: fetchMock,
-      readSecret,
-      readOptionalSecret,
-    });
+  it("exposes only send_to_channel and delegates message-only sends to the app", async () => {
+    const sendViaApp = vi.fn(async (): Promise<LocalSendResult> => ({
+      ok: true,
+      id: "42",
+      callsign: "frontend",
+    }));
+    const handle = createReplyMcpHandler({ sendViaApp });
 
     const listed = await handle({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     const tools = (listed?.result as { tools: Array<Record<string, unknown>> }).tools;
@@ -80,117 +82,45 @@ describe("channel MCP", () => {
     expect(JSON.stringify(tools[0])).not.toContain("reply_ref");
 
     const result = await handle(toolCall());
+    expect(sendViaApp).toHaveBeenCalledWith("API is ready");
     expect(result?.result).toMatchObject({
       content: [{ type: "text", text: "sent message #42 to all as frontend" }],
     });
-    expect(requests[0].url).toBe(
-      "https://channels.example/api/channels/quiet-otter-3a8f/join",
-    );
-    expect(JSON.parse(String(requests[0].init?.body))).toEqual({
-      callsign: "frontend",
-      owner_password: "owner-secret",
-    });
-    expect(requests[0].init?.headers).toMatchObject({ authorization: "Bearer channel-token" });
-    expect(JSON.parse(String(requests[1].init?.body))).toEqual({
-      to: "all",
-      message: "API is ready",
-    });
-    expect(requests[1].init?.headers).toMatchObject({ "x-session-id": "session-1" });
   });
 
-  it("validates message before accessing credentials or the network", async () => {
-    const readSecret = vi.fn(() => "token");
-    const fetchMock = vi.fn();
-    const handle = createReplyMcpHandler(fixture(), {
-      readSecret,
-      readOptionalSecret: () => undefined,
-      fetch: fetchMock as typeof fetch,
-    });
+  it("validates message before contacting the app", async () => {
+    const sendViaApp = vi.fn();
+    const handle = createReplyMcpHandler({ sendViaApp });
 
     const empty = await handle(toolCall(""));
     const tooLong = await handle(toolCall("x".repeat(8193)));
     expect(empty?.result).toMatchObject({ isError: true });
     expect(tooLong?.result).toMatchObject({ isError: true });
-    expect(readSecret).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sendViaApp).not.toHaveBeenCalled();
   });
 
-  it("omits owner_password when the binding has no owner password account", async () => {
-    const requests: RequestInit[] = [];
-    const fetchMock: typeof fetch = vi.fn(async (_input, init) => {
-      requests.push(init ?? {});
-      return requests.length === 1 ? joinResponse() : sendResponse();
-    }) as typeof fetch;
-    const readOptionalSecret = vi.fn(() => undefined);
-    const config = fixture();
-    delete config.ownerPasswordAccount;
-    const handle = createReplyMcpHandler(config, {
-      fetch: fetchMock,
-      readSecret: () => "token",
-      readOptionalSecret,
-    });
-
-    await handle(toolCall());
-    expect(readOptionalSecret).not.toHaveBeenCalled();
-    expect(JSON.parse(String(requests[0].body))).toEqual({ callsign: "frontend" });
-  });
-
-  it("allows retry after join fails because no message was sent", async () => {
-    let request = 0;
-    const fetchMock: typeof fetch = vi.fn(async () => {
-      request += 1;
-      if (request === 1) throw new Error("join connection reset");
-      return request === 2 ? joinResponse() : sendResponse(43);
-    }) as typeof fetch;
-    const handle = createReplyMcpHandler(fixture(), {
-      fetch: fetchMock,
-      readSecret: () => "token",
-      readOptionalSecret: () => undefined,
-    });
+  it("allows retry after a definitive app rejection", async () => {
+    const sendViaApp = vi.fn()
+      .mockResolvedValueOnce({ ok: false, outcome: "definitive", error: "channel join failed" })
+      .mockResolvedValueOnce({ ok: true, id: "43", callsign: "frontend" });
+    const handle = createReplyMcpHandler({ sendViaApp });
 
     const failed = await handle(toolCall());
     const retried = await handle(toolCall());
     expect(failed?.result).toMatchObject({ isError: true });
-    expect(JSON.stringify(failed)).toContain("join connection reset");
+    expect(JSON.stringify(failed)).toContain("channel join failed");
     expect(retried?.result).toMatchObject({
       content: [{ text: "sent message #43 to all as frontend" }],
     });
   });
 
-  it("allows retry after a definitive client-side send rejection", async () => {
-    let request = 0;
-    const fetchMock: typeof fetch = vi.fn(async () => {
-      request += 1;
-      if (request === 1 || request === 3) return joinResponse();
-      if (request === 2) return new Response(JSON.stringify({ error: "not joined" }), { status: 400 });
-      return sendResponse(44);
-    }) as typeof fetch;
-    const handle = createReplyMcpHandler(fixture(), {
-      fetch: fetchMock,
-      readSecret: () => "token",
-      readOptionalSecret: () => undefined,
-    });
-
-    const rejected = await handle(toolCall());
-    const retried = await handle(toolCall());
-    expect(rejected?.result).toMatchObject({ isError: true });
-    expect(JSON.stringify(rejected)).toContain("channel send failed: 400");
-    expect(retried?.result).toMatchObject({
-      content: [{ text: "sent message #44 to all as frontend" }],
-    });
-  });
-
-  it("blocks later sends after an uncertain send outcome", async () => {
-    const fetchMock: typeof fetch = vi.fn(async (input) => {
-      if (String(input).endsWith("/join")) return joinResponse();
-      throw new Error("connection reset");
-    }) as typeof fetch;
-    const readSecret = vi.fn(() => "token");
-    const handle = createReplyMcpHandler(fixture(), {
-      fetch: fetchMock,
-      readSecret,
-      readOptionalSecret: () => undefined,
-    });
+  it("blocks later sends after an unknown app outcome", async () => {
+    const sendViaApp = vi.fn(async (): Promise<LocalSendResult> => ({
+      ok: false,
+      outcome: "unknown",
+      error: "channel send outcome is unknown",
+    }));
+    const handle = createReplyMcpHandler({ sendViaApp });
 
     const uncertain = await handle(toolCall());
     const blocked = await handle(toolCall("different message"));
@@ -198,14 +128,40 @@ describe("channel MCP", () => {
     expect(JSON.stringify(uncertain)).toContain("outcome is unknown");
     expect(blocked?.result).toMatchObject({ isError: true });
     expect(JSON.stringify(blocked)).toContain("previous channel send outcome is unknown");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(readSecret).toHaveBeenCalledTimes(1);
+    expect(sendViaApp).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends only protocol version and message over the protected app socket", async () => {
+    let received: Record<string, unknown> | undefined;
+    const socketPath = await startLocalAppServer((request) => {
+      received = request;
+      return { version: 1, ok: true, id: "44", callsign: "frontend" };
+    });
+
+    const result = await sendViaLocalApp(socketPath, "backend ready");
+    expect(received).toEqual({ version: 1, message: "backend ready" });
+    expect(result).toEqual({ ok: true, id: "44", callsign: "frontend" });
+    expect(JSON.stringify(received)).not.toMatch(/token|password|origin|channel|callsign/i);
+  });
+
+  it("fails definitively before dispatch when the app socket is absent", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "agent-channels-missing-"));
+    const result = await sendViaLocalApp(join(directory, "send.sock"), "hello", 100);
+    expect(result).toMatchObject({ ok: false, outcome: "definitive" });
+    expect(JSON.stringify(result)).toContain("open it and retry");
+  });
+
+  it("treats an incompatible app response as unknown after dispatch", async () => {
+    const socketPath = await startLocalAppServer(() => ({ version: 2, ok: true }));
+    const result = await sendViaLocalApp(socketPath, "hello");
+    expect(result).toMatchObject({ ok: false, outcome: "unknown" });
+    expect(JSON.stringify(result)).toContain("incompatible");
   });
 
   it("speaks newline-delimited MCP JSON-RPC over stdio", async () => {
     const directory = mkdtempSync(join(tmpdir(), "agent-channels-mcp-"));
     const configPath = join(directory, "binding.json");
-    writeFileSync(configPath, JSON.stringify(fixture()));
+    writeFileSync(configPath, "{}");
     const input = Readable.from([
       `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" })}\n`,
       `${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`,
@@ -230,21 +186,5 @@ describe("channel MCP", () => {
     });
     expect(lines[1]).toEqual({ jsonrpc: "2.0", id: 2, result: {} });
     expect(lines[2].result.tools).toEqual([expect.objectContaining({ name: "send_to_channel" })]);
-  });
-
-  it("normalizes and validates binding config", () => {
-    const parsed = parseReplyMcpConfig({
-      origin: "https://channels.example/path",
-      channel: "quiet-otter-3a8f",
-      callsign: " Frontend ",
-      keychainService: "Agent Channels",
-      keychainAccount: "binding-1",
-      ownerPasswordAccount: "binding-1-owner",
-    });
-    expect(parsed.origin).toBe("https://channels.example");
-    expect(parsed.callsign).toBe("frontend");
-    expect(parsed.ownerPasswordAccount).toBe("binding-1-owner");
-    expect(() => parseReplyMcpConfig({ ...parsed, callsign: "all" })).toThrow();
-    expect(() => parseReplyMcpConfig({ ...parsed, ownerPasswordAccount: "" })).toThrow();
   });
 });

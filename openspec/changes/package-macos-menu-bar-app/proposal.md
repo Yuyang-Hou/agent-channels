@@ -16,6 +16,8 @@
   MCP 配置。ChatGPT 按官方流程在首次保存 MCP 后重启一次。
 - App 独立负责接收和投递；MCP 只暴露 `send_to_channel(message)`，AI 无需先收到消息即可向
   当前 Binding 的频道广播，也可以在收到消息后决定不发送。
+- MCP 只把消息正文经本机用户专属 Unix socket 交给 App；只有 App 读取 Keychain 并访问频道
+  服务，避免独立 MCP 进程反复触发 Keychain 密码授权。
 - 邀请口令直接携带创建者的频道；加入者只填写自己在频道中的 Agent 名称，不填写频道名。
 - App 明确展示频道、ChatGPT、task、发送工具和最近投递状态，只在需要人工处理时通知。
 - 使用现有 E3 传信鸽品牌图作为 App icon，并派生单色 SVG Template Image 作为菜单栏图标。

@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import Security
 import ServiceManagement
@@ -9,6 +10,23 @@ private let keychainService = "com.agentchannels.channel"
 private let managedConfigStart = "# >>> Agent Channels managed MCP >>>"
 private let managedConfigEnd = "# <<< Agent Channels managed MCP <<<"
 private let githubReleasesURL = URL(string: "https://api.github.com/repos/Yuyang-Hou/agent-channels/releases?per_page=100")!
+private let localSendProtocolVersion = 1
+private let maxChannelMessageLength = 8192
+private let maxLocalSendFrameBytes = 64 * 1024
+
+private func bridgeRecoveryClearsError(kind: String?, state: String) -> Bool {
+    (state == "joined" && ["join", "session", "rejoin"].contains(kind)) ||
+        (state == "connected" && kind == "connection") ||
+        (state == "delivered" && (kind == "connection" || kind == "delivery"))
+}
+
+private func isPendingBridgeDelivery(_ kind: String?) -> Bool {
+    kind == "delivery" || kind == "delivery_outcome_unknown"
+}
+
+private func bridgeErrorShouldReplace(current: String?, incoming: String?) -> Bool {
+    !isPendingBridgeDelivery(current) || isPendingBridgeDelivery(incoming)
+}
 
 struct ChannelBinding: Codable, Equatable {
     var origin: String
@@ -152,6 +170,7 @@ enum AppPaths {
     static let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Agent Channels", isDirectory: true)
     static let binding = support.appendingPathComponent("binding.json")
+    static let sendSocket = support.appendingPathComponent("send.sock")
     static let replies = support.appendingPathComponent("replies", isDirectory: true)
     static let codexDirectory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".codex", isDirectory: true)
@@ -166,6 +185,214 @@ enum AppPaths {
 
     static func prepare() throws {
         try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: support.path)
+    }
+}
+
+private struct LocalSendRequest: Decodable {
+    let version: Int
+    let message: String
+
+    static func decode(_ data: Data) throws -> LocalSendRequest {
+        let request = try JSONDecoder().decode(LocalSendRequest.self, from: data)
+        guard request.version == localSendProtocolVersion else {
+            throw AppFailure("本机发送协议版本不兼容")
+        }
+        guard !request.message.isEmpty else {
+            throw AppFailure("message must be a non-empty string")
+        }
+        guard request.message.utf16.count <= maxChannelMessageLength else {
+            throw AppFailure("message exceeds \(maxChannelMessageLength) characters")
+        }
+        return request
+    }
+}
+
+private struct LocalSendResponse: Encodable {
+    let version = localSendProtocolVersion
+    let ok: Bool
+    let id: String?
+    let callsign: String?
+    let outcome: String?
+    let error: String?
+
+    static func success(id: String, callsign: String) -> LocalSendResponse {
+        LocalSendResponse(ok: true, id: id, callsign: callsign, outcome: nil, error: nil)
+    }
+
+    static func failure(_ error: String, outcome: String = "definitive") -> LocalSendResponse {
+        LocalSendResponse(ok: false, id: nil, callsign: nil, outcome: outcome, error: error)
+    }
+}
+
+private enum ChannelSendFailure: LocalizedError {
+    case definitive(String)
+    case unknown(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .definitive(let message), .unknown(let message): return message
+        }
+    }
+}
+
+private final class LocalSendServer {
+    typealias Handler = @MainActor (String) async -> LocalSendResponse
+
+    private let socketURL: URL
+    private let handler: Handler
+    private let queue = DispatchQueue(label: "com.agentchannels.local-send", qos: .utility)
+    private var source: DispatchSourceRead?
+    private var ownsSocket = false
+
+    init(socketURL: URL, handler: @escaping Handler) {
+        self.socketURL = socketURL
+        self.handler = handler
+    }
+
+    func start() throws {
+        guard source == nil else { return }
+        try removeStaleSocket()
+
+        let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { throw posixFailure("无法创建本机发送 socket") }
+        do {
+            var address = try socketAddress()
+            let bound = withUnsafePointer(to: &address) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    Darwin.bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+                }
+            }
+            guard bound == 0 else { throw posixFailure("无法绑定本机发送 socket") }
+            ownsSocket = true
+            guard Darwin.chmod(socketURL.path, S_IRUSR | S_IWUSR) == 0 else {
+                throw posixFailure("无法保护本机发送 socket")
+            }
+            guard Darwin.listen(descriptor, 8) == 0 else { throw posixFailure("无法监听本机发送 socket") }
+
+            let source = DispatchSource.makeReadSource(fileDescriptor: descriptor, queue: queue)
+            source.setEventHandler { [weak self] in self?.accept(descriptor) }
+            source.setCancelHandler { Darwin.close(descriptor) }
+            self.source = source
+            source.resume()
+        } catch {
+            Darwin.close(descriptor)
+            if ownsSocket { _ = unlink(socketURL.path) }
+            ownsSocket = false
+            throw error
+        }
+    }
+
+    func stop() {
+        source?.cancel()
+        source = nil
+        if ownsSocket { _ = unlink(socketURL.path) }
+        ownsSocket = false
+    }
+
+    deinit { stop() }
+
+    private func accept(_ descriptor: Int32) {
+        let client = Darwin.accept(descriptor, nil, nil)
+        guard client >= 0 else { return }
+        var peerUID: uid_t = 0
+        var peerGID: gid_t = 0
+        guard getpeereid(client, &peerUID, &peerGID) == 0, peerUID == geteuid() else {
+            Darwin.close(client)
+            return
+        }
+        var enabled: Int32 = 1
+        _ = withUnsafePointer(to: &enabled) {
+            setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, $0, socklen_t(MemoryLayout<Int32>.size))
+        }
+        var timeout = timeval(tv_sec: 30, tv_usec: 0)
+        _ = withUnsafePointer(to: &timeout) {
+            setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, $0, socklen_t(MemoryLayout<timeval>.size))
+        }
+        queue.async { [weak self] in self?.readRequest(from: client) }
+    }
+
+    private func readRequest(from client: Int32) {
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while data.count <= maxLocalSendFrameBytes, data.firstIndex(of: 0x0A) == nil {
+            let count = buffer.withUnsafeMutableBytes {
+                Darwin.recv(client, $0.baseAddress, $0.count, 0)
+            }
+            guard count > 0 else { break }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        guard let newline = data.firstIndex(of: 0x0A), newline <= maxLocalSendFrameBytes else {
+            return Self.write(LocalSendResponse.failure("invalid local send request"), to: client)
+        }
+        let request: LocalSendRequest
+        do {
+            request = try LocalSendRequest.decode(data.subdata(in: data.startIndex..<newline))
+        } catch {
+            return Self.write(LocalSendResponse.failure(error.localizedDescription), to: client)
+        }
+        Task { @MainActor [weak self] in
+            guard let self else {
+                Darwin.close(client)
+                return
+            }
+            let response = await handler(request.message)
+            queue.async { Self.write(response, to: client) }
+        }
+    }
+
+    private static func write(_ response: LocalSendResponse, to client: Int32) {
+        defer { Darwin.close(client) }
+        guard var payload = try? JSONEncoder().encode(response) else { return }
+        payload.append(0x0A)
+        payload.withUnsafeBytes { bytes in
+            var sent = 0
+            while sent < bytes.count {
+                let count = Darwin.send(client, bytes.baseAddress?.advanced(by: sent), bytes.count - sent, 0)
+                if count <= 0 { return }
+                sent += count
+            }
+        }
+    }
+
+    private func removeStaleSocket() throws {
+        var info = stat()
+        guard lstat(socketURL.path, &info) == 0 else {
+            if errno == ENOENT { return }
+            throw posixFailure("无法检查本机发送 socket")
+        }
+        guard info.st_uid == geteuid(), info.st_mode & S_IFMT == S_IFSOCK else {
+            throw AppFailure("本机发送 socket 路径被非 socket 文件占用")
+        }
+        let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { throw posixFailure("无法探测本机发送 socket") }
+        defer { Darwin.close(descriptor) }
+        var address = try socketAddress()
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        if result == 0 { throw AppFailure("Agent Channels 已在运行") }
+        guard errno == ECONNREFUSED else { throw posixFailure("无法探测本机发送 socket") }
+        guard unlink(socketURL.path) == 0 else { throw posixFailure("无法清理旧的本机发送 socket") }
+    }
+
+    private func socketAddress() throws -> sockaddr_un {
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+        let path = Array(socketURL.path.utf8) + [0]
+        let capacity = MemoryLayout.size(ofValue: address.sun_path)
+        guard path.count <= capacity else { throw AppFailure("本机发送 socket 路径过长") }
+        withUnsafeMutableBytes(of: &address.sun_path) { destination in
+            destination.copyBytes(from: path)
+        }
+        return address
+    }
+
+    private func posixFailure(_ prefix: String) -> AppFailure {
+        AppFailure("\(prefix)：\(String(cString: strerror(errno)))")
     }
 }
 
@@ -379,7 +606,9 @@ final class AppModel: ObservableObject {
     private var listener: Process?
     private var listenerOutput: Pipe?
     private var listenerError: Pipe?
+    private var localSendServer: LocalSendServer?
     private var statusRemainder = ""
+    private var lastBridgeErrorKind: String?
     private var expectedStop = false
     private let defaults = UserDefaults.standard
 
@@ -392,6 +621,16 @@ final class AppModel: ObservableObject {
         refreshSendStatus()
         refreshLastDelivery()
         showSetup = binding == nil
+        do {
+            let server = LocalSendServer(socketURL: AppPaths.sendSocket) { [weak self] message in
+                guard let self else { return LocalSendResponse.failure("Agent Channels app is unavailable") }
+                return await self.sendFromLocalMCP(message)
+            }
+            try server.start()
+            localSendServer = server
+        } catch {
+            lastError = "本机发送服务启动失败：\(error.localizedDescription)"
+        }
         DispatchQueue.main.async { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -490,7 +729,7 @@ final class AppModel: ObservableObject {
             draftTask = "codex://threads/\(threadID)"
             chatGPTStatus = "可用"
             taskStatus = "已绑定 \(threadID.prefix(8))…"
-            lastError = ""
+            clearNonBridgeError()
             if var current = binding {
                 current.callsign = draftCallsign.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 current.codexThread = draftTask
@@ -504,7 +743,7 @@ final class AppModel: ObservableObject {
             } else {
                 taskStatus = "需重新绑定"
             }
-            lastError = text
+            setNonBridgeError(text)
             if showFailure { showNotice(title: "无法绑定 Codex task", message: text) }
             return false
         }
@@ -579,9 +818,14 @@ final class AppModel: ObservableObject {
             listenerOutput = output
             listenerError = error
             listenerRunning = true
-            if since != nil { uncertainMessageID = nil }
+            if since != nil {
+                uncertainMessageID = nil
+                lastError = ""
+                lastBridgeErrorKind = nil
+            } else {
+                clearNonBridgeError()
+            }
             networkStatus = "连接中"
-            lastError = ""
             defaults.set(true, forKey: "resumeListening")
             input.fileHandleForWriting.write(secrets)
             try? input.fileHandleForWriting.close()
@@ -634,43 +878,109 @@ final class AppModel: ObservableObject {
         busy = true
         defer { busy = false }
         do {
-            guard let token = try KeychainStore.get(service: current.keychainService, account: current.keychainAccount),
-                  !token.isEmpty else { throw AppFailure("Keychain 中没有频道 token") }
-            let owner = try KeychainStore.get(service: current.keychainService, account: current.ownerPasswordAccount)
-            var joinBody: [String: Any] = ["callsign": current.callsign]
-            if let owner, !owner.isEmpty { joinBody["owner_password"] = owner }
-
-            let base = "\(current.origin)/api/channels/\(current.channel.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? current.channel)"
-            var joinRequest = URLRequest(url: URL(string: "\(base)/join")!)
-            joinRequest.httpMethod = "POST"
-            joinRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            joinRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            joinRequest.httpBody = try JSONSerialization.data(withJSONObject: joinBody)
-            let (joinData, joinResponse) = try await URLSession.shared.data(for: joinRequest)
-            guard let joinHTTP = joinResponse as? HTTPURLResponse, (200..<300).contains(joinHTTP.statusCode),
-                  let joinJSON = try JSONSerialization.jsonObject(with: joinData) as? [String: Any],
-                  let session = joinJSON["session_id"] as? String else {
-                throw AppFailure(Self.httpError(data: joinData, response: joinResponse))
-            }
-
-            var sendRequest = URLRequest(url: URL(string: "\(base)/send")!)
-            sendRequest.httpMethod = "POST"
-            sendRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            sendRequest.setValue(session, forHTTPHeaderField: "X-Session-Id")
-            sendRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            sendRequest.httpBody = try JSONSerialization.data(withJSONObject: [
-                "to": "all",
-                "message": "\(current.callsign) 已加入 Agent Channels，正在进行连接验收。请回复一条确认消息。",
-            ])
-            let (sendData, sendResponse) = try await URLSession.shared.data(for: sendRequest)
-            guard let sendHTTP = sendResponse as? HTTPURLResponse, (200..<300).contains(sendHTTP.statusCode) else {
-                throw AppFailure(Self.httpError(data: sendData, response: sendResponse))
-            }
-            lastError = ""
+            _ = try await sendChannelMessage(
+                "\(current.callsign) 已加入 Agent Channels，正在进行连接验收。请回复一条确认消息。",
+                binding: current
+            )
+            clearNonBridgeError()
             showNotice(title: "测试招呼已发送", message: "另一台在线设备的绑定 task 应收到一条真实消息。")
         } catch {
             fail(error)
         }
+    }
+
+    private func sendFromLocalMCP(_ message: String) async -> LocalSendResponse {
+        guard let current = binding else {
+            return .failure("Agent Channels 尚未配置频道")
+        }
+        do {
+            let id = try await sendChannelMessage(message, binding: current)
+            clearNonBridgeError()
+            return .success(id: id, callsign: current.callsign)
+        } catch ChannelSendFailure.unknown(let message) {
+            setNonBridgeError(message)
+            return .failure(message, outcome: "unknown")
+        } catch {
+            let message = error.localizedDescription
+            setNonBridgeError(message)
+            return .failure(message)
+        }
+    }
+
+    private func sendChannelMessage(_ message: String, binding current: ChannelBinding) async throws -> String {
+        guard !message.isEmpty else { throw ChannelSendFailure.definitive("message must be a non-empty string") }
+        guard message.utf16.count <= maxChannelMessageLength else {
+            throw ChannelSendFailure.definitive("message exceeds \(maxChannelMessageLength) characters")
+        }
+
+        let token: String
+        let owner: String?
+        do {
+            guard let stored = try KeychainStore.get(service: current.keychainService, account: current.keychainAccount),
+                  !stored.isEmpty else { throw AppFailure("Keychain 中没有频道 token") }
+            token = stored
+            owner = try KeychainStore.get(service: current.keychainService, account: current.ownerPasswordAccount)
+        } catch {
+            throw ChannelSendFailure.definitive(error.localizedDescription)
+        }
+
+        var joinBody: [String: Any] = ["callsign": current.callsign]
+        if let owner, !owner.isEmpty { joinBody["owner_password"] = owner }
+        let encodedChannel = current.channel.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? current.channel
+        guard let base = URL(string: "\(current.origin)/api/channels/\(encodedChannel)") else {
+            throw ChannelSendFailure.definitive("频道地址无效")
+        }
+
+        var joinRequest = URLRequest(url: base.appendingPathComponent("join"))
+        joinRequest.httpMethod = "POST"
+        joinRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        joinRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        joinRequest.httpBody = try JSONSerialization.data(withJSONObject: joinBody)
+
+        let joinData: Data
+        let joinResponse: URLResponse
+        do {
+            (joinData, joinResponse) = try await URLSession.shared.data(for: joinRequest)
+        } catch {
+            throw ChannelSendFailure.definitive("频道加入失败：\(error.localizedDescription)")
+        }
+        guard let joinHTTP = joinResponse as? HTTPURLResponse, (200..<300).contains(joinHTTP.statusCode),
+              let joinJSON = try? JSONSerialization.jsonObject(with: joinData) as? [String: Any],
+              let session = joinJSON["session_id"] as? String else {
+            throw ChannelSendFailure.definitive(Self.httpError(data: joinData, response: joinResponse))
+        }
+
+        var sendRequest = URLRequest(url: base.appendingPathComponent("send"))
+        sendRequest.httpMethod = "POST"
+        sendRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        sendRequest.setValue(session, forHTTPHeaderField: "X-Session-Id")
+        sendRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        sendRequest.httpBody = try JSONSerialization.data(withJSONObject: ["to": "all", "message": message])
+
+        let sendData: Data
+        let sendResponse: URLResponse
+        do {
+            (sendData, sendResponse) = try await URLSession.shared.data(for: sendRequest)
+        } catch {
+            throw ChannelSendFailure.unknown("频道发送结果未知：\(error.localizedDescription)")
+        }
+        guard let sendHTTP = sendResponse as? HTTPURLResponse else {
+            throw ChannelSendFailure.unknown("频道发送结果未知：响应无效")
+        }
+        guard (200..<300).contains(sendHTTP.statusCode) else {
+            let message = Self.httpError(data: sendData, response: sendResponse)
+            if sendHTTP.statusCode >= 500 {
+                throw ChannelSendFailure.unknown("频道发送结果未知：\(message)")
+            }
+            throw ChannelSendFailure.definitive(message)
+        }
+        guard let body = try? JSONSerialization.jsonObject(with: sendData) as? [String: Any],
+              body["ok"] as? Bool == true else {
+            throw ChannelSendFailure.unknown("频道发送结果未知：服务端未返回有效回执")
+        }
+        if let id = body["id"] as? String, !id.isEmpty { return id }
+        if let id = body["id"] as? NSNumber { return id.stringValue }
+        throw ChannelSendFailure.unknown("频道发送结果未知：服务端回执缺少消息 ID")
     }
 
     func enableSending() {
@@ -680,7 +990,7 @@ final class AppModel: ObservableObject {
         }
         let alert = NSAlert()
         alert.messageText = "启用 AI 发送？"
-        alert.informativeText = "Agent Channels 将只在 ~/.codex/config.toml 的受管理标记区块中添加固定 STDIO MCP。它只提供 send_to_channel(message)，频道密钥仍保存在 Keychain。启用后需要完全重启 ChatGPT。"
+        alert.informativeText = "Agent Channels 将只在 ~/.codex/config.toml 的受管理标记区块中添加固定 STDIO MCP。它只提供 send_to_channel(message)，并通过本机 App 发送；频道密钥不会交给 MCP。启用后需要完全重启 ChatGPT。"
         alert.addButton(withTitle: "启用并写入配置")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -798,6 +1108,7 @@ final class AppModel: ObservableObject {
             sendStatus = "未启用"
             lastDelivery = "暂无"
             lastError = ""
+            lastBridgeErrorKind = nil
             uncertainMessageID = nil
             launchAtLogin = false
             showNotice(title: "本机配置已移除", message: "请完全退出并重新打开 ChatGPT，使 MCP 配置变更生效。")
@@ -817,7 +1128,9 @@ final class AppModel: ObservableObject {
         statusRemainder = lines.last ?? ""
         for line in lines.dropLast() {
             guard line.hasPrefix("@agent-channels ") else {
-                if line.localizedCaseInsensitiveContains("error") { lastError = line }
+                if line.localizedCaseInsensitiveContains("error"), !isPendingBridgeDelivery(lastBridgeErrorKind) {
+                    lastError = line
+                }
                 continue
             }
             let payload = String(line.dropFirst("@agent-channels ".count))
@@ -826,13 +1139,27 @@ final class AppModel: ObservableObject {
                   let state = json["state"] as? String else { continue }
             let detail = (json["error"] as? String) ?? (json["message"] as? String) ?? ""
             switch state {
-            case "joined": networkStatus = "已加入"
+            case "joined":
+                networkStatus = "已加入"
+                if bridgeRecoveryClearsError(kind: lastBridgeErrorKind, state: state) {
+                    lastError = ""
+                    lastBridgeErrorKind = nil
+                }
             case "connecting": networkStatus = "连接中"
-            case "connected": networkStatus = "已连接"
+            case "connected":
+                networkStatus = "已连接"
+                if bridgeRecoveryClearsError(kind: lastBridgeErrorKind, state: state) {
+                    lastError = ""
+                    lastBridgeErrorKind = nil
+                }
             case "delivered":
                 networkStatus = "已连接"
                 chatGPTStatus = "可用"
                 uncertainMessageID = nil
+                if bridgeRecoveryClearsError(kind: lastBridgeErrorKind, state: state) {
+                    lastError = ""
+                    lastBridgeErrorKind = nil
+                }
                 if let id = Self.messageID(json) {
                     recordDelivery(id: id)
                 } else {
@@ -842,13 +1169,17 @@ final class AppModel: ObservableObject {
             case "error":
                 let kind = json["kind"] as? String
                 if kind == "delivery_outcome_unknown", let id = Self.messageID(json) {
+                    lastBridgeErrorKind = kind
                     uncertainMessageID = id
                     defaults.set(false, forKey: "resumeListening")
                     networkStatus = "待人工确认"
                     lastError = "消息 #\(id) 的投递结果不确定。请检查目标 task 后选择重试或跳过。"
                     continue
                 }
-                lastError = detail.nilIfEmpty ?? "Bridge 报告未知错误"
+                if bridgeErrorShouldReplace(current: lastBridgeErrorKind, incoming: kind) {
+                    lastBridgeErrorKind = kind
+                    lastError = detail.nilIfEmpty ?? "Bridge 报告未知错误"
+                }
                 if detail.localizedCaseInsensitiveContains("codex") ||
                     detail.localizedCaseInsensitiveContains("chatgpt") ||
                     detail.localizedCaseInsensitiveContains("ipc") ||
@@ -1004,8 +1335,19 @@ final class AppModel: ObservableObject {
     }
 
     private func fail(_ error: Error) {
-        lastError = error.localizedDescription
+        setNonBridgeError(error.localizedDescription)
         showNotice(title: "Agent Channels", message: error.localizedDescription)
+    }
+
+    private func clearNonBridgeError() {
+        guard lastBridgeErrorKind == nil else { return }
+        lastError = ""
+    }
+
+    private func setNonBridgeError(_ message: String) {
+        guard !isPendingBridgeDelivery(lastBridgeErrorKind) else { return }
+        lastError = message
+        lastBridgeErrorKind = nil
     }
 
     private func showNotice(title: String, message: String) {
@@ -1263,6 +1605,35 @@ struct AgentChannelsSelfTest {
         precondition(ReleaseVersion("0.2.0-beta.10")! < ReleaseVersion("0.2.0")!)
         precondition(ReleaseVersion("0.1.9")! < ReleaseVersion("0.2.0-beta.1")!)
         precondition(ReleaseVersion("0.2") == nil)
+        let localRequest = try LocalSendRequest.decode(Data(#"{"version":1,"message":"hello"}"#.utf8))
+        precondition(localRequest.message == "hello")
+        let unicodeRequest = try JSONSerialization.data(withJSONObject: [
+            "version": localSendProtocolVersion,
+            "message": String(repeating: "猫", count: maxChannelMessageLength),
+        ])
+        precondition(unicodeRequest.count < maxLocalSendFrameBytes)
+        let decodedUnicodeRequest = try LocalSendRequest.decode(unicodeRequest)
+        precondition(decodedUnicodeRequest.message.utf16.count == maxChannelMessageLength)
+        precondition(bridgeRecoveryClearsError(kind: "connection", state: "connected"))
+        precondition(!bridgeRecoveryClearsError(kind: "delivery", state: "connected"))
+        precondition(bridgeRecoveryClearsError(kind: "delivery", state: "delivered"))
+        precondition(!bridgeErrorShouldReplace(current: "delivery", incoming: "connection"))
+        precondition(bridgeErrorShouldReplace(current: "connection", incoming: "delivery"))
+
+        let socketDirectory = URL(fileURLWithPath: "/private/tmp/ac-\(getpid())", isDirectory: true)
+        try FileManager.default.createDirectory(at: socketDirectory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: socketDirectory) }
+        let socketURL = socketDirectory.appendingPathComponent("send.sock")
+        let firstServer = LocalSendServer(socketURL: socketURL) { _ in .failure("unused") }
+        try firstServer.start()
+        let secondServer = LocalSendServer(socketURL: socketURL) { _ in .failure("unused") }
+        do {
+            try secondServer.start()
+            preconditionFailure("second local send server unexpectedly replaced the first")
+        } catch {
+            precondition(FileManager.default.fileExists(atPath: socketURL.path))
+        }
+        firstServer.stop()
         print("macos self-test ok")
     }
 }

@@ -9,7 +9,8 @@
 
 该 change 把已验证的 Codex 投递链路定义为第一个 Host Connector，确保频道服务、
 订阅恢复与消息语义不依赖 Codex。方案、运行时代码边界和无需 daemon/env 的 Desktop
-IPC Connector 已完成，下一步只做公网回归及双用户、双设备验收；不增加其他 Host 实现。
+IPC Connector 已完成。当前先完成“发送凭证只由菜单栏 App 持有”和断线恢复状态修复，再构建
+下一版验收包并做公网回归及双用户、双设备验收；不增加其他 Host 实现。
 
 产品权威按以下顺序读取：
 

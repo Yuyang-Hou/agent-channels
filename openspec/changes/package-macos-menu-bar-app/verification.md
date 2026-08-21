@@ -39,3 +39,17 @@ SHA-256 b53a7b07c0d6246df83f2c1580d971605f5cf54711a640975ff81c2d5c32cf3f
 
 These items remain unchecked in `tasks.md`; this public prerelease is an ad-hoc acceptance candidate,
 not a notarized production release.
+
+## Unreleased Source Verification
+
+The next Beta source removes direct Keychain and Channel REST access from the STDIO MCP. It sends only
+`{version, message}` through an owner-only Unix socket to the menu bar App, which performs the authorized
+network request. Focused tests cover successful receipts, definitive pre-dispatch failures, incompatible
+responses as unknown outcomes, and duplicate-prevention blocking. The App also clears a transient SSE
+connection error after a confirmed reconnect.
+
+- `npm test`: 10 files, 72 tests passed.
+- `npm run typecheck` and `npm run build`: passed.
+- Swift `-typecheck -warnings-as-errors` and the focused source self-test: passed.
+- `openspec validate --strict --all`: 3 items passed.
+- No replacement App or DMG has been built yet.

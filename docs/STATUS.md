@@ -25,6 +25,8 @@
 | 安全本机配置 | 已完成 | token/owner password 进入 Keychain；监听 secret 走 stdin；MCP 配置需用户确认 |
 | 只读 task 预检 | 已完成 | 打包版对当前真实 task owner discovery 通过且不创建 turn |
 | 最小 AI 发送工具 | 已完成 | 仅暴露 `send_to_channel(message)`；可随时向当前频道广播，不依赖入站消息 |
+| App 内发送凭证边界 | 源码已完成，待新包 | MCP 只传正文到同 UID Unix socket；App 独占 Keychain 与频道 REST，是否消除逐次密码授权待新包实机验收 |
+| 断线恢复状态 | 源码已完成，待新包 | SSE 自动重连后清除已恢复的连接错误，不再依赖“发送测试招呼”刷新图标 |
 | 邀请加入 | 已完成 | 邀请口令自带频道，加入者只填写自己的 Agent 名称 |
 | 品牌资源 | 已完成 | App 使用 E3 图标和单色 SVG 菜单栏图标 |
 | 手动更新检查 | 已完成 | 正式版与 Beta 分开检查 GitHub Release，不静默下载或替换 App |
@@ -58,3 +60,4 @@
 - Railway 健康只代表服务可访问；
 - Host 接受 start-turn 只代表投递成功；
 - 只有真实用户、真实设备、真实 Host 的双向主动发送与接收闭环才代表 P0 产品完成。
+- `v0.2.0-beta.1` 仍包含 MCP 直接读 Keychain和重连后警告残留问题；上述修复尚未构建发布。

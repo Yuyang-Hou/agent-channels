@@ -1,20 +1,13 @@
-import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { lstatSync } from "node:fs";
+import { createConnection } from "node:net";
+import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 
 const PROTOCOL_VERSION = "2025-03-26";
+const LOCAL_SEND_PROTOCOL_VERSION = 1;
 const MAX_MESSAGE_LENGTH = 8192;
-const CALLSIGN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
-
-export type ReplyMcpConfig = {
-  origin: string;
-  channel: string;
-  callsign: string;
-  keychainService: string;
-  keychainAccount: string;
-  ownerPasswordAccount?: string;
-};
+const MAX_LOCAL_RESPONSE_BYTES = 16 * 1024;
 
 type JsonRpcRequest = {
   jsonrpc: "2.0";
@@ -33,12 +26,7 @@ type JsonRpcResponse = {
 type InputStream = NodeJS.ReadableStream & AsyncIterable<string | Buffer>;
 
 export type ReplyMcpDependencies = {
-  fetch?: typeof globalThis.fetch;
-  readSecret?: (service: string, account: string) => string | Promise<string>;
-  readOptionalSecret?: (
-    service: string,
-    account: string,
-  ) => string | undefined | Promise<string | undefined>;
+  sendViaApp?: (message: string) => Promise<LocalSendResult>;
   input?: InputStream;
   output?: { write(chunk: string): unknown };
   error?: { write(chunk: string): unknown };
@@ -46,6 +34,10 @@ export type ReplyMcpDependencies = {
 
 class ExplicitSendError extends Error {}
 class UnknownSendOutcomeError extends Error {}
+
+export type LocalSendResult =
+  | { ok: true; id: string; callsign: string }
+  | { ok: false; outcome: "definitive" | "unknown"; error: string };
 
 const TOOL = {
   name: "send_to_channel",
@@ -67,95 +59,105 @@ const TOOL = {
   },
 };
 
-function assertString(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`${field} must be a non-empty string`);
-  }
-  return value;
+function failure(error: string, outcome: "definitive" | "unknown"): LocalSendResult {
+  return { ok: false, outcome, error };
 }
 
-export function parseReplyMcpConfig(value: unknown): ReplyMcpConfig {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("reply MCP config must be a JSON object");
-  }
-  const raw = value as Record<string, unknown>;
-  const config: ReplyMcpConfig = {
-    origin: assertString(raw.origin, "origin"),
-    channel: assertString(raw.channel, "channel"),
-    callsign: assertString(raw.callsign, "callsign").trim().toLowerCase(),
-    keychainService: assertString(raw.keychainService, "keychainService"),
-    keychainAccount: assertString(raw.keychainAccount, "keychainAccount"),
-    ...(raw.ownerPasswordAccount === undefined
-      ? {}
-      : { ownerPasswordAccount: assertString(raw.ownerPasswordAccount, "ownerPasswordAccount") }),
-  };
-  const origin = new URL(config.origin);
-  if (origin.protocol !== "https:" && origin.protocol !== "http:") {
-    throw new Error("origin must use http or https");
-  }
-  config.origin = origin.origin;
-  if (!CALLSIGN.test(config.callsign) || config.callsign === "all") {
-    throw new Error("callsign is invalid");
-  }
-  return config;
-}
-
-export function readMacOSKeychainSecret(service: string, account: string): string {
-  if (process.platform !== "darwin") {
-    throw new Error("Agent Channels Keychain credentials require macOS");
-  }
+function secureAppSocket(path: string): boolean {
+  if (process.platform === "win32") return false;
+  const uid = process.getuid?.();
+  if (uid === undefined) return false;
   try {
-    const value = execFileSync(
-      "/usr/bin/security",
-      ["find-generic-password", "-s", service, "-a", account, "-w"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    ).replace(/[\r\n]+$/, "");
-    if (!value) throw new Error("empty credential");
-    return value;
+    const socket = lstatSync(path);
+    const parent = lstatSync(dirname(path));
+    return socket.isSocket()
+      && socket.uid === uid
+      && (socket.mode & 0o077) === 0
+      && parent.isDirectory()
+      && parent.uid === uid
+      && (parent.mode & 0o077) === 0;
   } catch {
-    throw new Error("Could not read Agent Channels credential from macOS Keychain");
+    return false;
   }
 }
 
-export function readMacOSKeychainOptionalSecret(
-  service: string,
-  account: string,
-): string | undefined {
-  if (process.platform !== "darwin") {
-    throw new Error("Agent Channels Keychain credentials require macOS");
+function parseLocalSendResult(value: unknown): LocalSendResult | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const result = value as Record<string, unknown>;
+  if (result.version !== LOCAL_SEND_PROTOCOL_VERSION || typeof result.ok !== "boolean") return undefined;
+  if (result.ok) {
+    if ((typeof result.id !== "string" && typeof result.id !== "number")
+      || typeof result.callsign !== "string" || !result.callsign) return undefined;
+    return { ok: true, id: String(result.id), callsign: result.callsign };
   }
-  try {
-    const value = execFileSync(
-      "/usr/bin/security",
-      ["find-generic-password", "-s", service, "-a", account, "-w"],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    ).replace(/[\r\n]+$/, "");
-    return value || undefined;
-  } catch (error) {
-    if ((error as { status?: number }).status === 44) return undefined;
-    throw new Error("Could not read Agent Channels credential from macOS Keychain");
-  }
+  if ((result.outcome !== "definitive" && result.outcome !== "unknown")
+    || typeof result.error !== "string" || !result.error) return undefined;
+  return { ok: false, outcome: result.outcome, error: result.error };
 }
 
-function responseMessage(response: Response): string {
-  return `${response.status}${response.statusText ? ` ${response.statusText}` : ""}`;
-}
-
-async function responseJson(response: Response): Promise<Record<string, unknown>> {
-  const value = await response.json();
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("response was not a JSON object");
+export function sendViaLocalApp(
+  socketPath: string,
+  message: string,
+  timeoutMs = 30_000,
+): Promise<LocalSendResult> {
+  if (!secureAppSocket(socketPath)) {
+    return Promise.resolve(failure("Agent Channels app is not running; open it and retry", "definitive"));
   }
-  return value as Record<string, unknown>;
+  return new Promise((resolveResult) => {
+    const socket = createConnection(socketPath);
+    let dispatched = false;
+    let settled = false;
+    let response = Buffer.alloc(0);
+    const finish = (result: LocalSendResult) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolveResult(result);
+    };
+    const transportFailure = (detail: string) => {
+      finish(dispatched
+        ? failure(`Agent Channels app send outcome is unknown: ${detail}`, "unknown")
+        : failure(`Could not connect to Agent Channels app: ${detail}`, "definitive"));
+    };
+    socket.setTimeout(timeoutMs, () => transportFailure("timed out"));
+    socket.once("connect", () => {
+      dispatched = true;
+      socket.write(`${JSON.stringify({ version: LOCAL_SEND_PROTOCOL_VERSION, message })}\n`, (error) => {
+        if (error) transportFailure(error.message);
+      });
+    });
+    socket.on("data", (chunk) => {
+      response = response.length === 0 ? chunk : Buffer.concat([response, chunk]);
+      if (response.length > MAX_LOCAL_RESPONSE_BYTES) {
+        transportFailure("response exceeded the supported size");
+        return;
+      }
+      const newline = response.indexOf(0x0a);
+      if (newline < 0) return;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(response.subarray(0, newline).toString("utf8"));
+      } catch {
+        transportFailure("response was not valid JSON");
+        return;
+      }
+      const result = parseLocalSendResult(parsed);
+      if (!result) transportFailure("response was incompatible");
+      else finish(result);
+    });
+    socket.once("error", (error) => transportFailure(error.message));
+    socket.once("close", () => {
+      if (!settled) transportFailure("connection closed before a receipt");
+    });
+  });
 }
 
 export function createReplyMcpHandler(
-  config: ReplyMcpConfig,
   dependencies: ReplyMcpDependencies = {},
 ): (request: unknown) => Promise<JsonRpcResponse | null> {
-  const fetchImpl = dependencies.fetch ?? globalThis.fetch;
-  const readSecret = dependencies.readSecret ?? readMacOSKeychainSecret;
-  const readOptionalSecret = dependencies.readOptionalSecret ?? readMacOSKeychainOptionalSecret;
+  const sendViaApp = dependencies.sendViaApp ?? (() => Promise.resolve(
+    failure("Agent Channels app sender is not configured", "definitive"),
+  ));
   let outcomeUnknown = false;
 
   const send = async (args: Record<string, unknown>): Promise<string> => {
@@ -172,80 +174,21 @@ export function createReplyMcpHandler(
       throw new ExplicitSendError(`message exceeds ${MAX_MESSAGE_LENGTH} characters`);
     }
 
-    let token: string;
-    let ownerPassword: string | undefined;
+    let result: LocalSendResult;
     try {
-      token = await readSecret(config.keychainService, config.keychainAccount);
-      if (!token) throw new Error("Keychain credential is empty");
-      if (config.ownerPasswordAccount) {
-        ownerPassword = await readOptionalSecret(config.keychainService, config.ownerPasswordAccount);
-      }
-    } catch (error) {
-      throw new ExplicitSendError((error as Error).message);
-    }
-
-    const channelPath = encodeURIComponent(config.channel);
-    let sessionId: string;
-    try {
-      const response = await fetchImpl(`${config.origin}/api/channels/${channelPath}/join`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          callsign: config.callsign,
-          ...(ownerPassword ? { owner_password: ownerPassword } : {}),
-        }),
-      });
-      if (!response.ok) {
-        throw new Error(`channel join failed: ${responseMessage(response)}`);
-      }
-      const body = await responseJson(response);
-      sessionId = assertString(body.session_id, "join session_id");
-    } catch (error) {
-      // Join is safe to retry: the channel message has not been sent yet.
-      throw new ExplicitSendError((error as Error).message);
-    }
-
-    let sendResponse: Response;
-    try {
-      sendResponse = await fetchImpl(`${config.origin}/api/channels/${channelPath}/send`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-          "x-session-id": sessionId,
-        },
-        body: JSON.stringify({ to: "all", message }),
-      });
-    } catch (error) {
-      // A network error can happen after the server accepted the mutation.
-      outcomeUnknown = true;
-      throw new UnknownSendOutcomeError(`channel send outcome is unknown: ${(error as Error).message}`);
-    }
-
-    if (!sendResponse.ok) {
-      const error = new Error(`channel send failed: ${responseMessage(sendResponse)}`);
-      if (sendResponse.status >= 500) {
-        outcomeUnknown = true;
-        throw new UnknownSendOutcomeError(`channel send outcome is unknown: ${error.message}`);
-      }
-      throw new ExplicitSendError(error.message);
-    }
-
-    let sendBody: Record<string, unknown>;
-    try {
-      sendBody = await responseJson(sendResponse);
-      if (sendBody.ok !== true || (typeof sendBody.id !== "number" && typeof sendBody.id !== "string")) {
-        throw new Error("send response did not contain a receipt");
-      }
+      result = await sendViaApp(message);
     } catch (error) {
       outcomeUnknown = true;
-      throw new UnknownSendOutcomeError(`channel send outcome is unknown: ${(error as Error).message}`);
+      throw new UnknownSendOutcomeError(
+        `Agent Channels app send outcome is unknown: ${(error as Error).message}`,
+      );
     }
-
-    return `sent message #${String(sendBody.id)} to all as ${config.callsign}`;
+    if (!result.ok) {
+      if (result.outcome === "definitive") throw new ExplicitSendError(result.error);
+      outcomeUnknown = true;
+      throw new UnknownSendOutcomeError(result.error);
+    }
+    return `sent message #${result.id} to all as ${result.callsign}`;
   };
 
   return async (raw: unknown): Promise<JsonRpcResponse | null> => {
@@ -312,10 +255,6 @@ export function createReplyMcpHandler(
   };
 }
 
-function loadConfig(path: string): ReplyMcpConfig {
-  return parseReplyMcpConfig(JSON.parse(readFileSync(path, "utf8")));
-}
-
 export async function runChannelMcp(
   argv: string[],
   dependencies: ReplyMcpDependencies = {},
@@ -343,9 +282,11 @@ export async function runChannelMcp(
     return 2;
   }
 
-  let config: ReplyMcpConfig;
+  let socketPath: string;
   try {
-    config = loadConfig(configPath);
+    const bindingPath = resolve(configPath);
+    if (!lstatSync(bindingPath).isFile()) throw new Error("binding path is not a file");
+    socketPath = join(dirname(bindingPath), "send.sock");
   } catch (error) {
     errorOutput.write(`channel-mcp: invalid config: ${(error as Error).message}\n`);
     return 2;
@@ -353,7 +294,10 @@ export async function runChannelMcp(
 
   const input = dependencies.input ?? (process.stdin as InputStream);
   const output = dependencies.output ?? process.stdout;
-  const handle = createReplyMcpHandler(config, dependencies);
+  const handle = createReplyMcpHandler({
+    ...dependencies,
+    sendViaApp: dependencies.sendViaApp ?? ((message) => sendViaLocalApp(socketPath, message)),
+  });
   const lines = createInterface({ input, crlfDelay: Infinity });
   for await (const line of lines) {
     if (!line.trim()) continue;

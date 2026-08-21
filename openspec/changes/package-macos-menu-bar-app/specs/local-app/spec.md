@@ -34,7 +34,13 @@ Binding 文件或模型正文中。
 
 - **GIVEN** 目标 AI 获得频道发送工具
 - **WHEN** AI 调用 `send_to_channel`
-- **THEN** 模型只提供文本，工具自行从 Binding 与 Keychain 取得频道和凭证
+- **THEN** 模型与 MCP 只把文本交给本机 App，由 App 从 Binding 与 Keychain 取得频道和凭证
+
+#### Scenario: 本机发送隔离
+
+- **GIVEN** 菜单栏 App 正在运行
+- **WHEN** MCP 连接本机发送入口
+- **THEN** 入口位于权限为 `0700` 的用户目录、socket 权限为 `0600`，且 App 只接受同 UID
 
 ### Requirement: 无副作用预检
 
@@ -68,6 +74,12 @@ App MUST 只在用户显式确认后安装固定 STDIO MCP，并且 MCP MUST 只
 - **GIVEN** AI 尚未从频道收到任何消息
 - **WHEN** AI 调用 `send_to_channel` 并提供非空文本
 - **THEN** 工具以当前 callsign 向当前频道广播且不暴露本机凭证
+
+#### Scenario: App 未运行
+
+- **GIVEN** 菜单栏 App 未运行或本机发送 socket 不安全
+- **WHEN** AI 调用 `send_to_channel`
+- **THEN** MCP 在向频道发出请求前明确失败并提示打开 App，允许用户安全重试
 
 #### Scenario: 发送回执不确定
 
@@ -141,3 +153,9 @@ App MUST 区分连接中、可用、需要重新绑定、授权失败和投递�
 - **GIVEN** 本机存在可能冲突的旧 daemon 环境设置
 - **WHEN** App 诊断连接失败
 - **THEN** App 解释并提供显式修复步骤，不静默修改环境变量
+
+#### Scenario: 临时频道断线后恢复
+
+- **GIVEN** SSE 连接临时关闭并产生连接错误
+- **WHEN** Bridge 自动重连并再次报告 `connected`
+- **THEN** App 恢复绿色连接状态并清除已经恢复的连接错误，不要求用户发送测试消息

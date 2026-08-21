@@ -42,6 +42,8 @@ App 图标使用 E3 品牌稿；菜单栏使用同一识别特征的单色 SVG�
 
 - 非秘密 Binding：`~/Library/Application Support/Agent Channels/binding.json`
 - 频道 token / owner password：macOS Keychain
+- 下一 Beta 源码的本机发送入口：同目录 `send.sock`（目录 `0700`、socket `0600`、仅同 UID）；
+  MCP 只传消息正文，由 App 读取 Keychain 并访问频道服务；当前公开的 `v0.2.0-beta.1` 尚不包含此改动
 - AI 发送配置：用户确认后，只维护 `~/.codex/config.toml` 中
   `Agent Channels managed MCP` 标记区块
 

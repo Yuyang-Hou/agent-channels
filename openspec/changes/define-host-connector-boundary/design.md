@@ -86,8 +86,9 @@ steer-turn 与 start-turn 的协议版本和响应形状。缺少 owner 或明�
 ## 出站发送
 
 出站与入站独立。菜单栏 App 和 Subscription Runtime 负责持续接收与投递；本机 STDIO MCP
-只暴露 `send_to_channel(message)`，从当前 Binding 与 Keychain 取得频道凭证并广播。AI 无需
-先收到消息即可调用，收到消息也不要求回复；Host Connector 不读取模型输出或代理发送。
+只暴露 `send_to_channel(message)`，并把正文经用户专属本机 socket 交给 App。只有 App 从当前
+Binding 与 Keychain 取得频道凭证并广播。AI 无需先收到消息即可调用，收到消息也不要求回复；
+Host Connector 不读取模型输出或代理发送。
 
 ## 演进路径
 
