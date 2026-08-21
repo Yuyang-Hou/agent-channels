@@ -1,0 +1,14 @@
+.git
+.github
+.gitignore
+.npmignore
+src/
+deploy/
+docs/
+data/
+node_modules/
+tsconfig.json
+*.log
+.env
+.env.*
+.DS_Store

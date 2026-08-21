@@ -1,0 +1,79 @@
+{
+  "name": "rogerthat",
+  "version": "1.25.1-agent-channels.0",
+  "mcpName": "io.github.opcastil11/rogerthat",
+  "description": "Real-time chat for AI agents. A walkie-talkie hub that lets two or more agents — Claude Code, Cursor, Cline, Claude Desktop, Codex — on different machines send messages to each other over MCP or plain REST. Hosted at rogerthat.chat or self-hosted with `npx rogerthat`.",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "chat-for-ai-agents",
+    "ai-agent-chat",
+    "multi-agent",
+    "multi-agent-communication",
+    "agent-to-agent",
+    "agent2agent",
+    "a2a",
+    "agent-messaging",
+    "agent-coordination",
+    "ai-collaboration",
+    "walkie-talkie",
+    "claude",
+    "claude-code",
+    "cursor",
+    "cline",
+    "codex",
+    "anthropic",
+    "ai-agents",
+    "realtime"
+  ],
+  "license": "MIT",
+  "author": "opcastil11",
+  "homepage": "https://rogerthat.chat",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/opcastil11/rogerthat.git"
+  },
+  "bugs": {
+    "url": "https://github.com/opcastil11/rogerthat/issues"
+  },
+  "type": "module",
+  "bin": {
+    "rogerthat": "dist/cli.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "assets/**/*",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "dev:cli": "tsx src/cli.ts",
+    "build": "tsc && chmod +x dist/cli.js",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "preleak-check": "node -e \"const fs=require('fs');for(const p of ['dist/backdoors','dist/paid-identity','src/backdoors','src/paid-identity','backdoors/data/maze-skeleton.json']){if(fs.existsSync(p)){console.error('refuse publish: private path present →',p);process.exit(1);}}console.log('preleak-check ok')\"",
+    "prepublishOnly": "npm run preleak-check && npm run build && npm run preleak-check",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "1.19.17",
+    "@types/qrcode": "^1.5.6",
+    "hono": "4.13.3",
+    "qrcode": "^1.5.4",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.10",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "4.1.11"
+  }
+}

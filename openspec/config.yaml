@@ -1,0 +1,23 @@
+schema: spec-driven
+
+context: |
+  Product: Agent Channels (working name), a product that lets users connect their existing AI conversations through collaboration channels.
+  Current phase: package the validated P0 Codex path as the first local macOS product; Codex remains the only validated Host Connector.
+  Product authority: PRODUCT.md.
+  Development status authority: docs/STATUS.md.
+  Roadmap authority: docs/ROADMAP.md.
+  Architecture authority: ARCHITECTURE.md.
+  Core boundary: channels and memberships may persist, but AI conversation sessions are ephemeral subscribers.
+  The current package is a single-channel, single-task macOS menu bar app. It still excludes additional Host Connectors, a custom model runtime, always-on offline AI and a full chat client.
+
+rules:
+  proposal:
+    - State which open product questions become decisions.
+    - List explicit non-goals and Host capability assumptions.
+  design:
+    - Explain identity, trust boundaries, message retention, delivery semantics and reconnect behavior.
+    - Separate durable channel membership from ephemeral conversation subscriptions.
+  specs:
+    - Every requirement must include success, disconnect/reconnect and authorization scenarios where applicable.
+  tasks:
+    - Validate the real Host Connector path before building broader channel features.

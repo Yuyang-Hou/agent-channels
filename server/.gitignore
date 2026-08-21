@@ -1,0 +1,14 @@
+node_modules/
+dist/
+data/
+*.log
+.env
+.env.local
+.DS_Store
+*.tgz
+
+# Mycelio private vendor key
+mycelio-keys/
+
+# Claude harness internal state
+.claude/
