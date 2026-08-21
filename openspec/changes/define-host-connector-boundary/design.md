@@ -69,7 +69,7 @@ Desktop 重启或升级后 owner 丢失时，Connector 返回 `needs_rebind` 语
 - `channel_id + message_id` 是跨重试稳定的投递键。
 - Host 明确拒绝时自动重试；mutating 请求发出后若回执丢失，停止监听并保留旧游标，避免
   自动重放产生重复交互。
-- 回执不等于 AI 已完成，不能据此展示“已处理”或“已回复”。
+- 回执不等于 AI 已完成，不能据此展示“已处理”或“已发送”。
 
 ## 信任边界
 
@@ -82,6 +82,12 @@ IPC endpoint 和 Binding 不进入模型正文。
 Desktop IPC 属于 Host 私有协议。Connector 固定并校验 initialize、owner discovery、
 steer-turn 与 start-turn 的协议版本和响应形状。缺少 owner 或明确拒绝可安全重试；mutating
 请求连接中断或成功响应不完整属于不确定结果，不能推进游标或自动重放。
+
+## 出站发送
+
+出站与入站独立。菜单栏 App 和 Subscription Runtime 负责持续接收与投递；本机 STDIO MCP
+只暴露 `send_to_channel(message)`，从当前 Binding 与 Keychain 取得频道凭证并广播。AI 无需
+先收到消息即可调用，收到消息也不要求回复；Host Connector 不读取模型输出或代理发送。
 
 ## 演进路径
 

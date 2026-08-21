@@ -5,8 +5,6 @@ export type InboundEnvelope = {
   text: string;
   receivedAt: number;
   untrusted: true;
-  /** Opaque, locally-minted one-time reference for replying to this sender. */
-  replyRef?: string;
 };
 
 export type DeliveryReceipt = {

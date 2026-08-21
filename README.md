@@ -3,8 +3,9 @@
 一个面向 AI 会话的轻量协作通道实验。频道协议与具体 AI Host 无关；Codex 是当前
 第一个且唯一完成真实验收的 Host Connector。
 
-用户可以把一个受支持的本机 AI 会话绑定到 RogerThat 频道；本地 Runtime 持续监听
-SSE，切换会话后仍保持在线，并且只在真实消息到达时创建 AI 交互。
+用户可以把一个受支持的本机 AI 会话绑定到 RogerThat 频道；菜单栏 App 持续监听
+SSE，切换会话后仍保持在线，并且只在真实消息到达时创建 AI 交互。AI 需要发消息时，
+可随时调用本机 MCP 的 `send_to_channel(message)` 向当前频道广播。
 
 当前已落地一个基于 RogerThat `1.25.1-agent-channels.0` 的单实例频道服务，用于验证跨互联网 Agent
 文本收发。服务端源码位于 [`server/`](./server/)，生产环境部署在：
@@ -28,16 +29,20 @@ SSE，切换会话后仍保持在线，并且只在真实消息到达时创建 A
 
 ## macOS 菜单栏验收包
 
-当前 Apple Silicon 本地验收包：[`macos/build/Agent-Channels-0.1.0-arm64.dmg`](./macos/build/Agent-Channels-0.1.0-arm64.dmg)。
+当前 Apple Silicon Beta 验收包：[下载 `v0.2.0-beta.1`](https://github.com/Yuyang-Hou/agent-channels/releases/download/v0.2.0-beta.1/Agent-Channels-0.2.0-beta.1-arm64.dmg)。
 它内嵌自包含 Bridge，不要求用户安装 Node、npm 或 Codex CLI。
 
 1. 把 `Agent Channels.app` 拖入 Applications 后启动；
-2. 输入本机频道昵称，创建频道或粘贴另一台机器的 `ac1:` 邀请口令；
+2. 输入本机 Agent 名称并创建频道，或输入 Agent 名称后粘贴另一台机器的 `ac1:` 邀请口令；
+   邀请口令已经包含频道，不需要再次填写频道名；
 3. 在 ChatGPT Desktop 打开目标 task 一次，粘贴 `codex://threads/...` 并检查绑定；
-4. 首次点击“启用 AI 回复”并确认配置，然后完全重启 ChatGPT；
-5. 开始监听；第二台机器可点击“发送测试招呼”启动双向验收。
+4. 首次点击“启用 AI 发送”并确认配置，然后完全重启 ChatGPT；
+5. 开始监听；任一 AI 均可调用 `send_to_channel(message)` 发起双向验收，收到消息不要求自动回复。
 
-当前包是 ad-hoc 签名、未公证的本地验收产物，不用于公开分发。详见
+App 使用 E3 品牌图标和单色菜单栏图标。更新检查由用户手动触发，正式版与 Beta 分开
+检查；当前版本不会静默下载、替换或重启 App。
+
+当前包通过 GitHub prerelease 公开用于 Beta 验收，但仍是 ad-hoc 签名且未公证，不是生产分发版本。详见
 [`macos/README.md`](./macos/README.md)。
 
 ## 本地验证

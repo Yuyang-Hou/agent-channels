@@ -4,7 +4,7 @@
 // stdout dump, --inbox file, --on-message hook, and reconnect with `since`.
 
 import { serve, type ServerType } from "@hono/node-server";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -578,7 +578,6 @@ describe("rogerthat listen-here", () => {
 
   it("stops instead of automatically replaying an uncertain Codex delivery", async () => {
     const socketPath = join(ctx.tmp, "codex-uncertain.sock");
-    const replyDirectory = join(ctx.tmp, "replies");
     const rpcServer = createServer();
     let attempts = 0;
     rpcServer.on("connection", (socket) => {
@@ -624,7 +623,6 @@ describe("rogerthat listen-here", () => {
         "--origin", ctx.origin,
         "--codex-thread", "01900000-0000-7000-8000-000000000001",
         "--codex-socket", socketPath,
-        "--reply-directory", replyDirectory,
         "--quiet",
       ],
       2500,
@@ -636,12 +634,6 @@ describe("rogerthat listen-here", () => {
     expect(result.code).toBe(1);
     expect(attempts).toBe(1);
     expect(error.mock.calls.flat().join("\n")).toContain("stopped without advancing the cursor");
-    const pending = readdirSync(join(replyDirectory, "pending"));
-    expect(pending).toHaveLength(1);
-    expect(JSON.parse(readFileSync(join(replyDirectory, "pending", pending[0]), "utf8"))).toMatchObject({
-      channelId: ctx.channelId,
-      from: "beta",
-    });
     await new Promise<void>((resolve) => rpcServer.close(() => resolve()));
   });
 });

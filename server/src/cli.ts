@@ -63,7 +63,7 @@ usage:
   rogerthat listen-here [options]      # open an SSE receiver for a channel (see --help)
   rogerthat receive-recipe [options]   # print copy-paste recipe: listener + Monitor cmd
   rogerthat codex-preflight [options]  # verify Desktop IPC + bound task without a turn
-  rogerthat reply-mcp [options]        # run the local one-tool reply MCP over stdio
+  rogerthat channel-mcp [options]      # run the local one-tool channel MCP over stdio
 
 options:
   --port <n>          port to listen on (default: 7424)
@@ -158,9 +158,9 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   }
-  if (first === "reply-mcp") {
-    const { runReplyMcp } = await import("./reply-mcp.js");
-    const code = await runReplyMcp(process.argv.slice(3));
+  if (first === "channel-mcp" || first === "reply-mcp") {
+    const { runChannelMcp } = await import("./reply-mcp.js");
+    const code = await runChannelMcp(process.argv.slice(3));
     process.exit(code);
   }
   const { parseArgs } = await import("node:util");

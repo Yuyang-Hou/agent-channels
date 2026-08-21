@@ -8,13 +8,13 @@ private let defaultOrigin = "https://rogerthat-production-fff6.up.railway.app"
 private let keychainService = "com.agentchannels.channel"
 private let managedConfigStart = "# >>> Agent Channels managed MCP >>>"
 private let managedConfigEnd = "# <<< Agent Channels managed MCP <<<"
+private let githubReleasesURL = URL(string: "https://api.github.com/repos/Yuyang-Hou/agent-channels/releases?per_page=100")!
 
 struct ChannelBinding: Codable, Equatable {
     var origin: String
     var channel: String
     var callsign: String
     var codexThread: String
-    var replyDirectory: String
     var keychainService: String
     var keychainAccount: String
     var ownerPasswordAccount: String
@@ -69,7 +69,7 @@ enum CodexConfigEditor {
             managedConfigStart,
             "[mcp_servers.agent_channels]",
             "command = \(tomlString(sidecar))",
-            "args = [\(tomlString("reply-mcp")), \(tomlString("--config")), \(tomlString(binding))]",
+            "args = [\(tomlString("channel-mcp")), \(tomlString("--config")), \(tomlString(binding))]",
             managedConfigEnd,
         ].joined(separator: "\n")
     }
@@ -166,8 +166,101 @@ enum AppPaths {
 
     static func prepare() throws {
         try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try FileManager.default.createDirectory(at: replies, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     }
+}
+
+struct ReleaseVersion: Comparable, CustomStringConvertible {
+    let major: Int
+    let minor: Int
+    let patch: Int
+    let beta: Int?
+
+    init?(_ raw: String) {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if value.hasPrefix("v") { value.removeFirst() }
+        let parts = value.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        let core = parts[0].split(separator: ".", omittingEmptySubsequences: false)
+        guard core.count == 3,
+              let major = Int(core[0]), let minor = Int(core[1]), let patch = Int(core[2]),
+              major >= 0, minor >= 0, patch >= 0 else { return nil }
+        var beta: Int?
+        if parts.count == 2 {
+            let prerelease = parts[1].split(separator: ".", omittingEmptySubsequences: false)
+            guard prerelease.count == 2, prerelease[0] == "beta",
+                  let number = Int(prerelease[1]), number >= 0 else { return nil }
+            beta = number
+        }
+        self.major = major
+        self.minor = minor
+        self.patch = patch
+        self.beta = beta
+    }
+
+    static func < (lhs: ReleaseVersion, rhs: ReleaseVersion) -> Bool {
+        if lhs.major != rhs.major { return lhs.major < rhs.major }
+        if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
+        if lhs.patch != rhs.patch { return lhs.patch < rhs.patch }
+        switch (lhs.beta, rhs.beta) {
+        case (.some(let left), .some(let right)): return left < right
+        case (.some, .none): return true
+        case (.none, .some): return false
+        case (.none, .none): return false
+        }
+    }
+
+    var description: String {
+        let core = "\(major).\(minor).\(patch)"
+        return beta.map { "\(core)-beta.\($0)" } ?? core
+    }
+}
+
+enum ReleaseChannel: Equatable {
+    case stable
+    case beta
+
+    var title: String { self == .stable ? "正式版" : "Beta" }
+}
+
+struct GitHubReleaseAsset: Decodable {
+    let name: String
+    let browserDownloadURL: URL
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case browserDownloadURL = "browser_download_url"
+    }
+}
+
+struct GitHubRelease: Decodable {
+    let tagName: String
+    let htmlURL: URL
+    let draft: Bool
+    let prerelease: Bool
+    let assets: [GitHubReleaseAsset]
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case htmlURL = "html_url"
+        case draft, prerelease, assets
+    }
+
+    var version: ReleaseVersion? { ReleaseVersion(tagName) }
+    var arm64DMG: URL? {
+        assets.first {
+            let name = $0.name.lowercased()
+            return name.hasSuffix(".dmg") && name.contains("arm64")
+        }?.browserDownloadURL
+    }
+}
+
+enum BrandAssets {
+    static let menuBarImage: NSImage? = {
+        guard let url = Bundle.main.url(forResource: "AgentChannelsMenuBar", withExtension: "svg"),
+              let image = NSImage(contentsOf: url) else { return nil }
+        image.isTemplate = true
+        image.size = NSSize(width: 18, height: 18)
+        return image
+    }()
 }
 
 enum KeychainStore {
@@ -276,7 +369,8 @@ final class AppModel: ObservableObject {
     @Published var networkStatus = "未监听"
     @Published var chatGPTStatus = "待检测"
     @Published var taskStatus = "未绑定"
-    @Published var replyStatus = "未启用"
+    @Published var sendStatus = "未启用"
+    @Published var updateStatus = "未检查"
     @Published var lastDelivery = "暂无"
     @Published var lastError = ""
     @Published var uncertainMessageID: Int64?
@@ -295,7 +389,7 @@ final class AppModel: ObservableObject {
         draftCallsign = binding?.callsign ?? ""
         draftTask = binding?.codexThread ?? ""
         launchAtLogin = SMAppService.mainApp.status == .enabled
-        refreshReplyStatus()
+        refreshSendStatus()
         refreshLastDelivery()
         showSetup = binding == nil
         DispatchQueue.main.async { [weak self] in
@@ -310,9 +404,14 @@ final class AppModel: ObservableObject {
     }
 
     var menuIcon: String {
-        if listenerRunning && networkStatus == "已连接" { return "point.3.connected.trianglepath.dotted" }
         if !lastError.isEmpty { return "exclamationmark.triangle.fill" }
-        return "point.3.filled.connected.trianglepath.dotted"
+        return "paperplane.circle"
+    }
+
+    var currentVersion: String {
+        (Bundle.main.object(forInfoDictionaryKey: "AgentChannelsReleaseVersion") as? String)
+            ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
+            ?? "0.0.0"
     }
 
     var hasCompleteBinding: Bool {
@@ -364,6 +463,7 @@ final class AppModel: ObservableObject {
             invitationInput = ""
             showSetup = true
             lastError = ""
+            showNotice(title: "已加入频道", message: "频道 \(invitation.channel) 已从邀请口令自动配置。接下来绑定 Codex task 即可。")
         } catch {
             fail(error)
         }
@@ -451,7 +551,6 @@ final class AppModel: ObservableObject {
                 "--identity-key", current.callsign,
                 "--codex-thread", current.codexThread,
                 "--secrets-stdin",
-                "--reply-directory", current.replyDirectory,
                 "--status-json",
             ]
             if let since {
@@ -574,22 +673,69 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func enableReplies() {
+    func enableSending() {
         guard let binding else { return fail(AppFailure("请先配置频道")) }
         guard AppPaths.appIsInstalled else {
-            return fail(AppFailure("请先把 Agent Channels.app 拖入 Applications，再启用 AI 回复"))
+            return fail(AppFailure("请先把 Agent Channels.app 拖入 Applications，再启用 AI 发送"))
         }
         let alert = NSAlert()
-        alert.messageText = "启用 AI 回复？"
-        alert.informativeText = "Agent Channels 将只在 ~/.codex/config.toml 的受管理标记区块中添加固定 STDIO MCP。频道密钥仍保存在 Keychain，不会修改环境变量。启用后需要完全重启 ChatGPT。"
+        alert.messageText = "启用 AI 发送？"
+        alert.informativeText = "Agent Channels 将只在 ~/.codex/config.toml 的受管理标记区块中添加固定 STDIO MCP。它只提供 send_to_channel(message)，频道密钥仍保存在 Keychain。启用后需要完全重启 ChatGPT。"
         alert.addButton(withTitle: "启用并写入配置")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
-            try Self.writeReplyConfig(binding: binding)
-            refreshReplyStatus()
-            showNotice(title: "AI 回复已配置", message: "请完全退出并重新打开 ChatGPT。Agent Channels 不会替你重启或修改环境变量。")
+            try Self.writeSendConfig(binding: binding)
+            refreshSendStatus()
+            showNotice(title: "AI 发送已配置", message: "请完全退出并重新打开 ChatGPT。Agent Channels 不会替你重启或修改环境变量。")
         } catch {
+            fail(error)
+        }
+    }
+
+    func checkForUpdates(channel: ReleaseChannel) async {
+        guard !busy else { return }
+        busy = true
+        updateStatus = "检查中"
+        defer { busy = false }
+        do {
+            var request = URLRequest(url: githubReleasesURL)
+            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+            request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+            request.setValue("Agent-Channels/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                throw AppFailure("GitHub Release 查询失败（HTTP \(status)）")
+            }
+            let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+            let candidates: [(release: GitHubRelease, version: ReleaseVersion)] = releases.compactMap { release in
+                guard !release.draft, let version = release.version else { return nil }
+                switch channel {
+                case .stable:
+                    guard !release.prerelease, version.beta == nil else { return nil }
+                case .beta:
+                    guard release.prerelease, version.beta != nil else { return nil }
+                }
+                return (release, version)
+            }
+            guard let latest = candidates.max(by: { $0.version < $1.version }) else {
+                updateStatus = "暂无 \(channel.title)"
+                showNotice(title: "暂无 \(channel.title) 更新", message: "GitHub Release 中还没有可用的 \(channel.title) 版本。")
+                return
+            }
+            guard let current = ReleaseVersion(currentVersion) else {
+                throw AppFailure("当前版本号 \(currentVersion) 无法识别")
+            }
+            guard current < latest.version else {
+                updateStatus = "已是最新 \(channel.title)"
+                showNotice(title: "已是最新版本", message: "当前 \(currentVersion)，\(channel.title)最新 \(latest.version)。无需重复下载。")
+                return
+            }
+            updateStatus = "可更新至 \(latest.version)"
+            showUpdateNotice(channel: channel, current: current, release: latest.release, version: latest.version)
+        } catch {
+            updateStatus = "检查失败"
             fail(error)
         }
     }
@@ -614,7 +760,7 @@ final class AppModel: ObservableObject {
 
     func showDiagnostics() {
         let message = lastError.isEmpty
-            ? "频道：\(networkStatus)\nChatGPT：\(chatGPTStatus)\n任务：\(taskStatus)\n回复：\(replyStatus)"
+            ? "频道：\(networkStatus)\nChatGPT：\(chatGPTStatus)\n任务：\(taskStatus)\n发送：\(sendStatus)\n更新：\(updateStatus)"
             : lastError
         showNotice(title: "Agent Channels 连接诊断", message: message)
     }
@@ -623,7 +769,7 @@ final class AppModel: ObservableObject {
         guard let current = binding else { return }
         let alert = NSAlert()
         alert.messageText = "移除 Agent Channels 本机配置？"
-        alert.informativeText = "将暂停监听，并移除频道凭证、Binding、待回复引用和受管理的 MCP 配置。之后需要重启 ChatGPT。"
+        alert.informativeText = "将暂停监听，并移除频道凭证、Binding、旧版待回复引用和受管理的 MCP 配置。之后需要重启 ChatGPT。"
         alert.addButton(withTitle: "移除")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -649,7 +795,7 @@ final class AppModel: ObservableObject {
             networkStatus = "未监听"
             chatGPTStatus = "待检测"
             taskStatus = "未绑定"
-            replyStatus = "未启用"
+            sendStatus = "未启用"
             lastDelivery = "暂无"
             lastError = ""
             uncertainMessageID = nil
@@ -752,7 +898,6 @@ final class AppModel: ObservableObject {
             channel: channel,
             callsign: draftCallsign.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
             codexThread: draftTask.trimmingCharacters(in: .whitespacesAndNewlines),
-            replyDirectory: AppPaths.replies.path,
             keychainService: keychainService,
             keychainAccount: tokenAccount,
             ownerPasswordAccount: ownerAccount,
@@ -769,7 +914,7 @@ final class AppModel: ObservableObject {
             }
         }
         networkStatus = "未监听"
-        refreshReplyStatus()
+        refreshSendStatus()
     }
 
     private func saveBinding(_ value: ChannelBinding) throws {
@@ -788,7 +933,7 @@ final class AppModel: ObservableObject {
     private func validateCallsign() -> Bool {
         let value = draftCallsign.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let valid = value.range(of: #"^[a-z0-9][a-z0-9_-]{0,31}$"#, options: .regularExpression) != nil && value != "all"
-        if !valid { fail(AppFailure("频道昵称须为 1–32 位字母、数字、_ 或 -，且不能是 all")) }
+        if !valid { fail(AppFailure("Agent 名称须为 1–32 位字母、数字、_ 或 -，且不能是 all")) }
         return valid
     }
 
@@ -802,17 +947,17 @@ final class AppModel: ObservableObject {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    private func refreshReplyStatus() {
+    private func refreshSendStatus() {
         guard binding != nil,
               let existing = try? String(contentsOf: AppPaths.codexConfig, encoding: .utf8) else {
-            replyStatus = "未启用"
+            sendStatus = "未启用"
             return
         }
         let expected = CodexConfigEditor.managedBlock(sidecar: Sidecar.executable.path, binding: AppPaths.binding.path)
-        replyStatus = existing.contains(expected) ? "已配置" : existing.contains(managedConfigStart) ? "需重新启用" : "未启用"
+        sendStatus = existing.contains(expected) ? "已配置" : existing.contains(managedConfigStart) ? "需重新启用" : "未启用"
     }
 
-    private static func writeReplyConfig(binding: ChannelBinding) throws {
+    private static func writeSendConfig(binding: ChannelBinding) throws {
         try AppPaths.prepare()
         try FileManager.default.createDirectory(at: AppPaths.codexDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let existing = (try? String(contentsOf: AppPaths.codexConfig, encoding: .utf8)) ?? ""
@@ -870,6 +1015,34 @@ final class AppModel: ObservableObject {
         alert.addButton(withTitle: "好")
         alert.runModal()
     }
+
+    private func showUpdateNotice(
+        channel: ReleaseChannel,
+        current: ReleaseVersion,
+        release: GitHubRelease,
+        version: ReleaseVersion
+    ) {
+        let alert = NSAlert()
+        alert.messageText = "发现 Agent Channels \(channel.title)更新"
+        alert.informativeText = "当前 \(current)，最新 \(version)。下载仍由浏览器处理，App 不会静默替换自身。"
+        if release.arm64DMG != nil {
+            alert.addButton(withTitle: "下载 DMG")
+            alert.addButton(withTitle: "查看 Release")
+            alert.addButton(withTitle: "取消")
+            let result = alert.runModal()
+            if result == .alertFirstButtonReturn, let url = release.arm64DMG {
+                NSWorkspace.shared.open(url)
+            } else if result == .alertSecondButtonReturn {
+                NSWorkspace.shared.open(release.htmlURL)
+            }
+        } else {
+            alert.addButton(withTitle: "查看 Release")
+            alert.addButton(withTitle: "取消")
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(release.htmlURL)
+            }
+        }
+    }
 }
 
 private extension String {
@@ -906,13 +1079,30 @@ struct StatusRow: View {
     }
 }
 
+struct BrandIcon: View {
+    let fallback: String
+    let size: CGFloat
+
+    var body: some View {
+        if fallback.contains("exclamationmark") || BrandAssets.menuBarImage == nil {
+            Image(systemName: fallback).font(.system(size: size))
+        } else if let image = BrandAssets.menuBarImage {
+            Image(nsImage: image)
+                .renderingMode(.template)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: size, height: size)
+        }
+    }
+}
+
 struct MenuPanel: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: model.menuIcon).font(.title2)
+                BrandIcon(fallback: model.menuIcon, size: 22)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Agent Channels").font(.headline)
                     Text(model.binding.map { "\($0.channel) · \($0.callsign)" } ?? "尚未配置")
@@ -926,7 +1116,7 @@ struct MenuPanel: View {
                     StatusRow(name: "频道", value: model.networkStatus)
                     StatusRow(name: "ChatGPT", value: model.chatGPTStatus)
                     StatusRow(name: "任务", value: model.taskStatus)
-                    StatusRow(name: "回复", value: model.replyStatus)
+                    StatusRow(name: "发送", value: model.sendStatus)
                     StatusRow(name: "最近投递", value: model.lastDelivery)
                 }
                 .padding(.vertical, 2)
@@ -951,6 +1141,14 @@ struct MenuPanel: View {
             }
 
             Divider()
+            HStack {
+                Text("版本 \(model.currentVersion)").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("检查正式版更新…") { Task { await model.checkForUpdates(channel: .stable) } }
+                Button("检查 Beta 更新…") { Task { await model.checkForUpdates(channel: .beta) } }
+            }
+            .disabled(model.busy)
+
             Toggle("登录时启动", isOn: Binding(
                 get: { model.launchAtLogin },
                 set: { model.setLaunchAtLogin($0) }
@@ -982,8 +1180,8 @@ struct MenuPanel: View {
             }
             HStack {
                 Button("重新绑定…") { model.showSetup = true }
-                if model.replyStatus != "已配置" {
-                    Button("启用 AI 回复…") { model.enableReplies() }
+                if model.sendStatus != "已配置" {
+                    Button("启用 AI 发送…") { model.enableSending() }
                 }
                 Spacer()
             }
@@ -992,8 +1190,9 @@ struct MenuPanel: View {
 
     private var setup: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Text("频道").font(.subheadline.bold())
-            TextField("频道昵称，例如 frontend", text: $model.draftCallsign)
+            Text("加入或创建频道").font(.subheadline.bold())
+            Text("你的 Agent 名称").font(.caption).foregroundStyle(.secondary)
+            TextField("例如 frontend（不是频道名）", text: $model.draftCallsign)
                 .textFieldStyle(.roundedBorder)
             HStack {
                 Button("创建新频道") { Task { await model.createChannel() } }
@@ -1004,6 +1203,8 @@ struct MenuPanel: View {
                 Button("使用") { model.useInvitation() }
                     .disabled(model.busy || model.invitationInput.isEmpty)
             }
+            Text(model.binding.map { "当前频道：\($0.channel)" } ?? "邀请口令已包含频道，无需填写频道名。")
+                .font(.caption).foregroundStyle(.secondary)
 
             Text("Codex task").font(.subheadline.bold()).padding(.top, 2)
             TextField("codex://threads/...", text: $model.draftTask)
@@ -1021,8 +1222,8 @@ struct MenuPanel: View {
                 }
                 Spacer()
             }
-            if model.binding != nil && model.replyStatus != "已配置" {
-                Button("启用 AI 回复…") { model.enableReplies() }
+            if model.binding != nil && model.sendStatus != "已配置" {
+                Button("启用 AI 发送…") { model.enableSending() }
             }
         }
     }
@@ -1037,7 +1238,8 @@ struct AgentChannelsApp: App {
         MenuBarExtra {
             MenuPanel(model: model)
         } label: {
-            Image(systemName: model.menuIcon)
+            BrandIcon(fallback: model.menuIcon, size: 18)
+                .accessibilityLabel("Agent Channels")
         }
         .menuBarExtraStyle(.window)
     }
@@ -1053,10 +1255,14 @@ struct AgentChannelsSelfTest {
         let block = CodexConfigEditor.managedBlock(sidecar: "/Applications/Agent Channels.app/Contents/MacOS/rogerthat-sidecar", binding: "/tmp/binding.json")
         let installed = try CodexConfigEditor.installing(block: block, into: "model = \"gpt-5\"\n")
         precondition(installed.contains(managedConfigStart))
-        let replaced = try CodexConfigEditor.installing(block: block.replacingOccurrences(of: "reply-mcp", with: "reply-mcp-v2"), into: installed)
+        let replaced = try CodexConfigEditor.installing(block: block.replacingOccurrences(of: "channel-mcp", with: "channel-mcp-v2"), into: installed)
         precondition(replaced.components(separatedBy: managedConfigStart).count == 2)
         let removed = try CodexConfigEditor.removingManagedBlock(from: replaced)
         precondition(removed == "model = \"gpt-5\"\n")
+        precondition(ReleaseVersion("v0.2.0-beta.2")! < ReleaseVersion("0.2.0-beta.10")!)
+        precondition(ReleaseVersion("0.2.0-beta.10")! < ReleaseVersion("0.2.0")!)
+        precondition(ReleaseVersion("0.1.9")! < ReleaseVersion("0.2.0-beta.1")!)
+        precondition(ReleaseVersion("0.2") == nil)
         print("macos self-test ok")
     }
 }

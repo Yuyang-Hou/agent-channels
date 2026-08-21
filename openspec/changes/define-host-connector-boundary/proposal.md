@@ -13,8 +13,9 @@
 - 本地接收链路拆成 Subscription Runtime 与 Host Connector 两个职责边界。
 - Codex 是第一个且当前唯一 Connector，不把“架构允许”表述成“产品已支持”。
 - Host Binding 只保存在本机，目标会话 id 和 Runtime 路径不进入服务端或模型正文。
-- Connector 只保证 Host 接受一次输入；AI 完成、用户已读和回复发送是不同状态。
-- 出站回复继续走 MCP/REST，不经过 Host Connector。
+- Connector 只保证 Host 接受一次输入；AI 完成、用户已读和另一条消息发送是不同状态。
+- 出站发送继续走 MCP/REST，不经过 Host Connector；当前本机 MCP 只暴露
+  `send_to_channel(message)`，且不依赖入站消息。
 - Codex 默认通过 ChatGPT Desktop 自身的本地 IPC owner/follower 路由投递，不安装
   standalone daemon，也不修改 `CODEX_APP_SERVER_USE_LOCAL_DAEMON`。
 - 用户只需显式绑定一个 task；Desktop 重启后 owner 尚未恢复时，Connector 明确提示用户

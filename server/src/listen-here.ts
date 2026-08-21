@@ -17,8 +17,7 @@
 // that piled up while we were away.
 
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage as HttpResponse } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { basename, dirname, join } from "node:path";
@@ -63,9 +62,6 @@ options:
                       hint using this trusted local task as the source. Only
                       valid together with --codex-thread.
   --codex-socket <p>  override the ChatGPT Desktop IPC socket path (diagnostics)
-  --reply-directory <p>
-                      mint one-time reply references for Codex messages under
-                      this local directory; requires --codex-thread
   --status-json       emit machine-readable lifecycle lines to stderr prefixed
                       with "@agent-channels " (never contains message text/secrets)
   --inbox <file>      append each message to this file (parent dir created if
@@ -149,7 +145,6 @@ type Args = {
   codexThread?: string;
   codexSourceThread?: string;
   codexSocket?: string;
-  replyDirectory?: string;
   statusJson: boolean;
   inbox?: string;
   format: Format;
@@ -184,7 +179,6 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
         "codex-thread": { type: "string" },
         "codex-source-thread": { type: "string" },
         "codex-socket": { type: "string" },
-        "reply-directory": { type: "string" },
         "status-json": { type: "boolean" },
         inbox: { type: "string" },
         format: { type: "string" },
@@ -258,7 +252,6 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
     codexThread: parsed.values["codex-thread"],
     codexSourceThread: parsed.values["codex-source-thread"],
     codexSocket: parsed.values["codex-socket"],
-    replyDirectory: parsed.values["reply-directory"],
     statusJson: parsed.values["status-json"] === true,
     inbox: parsed.values.inbox,
     format,
@@ -303,28 +296,6 @@ async function readSecretsFromStdin(
 function emitStatus(args: Args, state: string, details: Record<string, unknown> = {}): void {
   if (!args.statusJson) return;
   console.error(`@agent-channels ${JSON.stringify({ state, ...details })}`);
-}
-
-function createReplyReference(args: Args, msg: IncomingMessage): { ref: string; path: string } | undefined {
-  if (!args.replyDirectory) return undefined;
-  const pending = join(args.replyDirectory, "pending");
-  mkdirSync(pending, { recursive: true, mode: 0o700 });
-  for (;;) {
-    const ref = randomUUID();
-    const path = join(pending, `${ref}.json`);
-    try {
-      writeFileSync(path, JSON.stringify({
-        channelId: args.channel,
-        messageId: msg.id,
-        from: msg.from,
-        createdAt: Date.now(),
-        expiresAt: Date.now() + 24 * 60 * 60 * 1000,
-      }), { encoding: "utf8", mode: 0o600, flag: "wx" });
-      return { ref, path };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-  }
 }
 
 /** Mirror of the channel.ts Attachment shape on the wire. data_base64 is the
@@ -500,24 +471,14 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
     if (incomingRank < PRIORITY_RANK[args.minPriority]) return;
   }
   if (hostDelivery && msg.kind !== "status") {
-    const reply = createReplyReference(args, msg);
-    let receipt;
-    try {
-      receipt = await hostDelivery({
-        channelId: args.channel,
-        messageId: msg.id,
-        from: msg.from,
-        text: msg.text,
-        receivedAt: msg.at,
-        untrusted: true,
-        ...(reply ? { replyRef: reply.ref } : {}),
-      });
-    } catch (error) {
-      if (reply && !(error instanceof DeliveryOutcomeUnknownError)) {
-        try { unlinkSync(reply.path); } catch { /* best-effort cleanup */ }
-      }
-      throw error;
-    }
+    const receipt = await hostDelivery({
+      channelId: args.channel,
+      messageId: msg.id,
+      from: msg.from,
+      text: msg.text,
+      receivedAt: msg.at,
+      untrusted: true,
+    });
     if (!args.quiet) {
       const deliveryId = receipt.providerDeliveryId ? ` interaction ${receipt.providerDeliveryId}` : "";
       console.error(`[listen-here] delivered message ${msg.id} to ${receipt.provider}${deliveryId}`);
@@ -776,10 +737,6 @@ export async function runListenHere(
   }
   if (args.codexSourceThread && !args.codexThread) {
     console.error("error: --codex-source-thread requires --codex-thread");
-    return 2;
-  }
-  if (args.replyDirectory && !args.codexThread) {
-    console.error("error: --reply-directory requires --codex-thread");
     return 2;
   }
   let hostDelivery: HostDelivery | undefined;

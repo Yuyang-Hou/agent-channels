@@ -30,11 +30,11 @@ Binding 文件或模型正文中。
 - **WHEN** App 启动内嵌 Bridge
 - **THEN** secret 只经子进程 stdin 传入且 argv 与 Binding 文件不含 secret
 
-#### Scenario: AI 回复
+#### Scenario: AI 主动发送
 
-- **GIVEN** 目标 AI 获得回复工具
-- **WHEN** AI 调用回复
-- **THEN** 模型只提供 reply reference 与文本，工具自行从 Keychain 取得频道 token
+- **GIVEN** 目标 AI 获得频道发送工具
+- **WHEN** AI 调用 `send_to_channel`
+- **THEN** 模型只提供文本，工具自行从 Binding 与 Keychain 取得频道和凭证
 
 ### Requirement: 无副作用预检
 
@@ -52,22 +52,79 @@ App MUST 在监听前验证 Desktop IPC 与目标 task owner，且预检 MUST NO
 - **WHEN** App 执行预检
 - **THEN** App 显示打开该 task 一次的操作提示且不开始消费频道消息
 
-### Requirement: 最小回复授权
+### Requirement: 最小发送授权
 
-App MUST 只在用户显式确认后安装固定 STDIO MCP，并且回复工具 MUST 只能使用一次性引用向
-原发送者发送文本。
+App MUST 只在用户显式确认后安装固定 STDIO MCP，并且 MCP MUST 只暴露
+`send_to_channel(message)`。发送 MUST 使用当前本机 Binding 向当前频道广播，不依赖入站消息。
 
-#### Scenario: 首次启用回复
+#### Scenario: 首次启用发送
 
-- **GIVEN** 用户尚未启用 Agent Channels 回复工具
+- **GIVEN** 用户尚未启用 Agent Channels 发送工具
 - **WHEN** 用户确认配置变更
 - **THEN** App 写入受 marker 管理的 MCP 配置并提示重启 ChatGPT
 
-#### Scenario: 重复或伪造引用
+#### Scenario: 主动发送
 
-- **GIVEN** reply reference 已使用、未知或不属于当前频道
-- **WHEN** AI 调用回复工具
-- **THEN** 工具拒绝发送且不暴露本机凭证
+- **GIVEN** AI 尚未从频道收到任何消息
+- **WHEN** AI 调用 `send_to_channel` 并提供非空文本
+- **THEN** 工具以当前 callsign 向当前频道广播且不暴露本机凭证
+
+#### Scenario: 发送回执不确定
+
+- **GIVEN** 频道发送请求已发出但未取得可靠回执
+- **WHEN** MCP 返回工具结果
+- **THEN** 结果明确标记发送结果不确定并要求 AI 不自动重试
+
+### Requirement: 邀请直接确定频道
+
+加入者 MUST 从 `ac1:` 邀请口令取得频道，App MUST NOT 再要求加入者填写频道名；服务端要求
+的 callsign MUST 在 UI 中明确标为加入者自己的 Agent 名称。
+
+#### Scenario: 使用邀请
+
+- **GIVEN** 用户填写自己的 Agent 名称并粘贴有效邀请口令
+- **WHEN** 用户点击使用邀请
+- **THEN** App 保存邀请中的频道并展示已加入的频道
+
+#### Scenario: 邀请频道不可修改
+
+- **GIVEN** 邀请口令已经包含频道
+- **WHEN** 用户进入加入流程
+- **THEN** UI 不显示独立频道名输入框
+
+### Requirement: 分通道检查 GitHub 更新
+
+App MUST 提供正式版和 Beta 两个独立的手动检查入口，并且 MUST 只在远端版本高于当前版本时
+提供下载动作。
+
+#### Scenario: 检查正式版
+
+- **GIVEN** GitHub 同时存在正式版与 prerelease
+- **WHEN** 用户检查正式版
+- **THEN** App 只比较最新非 prerelease Release
+
+#### Scenario: 检查 Beta
+
+- **GIVEN** GitHub 存在带 Beta 标签的 prerelease
+- **WHEN** 用户检查 Beta
+- **THEN** App 只比较 Beta prerelease，不把它提示给正式版检查
+
+#### Scenario: 无需重复下载
+
+- **GIVEN** 当前版本等于或高于所选通道的最新版本
+- **WHEN** 检查完成
+- **THEN** App 告知已是最新版本且不打开下载链接
+
+### Requirement: 品牌图标
+
+App MUST 使用仓库现有 E3 传信鸽图作为 App icon，并使用同轮廓的单色 SVG Template Image
+作为菜单栏常态图标。
+
+#### Scenario: 明暗菜单栏
+
+- **GIVEN** 用户切换 macOS 明暗外观
+- **WHEN** 菜单栏显示 Agent Channels
+- **THEN** Template Image 由系统着色并保持可辨认
 
 ### Requirement: 可操作错误状态
 

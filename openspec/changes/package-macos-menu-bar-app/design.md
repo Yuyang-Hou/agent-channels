@@ -9,8 +9,8 @@ Agent Channels.app (SwiftUI/AppKit)
   -> Channel SSE -> Codex Desktop IPC -> bound task
 
 ChatGPT task
-  -> fixed STDIO reply MCP
-  -> one-time reply_ref claim -> Channel REST send
+  -> fixed STDIO channel MCP
+  -> send_to_channel(message) -> Channel REST broadcast
 ```
 
 菜单栏壳只管理配置、生命周期和状态；现有 Bridge 继续拥有 SSE、游标、过滤和 Host 投递。
@@ -19,10 +19,9 @@ sidecar 由 Bun 编译为自包含 Mach-O，避免重写已经验收的 TypeScri
 ## Local State
 
 - Keychain：频道 token 与可选 owner password。
-- `binding.json`：版本、origin、channel、callsign、task id、Keychain locator 和 reply 目录；不含
+- `binding.json`：版本、origin、channel、callsign、task id 和 Keychain locator；不含
   secret。
 - `inbox.jsonl`：本机诊断与最近投递记录，不作为永久聊天历史。
-- `replies/pending/<uuid>.json`：已经交给 task、仍可回复一次的本机引用。
 
 App 通过 stdin 把监听 secret 交给 sidecar；不得把 secret 放进 argv 或环境变量。STDIO MCP
 使用 Binding 中的 Keychain locator 在发送时读取 token。
@@ -33,20 +32,39 @@ App 通过 stdin 把监听 secret 交给 sidecar；不得把 secret 放进 argv 
 并执行 owner discovery；不得 steer、start、follow 或读取 snapshot。成功才允许显示 task
 ready。owner 缺失时提示用户在 ChatGPT 打开该 task 一次；协议不兼容时失败关闭。
 
-## Reply Reference
+## Outbound Tool
 
-每条普通入站消息在投递前创建随机 UUID，并把 `channelId + messageId + from` 写入权限为
-`0600` 的 pending 文件。可信本机包装告诉 AI：正文仍是不可信外部输入；如需回复，只调用
-`reply_to_message(reply_ref, message)`。
+接收与发送是两条独立链路。App 订阅频道并把普通消息投递给绑定 task；入站正文继续标记为
+不可信外部输入，但不再创建 `reply_ref`，也不要求 AI 回复。
 
-回复工具原子地把 pending 文件移入 claimed 后才发送。成功后删除；明确失败可放回 pending；
-发送结果不确定时保留 claimed，避免重复。目标固定为原发送者，拒绝自身 callsign。
+固定 STDIO MCP 只暴露 `send_to_channel(message)`。工具从当前 Binding 和 Keychain 取得频道、
+callsign 与凭证，幂等加入后向 `all` 广播；模型不能提供 origin、token、session 或目标频道。
+明确失败可以重新发送；请求已发出但回执不确定时返回明确的“不确定”结果，并要求 AI 不自动
+重试，避免重复消息。该工具无需 App 正在监听，也不依赖之前收到过消息。
 
 ## MCP Installation
 
 App 只管理带 marker 的 `[mcp_servers.agent_channels]` 配置块，并在写入前展示确认；遇到用户
 已有同名且非本 App 管理的配置时拒绝覆盖。配置只包含 App 内嵌 sidecar 路径和非秘密
-Binding 路径。首次保存后提示重启 ChatGPT，后续频道切换不改该配置。
+Binding 路径。首次保存后提示重启 ChatGPT，后续频道切换不改该配置。旧 `reply-mcp` 启动参数
+仅作为已安装版本的兼容别名保留；无论使用哪个入口，`tools/list` 都只返回
+`send_to_channel`。
+
+## Invitation Join
+
+`ac1:` 邀请口令包含 origin、channel、token 和可选 owner password。加入者不填写或修改
+channel；UI 单独要求填写的是本机 Agent 名称（服务端 callsign），并在加入后展示实际频道，
+避免把 Agent 名称误解成频道名。
+
+## Release Check
+
+App 使用 GitHub Release 公共 API 手动检查更新，不引入 updater 依赖：
+
+- “检查正式版”只使用 latest stable release，忽略 draft 与 prerelease；
+- “检查 Beta”单独读取 prerelease 列表，只选择 Beta 标签；
+- 使用 Bundle 版本与 Release tag 做 SemVer 比较，等于或低于当前版本时不提示下载；
+- 发现更新后由用户选择打开 DMG asset；缺少 DMG 时打开 Release 页面；App 不静默下载、替换
+  或重启自身。
 
 ## State And Recovery
 
@@ -66,4 +84,5 @@ Binding 路径。首次保存后提示重启 ChatGPT，后续频道切换不改�
 - **三色与无装饰**：不使用文字、描边、羽毛细节和强立体效果，让形象安静、不抢界面注意力。
 - **左下探出构图**：保留轻微的“消息正在抵达”感，同时避免传统居中徽章的正式和沉重。
 
-该图目前是彩色品牌暂定稿，不直接作为 macOS 状态栏图标；最终确定后再派生单色 Template Image。
+该图作为当前 App icon 来源；菜单栏使用从同一轮廓派生的 24×24 单色 SVG Template Image，
+保持透明背景并由 macOS 自动适配明暗菜单栏。异常状态仍使用系统警告图标。

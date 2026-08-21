@@ -17,6 +17,6 @@
 - [x] 覆盖 IPC 拆帧、client discovery 拒绝、busy steer、接受回执与不确定结果停机测试
 - [x] 在真实 ChatGPT Desktop 上验证切换 task 后仍可投递且空闲零 turn
 - [x] 完成两台独立设备的公网双向 Host 入站验收
-- [ ] 完成两个独立用户且目标 AI 通过 MCP/REST 回复频道的完整闭环
+- [ ] 完成两个独立用户且双方 AI 通过 `send_to_channel(message)` 主动发信的双向闭环
 
 只有决定实现第二个 Host 时，才评估通用配置格式或 Connector registry。

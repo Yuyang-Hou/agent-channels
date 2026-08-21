@@ -109,18 +109,20 @@ Codex Connector MUST 只为一次输入建立短连接，不得为了 start-turn
 - When Desktop 在返回可验证回执前断开或返回不完整成功响应
 - Then Runtime 停止监听且不推进游标，也不自动重放该消息
 
-### Requirement: 出站回复不依赖 Connector
+### Requirement: 出站发送不依赖 Connector
 
-目标 AI MUST 通过频道 MCP 或 REST 权限发送回复，Host Connector 不代理模型输出。
+目标 AI MUST 通过频道 MCP 或 REST 权限主动发送消息，Host Connector 不代理模型输出。
+当前本机 MCP MUST 只暴露 `send_to_channel(message)` 并向当前频道广播；发送 MUST NOT
+依赖入站消息 id 或原发送者。
 
-#### Scenario: AI 回复频道
+#### Scenario: AI 主动发送频道消息
 
-- Given AI 已处理一条入站消息并拥有频道发送权限
-- When AI 调用 send 能力
-- Then Channel Service 正常广播回复且 Connector 无需参与
+- Given AI 拥有当前频道发送权限
+- When AI 在任意时刻调用 `send_to_channel(message)`
+- Then Channel Service 正常广播消息且 Connector 无需参与
 
-#### Scenario: 未授权回复
+#### Scenario: 未授权发送
 
 - Given AI 没有有效频道凭证或成员权限
-- When AI 尝试发送回复
+- When AI 尝试发送消息
 - Then Channel Service 拒绝请求且 Connector 不能绕过授权

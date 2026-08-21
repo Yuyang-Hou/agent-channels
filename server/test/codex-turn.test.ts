@@ -211,7 +211,6 @@ describe("Codex task bridge", () => {
       text: "API is /v1",
       receivedAt: Date.now(),
       untrusted: true,
-      replyRef: "01900000-0000-7000-8000-000000000009",
     });
 
     expect(receipt).toEqual({ provider: "codex", providerDeliveryId: "turn-test" });
@@ -225,8 +224,8 @@ describe("Codex task bridge", () => {
     expect(startTarget).toBe(ownerId);
     expect(turnText).toContain('"from":"backend"');
     expect(turnText).toContain('"text":"API is /v1"');
-    expect(turnText).toContain('"reply_ref":"01900000-0000-7000-8000-000000000009"');
-    expect(turnText).toContain("reply_to_message");
+    expect(turnText).not.toContain("reply_ref");
+    expect(turnText).not.toContain("reply_to_message");
   });
 
   it("steers a busy task instead of waiting for its active turn to finish", async () => {

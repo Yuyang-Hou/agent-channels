@@ -62,7 +62,7 @@ Connector 只承担三个职责：
 3. 在 Host 接受输入后返回投递回执。
 
 标准输入至少包含 `channel_id`、`message_id`、`from`、`text`、`received_at`
-和不可信输入标记。回执只代表 Host 已接受，不代表用户已读、AI 已完成或回复已发送。
+和不可信输入标记。回执只代表 Host 已接受，不代表用户已读、AI 已完成或另一条消息已发送。
 
 P0 不建设动态插件市场、Connector 注册中心或通用进程管理框架。实现时只需要一个
 窄的 `deliver(message)` 边界；Codex Connector 是第一个且当前唯一实现。未来 Host
@@ -85,14 +85,16 @@ Connector 必须停止向该会话投递。
 消息状态必须区分：
 
 ```text
-accepted_by_server
+inbound_accepted_by_server
   -> delivered_to_session
   -> seen_by_user
   -> handled_by_ai
-  -> reply_sent
+
+outbound_message_accepted
 ```
 
-P0 只承诺服务端接收、活跃会话至少一次投递和基于游标的恢复；不承诺离线 AI 必达。
+入站处理和出站发送是两条独立链路：收到消息不要求回复，AI 也无需先收到消息即可主动
+发送。P0 只承诺服务端接收、活跃会话至少一次投递和基于游标的恢复；不承诺离线 AI 必达。
 
 Connector 必须按单个 Binding 串行投递，避免两个外部消息并发创建相互覆盖的 Host
 交互。显式拒绝可安全重试；mutating 请求发出后若回执丢失，Runtime 停止自动重放并保留
@@ -121,11 +123,18 @@ Desktop IPC 属于 ChatGPT 私有版本化协议，仍是升级敏感依赖。Co
 版本与响应形状，在 owner 缺失或协议不兼容时失败关闭并提示重新打开任务或升级 Bridge；
 不得静默修改用户环境变量。
 
-## 出站回复
+## 出站发送
 
-AI 向频道发送回复使用本机固定 STDIO MCP：入站 Runtime 为每条消息生成一次性
-`reply_ref`，工具把目标锁定为原发送者并自行从 Keychain 取频道凭证。Host Connector
-仍不读取模型输出，也不代理回复。后续 Host 只需接收同一可信包装，不改变频道服务。
+AI 向频道发消息使用本机固定 STDIO MCP。它只暴露 `send_to_channel(message)`，从当前
+Binding 和 Keychain 取得频道凭证，并以当前 Agent 名称向频道广播。发送不依赖入站消息，
+也不生成引用或绑定原发送者；Host Connector 不读取模型输出，也不代理出站消息。
+
+## 菜单栏 App 边界
+
+菜单栏 App 负责 Binding、Keychain、监听生命周期和入站投递；MCP 只负责 AI 主动发送。
+邀请口令携带频道信息，加入者只填写自己的 Agent 名称。App 使用 E3 品牌图标和单色 SVG
+模板菜单栏图标。正式版与 Beta 更新只在用户手动检查时查询 GitHub Release；P0 不静默
+下载或替换 App。
 
 ## 当前实现映射
 
@@ -133,7 +142,7 @@ AI 向频道发送回复使用本机固定 STDIO MCP：入站 Runtime 为每条�
 - `server/src/listen-here.ts` 实现 Subscription Runtime，并从兼容 CLI 参数创建 Connector；
 - `server/src/codex-turn.ts` 实现 Codex 目标校验、输入转换、Desktop owner discovery 和
   targeted start-turn；
-- `server/src/reply-mcp.ts` 实现一次性回复引用和最小本机 MCP；
+- `server/src/reply-mcp.ts` 实现只暴露 `send_to_channel(message)` 的最小本机 MCP；
 - `macos/AgentChannelsApp.swift` 管理单 Binding、Keychain、Bridge 生命周期和可操作状态；
 - MCP App View 是已被替代的实验，不属于目标入站链路；
 - 菜单栏 App 只包装本地 Runtime，不承载频道协议或模型。

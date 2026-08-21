@@ -9,6 +9,8 @@
 - 完成 Host-neutral `deliver(message)` 边界；
 - 保持 Codex 为唯一 Connector；
 - 完成两个用户、两台设备的双向真实验收；
+- 保持 App 负责持续接收、MCP 只负责 `send_to_channel(message)` 主动广播；
+- 邀请口令直接携带频道，加入者只填写自己的 Agent 名称；
 - 明确 Host 不可用、授权失效、断线恢复和重复投递状态；
 - 用不依赖 Node、npm、Codex CLI、standalone daemon 或环境变量的菜单栏验收包完成闭环。
 
@@ -18,7 +20,7 @@
 
 目标：把本地验收包提升为可公开分发、可长期运行的产品。
 
-- Developer ID 签名、公证、自动更新和 Intel Mac 取舍；
+- Developer ID 签名、公证、可验证的安装更新和 Intel Mac 取舍；
 - App/sidecar 崩溃恢复、孤儿进程清理和版本升级；
 - 未读数量、漏消息摘要和恢复选择；
 - Connector 兼容性探测与可操作错误提示；

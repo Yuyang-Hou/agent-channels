@@ -3,9 +3,9 @@
 ## 当前阶段
 
 当前处于 **P0 安装包验收**：服务端、Host 无关边界、Codex 公网入站链路和 Apple Silicon
-菜单栏验收包已经完成；剩余门槛是两台 Mac 使用安装包完成 AI 回复闭环。
+菜单栏验收包已经完成；剩余门槛是两台 Mac 使用安装包完成 AI 主动发信与 App 接收闭环。
 
-当前是 ad-hoc 签名本地验收包，不是可公开分发版本。
+当前是 GitHub prerelease 上公开可下载的 ad-hoc Beta 验收包，不是已公证的生产分发版本。
 
 ## 已完成
 
@@ -24,17 +24,20 @@
 | Apple Silicon 菜单栏包 | 已完成 | 原生 App、自包含 sidecar、ad-hoc 签名与 DMG 完整性校验通过；不依赖 Node/npm/Codex CLI |
 | 安全本机配置 | 已完成 | token/owner password 进入 Keychain；监听 secret 走 stdin；MCP 配置需用户确认 |
 | 只读 task 预检 | 已完成 | 打包版对当前真实 task owner discovery 通过且不创建 turn |
-| 最小 AI 回复工具 | 已完成 | 仅暴露一次性 `reply_to_message`；重复、跨频道和不确定发送结果有测试覆盖 |
+| 最小 AI 发送工具 | 已完成 | 仅暴露 `send_to_channel(message)`；可随时向当前频道广播，不依赖入站消息 |
+| 邀请加入 | 已完成 | 邀请口令自带频道，加入者只填写自己的 Agent 名称 |
+| 品牌资源 | 已完成 | App 使用 E3 图标和单色 SVG 菜单栏图标 |
+| 手动更新检查 | 已完成 | 正式版与 Beta 分开检查 GitHub Release，不静默下载或替换 App |
 
 ## 正在推进
 
 | 工作 | 完成条件 |
 |---|---|
-| 双机安装包闭环 | 两台 Mac 安装 App，B 点击固定测试招呼，A 的 AI 使用 `reply_to_message` 回复，B 收到真实 turn |
+| 双机安装包闭环 | 两台 Mac 安装 App，B 的 AI 主动发送，A 收到真实 turn；A 再主动发送，B 收到真实 turn |
 
 ## 尚未开始
 
-- Developer ID 签名、公证、自动更新和 Intel Mac；
+- Developer ID 签名、公证、静默自更新和 Intel Mac；
 - 正式 Human 账户、跨设备 Membership、邀请和撤权体验；
 - 离线未读摘要和恢复选择 UI；
 - 本地持久化投递账本与严格去重；
@@ -54,4 +57,4 @@
 - 自动化测试通过只代表代码检查通过；
 - Railway 健康只代表服务可访问；
 - Host 接受 start-turn 只代表投递成功；
-- 只有真实用户、真实设备、真实 Host 的双向闭环才代表 P0 产品完成。
+- 只有真实用户、真实设备、真实 Host 的双向主动发送与接收闭环才代表 P0 产品完成。
