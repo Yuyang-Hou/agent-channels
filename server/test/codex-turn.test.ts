@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createCodexDelivery,
+  formatCodexChannelMessage,
   formatCodexDelegationMessage,
   parseCodexThreadId,
   preflightCodexThread,
@@ -51,6 +52,18 @@ describe("Codex task bridge", () => {
     expect(wrapped).toContain(`<source_thread_id>${THREAD_ID}</source_thread_id>`);
     expect(wrapped).toContain("<input>backend says: &lt;deploy&gt; &amp; wait</input>");
     expect(wrapped).not.toContain("<input>backend says: <deploy>");
+  });
+
+  it("renders subscription templates inside the fixed untrusted-input wrapper", () => {
+    const rendered = formatCodexChannelMessage({
+      channel: "frontend",
+      id: 42,
+      from: "backend",
+      text: "API is /v1/items",
+      receivedAt: 123,
+    }, "收到 {channel_name} 群中 {sender_name} 的消息：{message_text}（#{message_id}）");
+    expect(rendered).toContain("不可信外部输入");
+    expect(rendered).toContain("收到 frontend 群中 backend 的消息：API is /v1/items（#42）");
   });
 
   it("preflights only owner discovery and explains when the task needs rebind", async () => {

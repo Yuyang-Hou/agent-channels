@@ -22,8 +22,9 @@ import { request as httpRequest, type IncomingMessage as HttpResponse } from "no
 import { request as httpsRequest } from "node:https";
 import { basename, dirname, join } from "node:path";
 import { parseArgs } from "node:util";
-import { createCodexDelivery } from "./codex-turn.js";
+import { createCodexDelivery, parseCodexThreadId } from "./codex-turn.js";
 import { DeliveryOutcomeUnknownError, type HostDelivery } from "./host-connector.js";
+import { requestViaLocalApp, type LocalLedgerRequest } from "./reply-mcp.js";
 
 const HELP = `rogerthat listen-here — open an SSE receiver for a channel
 
@@ -62,8 +63,23 @@ options:
                       hint using this trusted local task as the source. Only
                       valid together with --codex-thread.
   --codex-socket <p>  override the ChatGPT Desktop IPC socket path (diagnostics)
+  --message-template <t>
+                      render {channel_name}, {sender_name}, {message_text}, and
+                      {message_id} inside the fixed untrusted-input wrapper
+  --self-message-policy <p>
+                      include_other_endpoints (default) or exclude_member;
+                      the exact current task endpoint is always excluded
+  --self-endpoint-id <id>
+                      exact authenticated sender endpoint used by this task
+  --self-member-id <id>
+                      authenticated channel member used by exclude_member
+  --app-socket <p>    private Agent Channels App socket used to durably record a
+                      message before Host delivery (requires --subscription-id)
+  --subscription-id <uuid>
+                      local Subscription id paired with --app-socket
   --status-json       emit machine-readable lifecycle lines to stderr prefixed
-                      with "@agent-channels " (never contains message text/secrets)
+                      with "@agent-channels "; received events contain message
+                      text for the local App ledger, but never channel secrets
   --inbox <file>      append each message to this file (parent dir created if
                       missing). Format controlled by --format. When messages
                       carry inline attachments, the binaries are saved into a
@@ -116,6 +132,7 @@ examples:
 `;
 
 type Format = "jsonl" | "text";
+type SelfMessagePolicy = "include_other_endpoints" | "exclude_member";
 
 type Priority = "min" | "low" | "default" | "high" | "urgent";
 
@@ -145,6 +162,12 @@ type Args = {
   codexThread?: string;
   codexSourceThread?: string;
   codexSocket?: string;
+  messageTemplate?: string;
+  selfMessagePolicy: SelfMessagePolicy;
+  selfEndpointId?: string;
+  selfMemberId?: string;
+  appSocket?: string;
+  subscriptionId?: string;
   statusJson: boolean;
   inbox?: string;
   format: Format;
@@ -179,6 +202,12 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
         "codex-thread": { type: "string" },
         "codex-source-thread": { type: "string" },
         "codex-socket": { type: "string" },
+        "message-template": { type: "string" },
+        "self-message-policy": { type: "string" },
+        "self-endpoint-id": { type: "string" },
+        "self-member-id": { type: "string" },
+        "app-socket": { type: "string" },
+        "subscription-id": { type: "string" },
         "status-json": { type: "boolean" },
         inbox: { type: "string" },
         format: { type: "string" },
@@ -239,6 +268,23 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
     if (!Number.isFinite(n) || n <= 0) return { error: "--heartbeat must be a positive number of seconds" };
     heartbeat = n;
   }
+  const selfMessagePolicy = parsed.values["self-message-policy"] ?? "include_other_endpoints";
+  if (
+    selfMessagePolicy !== "include_other_endpoints" && selfMessagePolicy !== "exclude_member"
+  ) {
+    return { error: "--self-message-policy must be include_other_endpoints|exclude_member" };
+  }
+  const appSocket = parsed.values["app-socket"];
+  const subscriptionId = parsed.values["subscription-id"];
+  if (Boolean(appSocket) !== Boolean(subscriptionId)) {
+    return { error: "--app-socket and --subscription-id must be provided together" };
+  }
+  if (subscriptionId && !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(subscriptionId)) {
+    return { error: "--subscription-id must be a UUID" };
+  }
+  if (appSocket && !parsed.values["codex-thread"]) {
+    return { error: "--app-socket requires --codex-thread" };
+  }
   return {
     channel,
     token: token ?? "",
@@ -252,6 +298,12 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
     codexThread: parsed.values["codex-thread"],
     codexSourceThread: parsed.values["codex-source-thread"],
     codexSocket: parsed.values["codex-socket"],
+    messageTemplate: parsed.values["message-template"],
+    selfMessagePolicy,
+    selfEndpointId: parsed.values["self-endpoint-id"],
+    selfMemberId: parsed.values["self-member-id"],
+    appSocket,
+    subscriptionId,
     statusJson: parsed.values["status-json"] === true,
     inbox: parsed.values.inbox,
     format,
@@ -310,6 +362,8 @@ type WireAttachment = {
 type IncomingMessage = {
   id: number;
   from: string;
+  sender_member_id: string;
+  sender_endpoint_id: string;
   to: string;
   text: string;
   at: number;
@@ -462,6 +516,23 @@ function writeInboxStatus(args: Args, text: string): void {
   }
 }
 
+async function recordWithApp(
+  args: Args,
+  operation: "record_received" | "record_outcome",
+  event: LocalLedgerRequest["event"],
+): Promise<void> {
+  if (!args.appSocket || !args.subscriptionId || !args.codexThread) return;
+  const result = await requestViaLocalApp(args.appSocket, {
+    version: 2,
+    operation,
+    source: { provider: "codex", conversationId: parseCodexThreadId(args.codexThread) },
+    channel: args.channel,
+    subscription_id: args.subscriptionId,
+    event,
+  }, 5_000);
+  if (!result.ok) throw new Error(result.error);
+}
+
 async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDelivery): Promise<void> {
   // --min-priority filter: drop messages below the threshold entirely (no
   // inbox write, no hook spawn, no stdout). Missing priority counts as
@@ -470,18 +541,86 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
     const incomingRank = PRIORITY_RANK[msg.priority ?? "default"];
     if (incomingRank < PRIORITY_RANK[args.minPriority]) return;
   }
-  if (hostDelivery && msg.kind !== "status") {
-    const receipt = await hostDelivery({
-      channelId: args.channel,
-      messageId: msg.id,
+  if (!msg.sender_member_id || !msg.sender_endpoint_id) {
+    throw new Error(`message ${msg.id} is missing authenticated sender identity`);
+  }
+  if (msg.kind !== "status") {
+    await recordWithApp(args, "record_received", {
+      id: msg.id,
       from: msg.from,
+      to: msg.to,
       text: msg.text,
-      receivedAt: msg.at,
-      untrusted: true,
+      at: msg.at,
+      sender_member_id: msg.sender_member_id,
+      sender_endpoint_id: msg.sender_endpoint_id,
+      state: "received",
     });
+    emitStatus(args, "received", {
+      message: {
+        channel: args.channel,
+        id: msg.id,
+        from: msg.from,
+        to: msg.to,
+        text: msg.text,
+        at: msg.at,
+        ...(msg.priority ? { priority: msg.priority } : {}),
+        ...(msg.attachments?.length
+          ? {
+              attachments: msg.attachments.map((attachment) => ({
+                mime: attachment.mime,
+                ...(attachment.filename ? { filename: attachment.filename } : {}),
+              })),
+            }
+          : {}),
+      },
+    });
+  }
+  const filteredSelfMessage =
+    args.selfEndpointId === msg.sender_endpoint_id ||
+    (args.selfMessagePolicy === "exclude_member" &&
+      Boolean(args.selfMemberId) &&
+      args.selfMemberId === msg.sender_member_id);
+  if (filteredSelfMessage) {
+    await recordWithApp(args, "record_outcome", { id: msg.id, state: "filtered" });
+    emitStatus(args, "filtered", { messageId: msg.id, reason: args.selfMessagePolicy });
+    return;
+  }
+  if (hostDelivery && msg.kind !== "status") {
+    await recordWithApp(args, "record_outcome", { id: msg.id, state: "attempting" });
+    let receipt;
+    try {
+      receipt = await hostDelivery({
+        channelId: args.channel,
+        messageId: msg.id,
+        from: msg.from,
+        text: msg.text,
+        receivedAt: msg.at,
+        untrusted: true,
+      });
+    } catch (error) {
+      const unknown = error instanceof DeliveryOutcomeUnknownError;
+      try {
+        await recordWithApp(args, "record_outcome", {
+          id: msg.id,
+          state: unknown ? "unknown" : "failed",
+          error: (error as Error).message,
+        });
+      } catch {
+        // The original Host result remains authoritative. A failed ledger ACK
+        // cannot make an uncertain mutation safe to replay.
+      }
+      throw error;
+    }
     if (!args.quiet) {
       const deliveryId = receipt.providerDeliveryId ? ` interaction ${receipt.providerDeliveryId}` : "";
       console.error(`[listen-here] delivered message ${msg.id} to ${receipt.provider}${deliveryId}`);
+    }
+    try {
+      await recordWithApp(args, "record_outcome", { id: msg.id, state: "delivered" });
+    } catch (error) {
+      throw new DeliveryOutcomeUnknownError(
+        `Host accepted message ${msg.id}, but the App could not record the receipt: ${(error as Error).message}`,
+      );
     }
     emitStatus(args, "delivered", { messageId: msg.id, provider: receipt.provider });
   }
@@ -663,7 +802,7 @@ async function runOneConnection(
  *  receiver command can be a single self-contained line (no separate /join,
  *  no `<SID>` placeholder). Uses node:http/https directly (Node-16-safe, same
  *  as the SSE path). Returns the session_id or throws with a clear message. */
-function joinForSession(args: Args): Promise<string> {
+function joinForSession(args: Args): Promise<{ sessionId: string; memberId: string; endpointId: string }> {
   const url = new URL(`${args.origin.replace(/\/$/, "")}/api/channels/${args.channel}/join`);
   const payload = JSON.stringify({
     callsign: args.identityKey,
@@ -690,16 +829,16 @@ function joinForSession(args: Args): Promise<string> {
         res.on("data", (d) => (raw += d));
         res.on("end", () => {
           const status = res.statusCode ?? 0;
-          let body: { session_id?: string; error?: string } = {};
+          let body: { session_id?: string; member_id?: string; endpoint_id?: string; error?: string } = {};
           try {
             body = JSON.parse(raw);
           } catch {
             /* leave empty */
           }
-          if (status >= 200 && status < 300 && body.session_id) {
-            resolve(body.session_id);
+          if (status >= 200 && status < 300 && body.session_id && body.member_id && body.endpoint_id) {
+            resolve({ sessionId: body.session_id, memberId: body.member_id, endpointId: body.endpoint_id });
           } else {
-            reject(new Error(body.error || `join failed (HTTP ${status})`));
+            reject(new Error(body.error || `join failed or returned no authenticated identity (HTTP ${status})`));
           }
         });
       },
@@ -746,6 +885,7 @@ export async function runListenHere(
         threadId: args.codexThread,
         sourceThreadId: args.codexSourceThread,
         socketPath: args.codexSocket,
+        messageTemplate: args.messageTemplate,
       });
     } catch (err) {
       console.error(`error: ${(err as Error).message}`);
@@ -756,7 +896,9 @@ export async function runListenHere(
   // what makes the receiver command self-contained (no <SID> to fill in).
   if (!args.session) {
     try {
-      args.session = await joinForSession(args);
+      const joined = await joinForSession(args);
+      args.session = joined.sessionId;
+      args.selfMemberId ??= joined.memberId;
       if (!args.quiet) console.error(`[listen-here] joined as session ${args.session.slice(0, 8)}…`);
       emitStatus(args, "joined", { session: args.session.slice(0, 8) });
     } catch (err) {
@@ -840,7 +982,9 @@ export async function runListenHere(
           return 1;
         }
         try {
-          args.session = await joinForSession(args);
+          const joined = await joinForSession(args);
+          args.session = joined.sessionId;
+          args.selfMemberId ??= joined.memberId;
           if (!args.quiet) {
             console.error(`[listen-here] re-joined after ${status} as session ${args.session.slice(0, 8)}… — resuming`);
           }

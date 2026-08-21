@@ -19,7 +19,16 @@ if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
 fi
 MARKETING_VERSION="${RELEASE_VERSION%%-*}"
 DMG="$BUILD_DIR/Agent-Channels-$RELEASE_VERSION-arm64.dmg"
-SDK="$(xcrun --sdk macosx --show-sdk-path)"
+SDK="${AGENT_CHANNELS_SDK:-${SDKROOT:-}}"
+if [[ -z "$SDK" ]]; then
+  SDK="$(xcrun --sdk macosx --show-sdk-path)"
+elif [[ ! -d "$SDK" ]]; then
+  SDK="$(xcrun --sdk "$SDK" --show-sdk-path)"
+fi
+if [[ ! -f "$SDK/SDKSettings.plist" ]]; then
+  echo "Invalid macOS SDK: $SDK" >&2
+  exit 2
+fi
 CACHE_DIR="$BUILD_DIR/module-cache"
 ICONSET="$BUILD_DIR/AppIcon.iconset"
 export CLANG_MODULE_CACHE_PATH="$CACHE_DIR/clang"

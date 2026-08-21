@@ -55,6 +55,10 @@ export type MessageKind = "message" | "status";
 export type Message = {
   id: number;
   from: string;
+  /** Authenticated channel member resolved from the credential-bound session. */
+  sender_member_id: string;
+  /** Stable server-derived endpoint for this member + callsign. Never client supplied. */
+  sender_endpoint_id: string;
   to: string;
   text: string;
   at: number;
@@ -72,6 +76,11 @@ export type Message = {
    *  sporadic image/PDF uploads (screenshots, photos of an error) — anything
    *  larger should be hosted externally and pasted as a URL. */
   attachments?: Attachment[];
+};
+
+export type AuthenticatedSource = {
+  memberId: string;
+  endpointId: string;
 };
 
 export const MAX_SUGGESTED_REPLIES = 4;
@@ -206,6 +215,7 @@ export class Channel {
   private callsignBySession = new Map<string, string>();
   private sessionByCallsign = new Map<string, string>();
   private lastSeen = new Map<string, number>();
+  private sourceBySession = new Map<string, AuthenticatedSource>();
   private messages: Message[] = [];
   // Per-callsign delivery cursor: last msg id delivered to that callsign. Persists across
   // session expiry so offline messages get delivered when the callsign rejoins.
@@ -284,7 +294,7 @@ export class Channel {
   join(
     sessionId: string,
     callsign: string,
-    opts: { selfGenerated?: boolean } = {},
+    opts: { selfGenerated?: boolean; source?: AuthenticatedSource } = {},
   ): { sessionId: string; roster: string[]; history: Message[]; idempotent: boolean } {
     const normalized = callsign.trim().toLowerCase();
     if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(normalized)) {
@@ -297,6 +307,29 @@ export class Channel {
     if (normalized === "all") {
       throw new ChannelError('callsign "all" is reserved for broadcast', "invalid", 400);
     }
+    // Source and callsign form one identity binding. Validate the existing
+    // session before touching either callsign map so a rejected cross-member
+    // session reuse cannot rename or otherwise corrupt the victim session.
+    const currentCallsign = this.callsignBySession.get(sessionId);
+    const currentSource = this.sourceBySession.get(sessionId);
+    if (currentSource) {
+      if (!opts.source) {
+        if (currentCallsign !== normalized) {
+          throw new ChannelError(
+            "authenticated session cannot change callsign without a matching source binding",
+            "unauthorized",
+            401,
+          );
+        }
+      } else {
+        if (currentSource.memberId !== opts.source.memberId) {
+          throw new ChannelError("session belongs to a different authenticated member", "unauthorized", 401);
+        }
+        if (currentCallsign === normalized && currentSource.endpointId !== opts.source.endpointId) {
+          throw new ChannelError("session endpoint does not match its authenticated callsign", "unauthorized", 401);
+        }
+      }
+    }
     const existingSession = this.sessionByCallsign.get(normalized);
     let idempotent = false;
     const effectiveId = sessionId;
@@ -306,6 +339,16 @@ export class Channel {
       } else if (opts.selfGenerated) {
         // Caller had no identity (REST minted a UUID for them) and the callsign is taken —
         // hand back the existing session_id so they can adopt it.
+        const adoptedSource = this.sourceBySession.get(existingSession);
+        if (opts.source && adoptedSource) {
+          if (
+            adoptedSource.memberId !== opts.source.memberId ||
+            adoptedSource.endpointId !== opts.source.endpointId
+          ) {
+            throw new ChannelError("callsign belongs to a different authenticated endpoint", "unauthorized", 401);
+          }
+        }
+        if (opts.source && !adoptedSource) this.sourceBySession.set(existingSession, opts.source);
         this.evictedSessions.delete(sessionId);
         this.touch(existingSession);
         return {
@@ -329,6 +372,7 @@ export class Channel {
     }
     this.callsignBySession.set(sessionId, normalized);
     this.sessionByCallsign.set(normalized, sessionId);
+    if (opts.source) this.sourceBySession.set(sessionId, opts.source);
     this.evictedSessions.delete(sessionId);
     this.touch(sessionId);
     if (this.firstJoinedAt === null) this.firstJoinedAt = Date.now();
@@ -360,6 +404,19 @@ export class Channel {
     this.touch(sessionId);
   }
 
+  bindAuthenticatedSource(
+    sessionId: string,
+    source: AuthenticatedSource,
+  ): AuthenticatedSource {
+    this.ensureJoined(sessionId);
+    const existing = this.sourceBySession.get(sessionId);
+    if (existing && (existing.memberId !== source.memberId || existing.endpointId !== source.endpointId)) {
+      throw new ChannelError("session is already bound to a different authenticated endpoint", "unauthorized", 401);
+    }
+    this.sourceBySession.set(sessionId, source);
+    return source;
+  }
+
   private evictSession(sessionId: string) {
     const listener = this.listenersBySession.get(sessionId);
     if (listener) {
@@ -379,6 +436,7 @@ export class Channel {
       this.evictedSessions.set(sessionId, Date.now());
     }
     this.callsignBySession.delete(sessionId);
+    this.sourceBySession.delete(sessionId);
     this.lastSeen.delete(sessionId);
     // Note: do NOT delete cursorByCallsign[cs] — keeps the offline-delivery pointer alive
     // so when this callsign rejoins, they get the messages queued for them while away.
@@ -422,6 +480,10 @@ export class Channel {
   ): Message {
     this.ensureJoined(sessionId);
     const from = this.callsignBySession.get(sessionId)!;
+    const source = this.sourceBySession.get(sessionId);
+    if (!source) {
+      throw new ChannelError("session has no authenticated source binding; rejoin the channel", "unauthorized", 401);
+    }
     // Empty/missing `to` defaults to broadcast. Walkie-talkie physical default —
     // press-to-talk goes to everyone on the channel. Agents that omit the field
     // (a common first-call mistake) get sensible behavior instead of an error.
@@ -460,7 +522,15 @@ export class Channel {
     // least the current wall clock. Survives restarts as long as the clock advances.
     const now = Date.now();
     this.nextMsgId = Math.max(now, this.nextMsgId + 1);
-    const msg: Message = { id: this.nextMsgId, from, to: dest, text, at: now };
+    const msg: Message = {
+      id: this.nextMsgId,
+      from,
+      sender_member_id: source.memberId,
+      sender_endpoint_id: source.endpointId,
+      to: dest,
+      text,
+      at: now,
+    };
     if (isStatus) msg.kind = "status";
     // Only attach `priority` when explicitly non-default — keeps the wire format
     // backward-compatible for consumers that don't know about priorities.

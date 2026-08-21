@@ -6,21 +6,29 @@ import { Readable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createReplyMcpHandler,
+  requestViaLocalApp,
   runChannelMcp,
-  sendViaLocalApp,
-  type LocalSendResult,
+  type LocalAppRequest,
+  type LocalAppResult,
 } from "../src/reply-mcp.js";
 
+const THREAD_ID = "01a0236a-c478-7fc0-99f1-6f8fd6564b90";
+const OTHER_THREAD_ID = "01a0236a-c478-7fc0-89f1-6f8fd6564b91";
 const closers: Array<() => Promise<void>> = [];
 
-function toolCall(message = "API is ready") {
+function toolCall(
+  name = "send_to_channel",
+  args: Record<string, unknown> | undefined = { message: "API is ready" },
+  meta: unknown = { threadId: THREAD_ID },
+) {
   return {
     jsonrpc: "2.0" as const,
     id: 3,
     method: "tools/call",
     params: {
-      name: "send_to_channel",
-      arguments: { message },
+      name,
+      ...(args === undefined ? {} : { arguments: args }),
+      ...(meta === undefined ? {} : { _meta: meta }),
     },
   };
 }
@@ -64,98 +72,283 @@ afterEach(async () => {
 });
 
 describe("channel MCP", () => {
-  it("exposes only send_to_channel and delegates message-only sends to the app", async () => {
-    const sendViaApp = vi.fn(async (): Promise<LocalSendResult> => ({
-      ok: true,
-      id: "42",
-      callsign: "frontend",
-    }));
-    const handle = createReplyMcpHandler({ sendViaApp });
-
+  it("exposes only the six current-task channel tools", async () => {
+    const handle = createReplyMcpHandler();
     const listed = await handle({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     const tools = (listed?.result as { tools: Array<Record<string, unknown>> }).tools;
-    expect(tools).toHaveLength(1);
+
+    expect(tools.map((tool) => tool.name)).toEqual([
+      "send_to_channel",
+      "list_channels",
+      "subscribe_to_channel",
+      "unsubscribe_from_channel",
+      "get_channel_settings",
+      "update_channel_settings",
+    ]);
     expect(tools[0]).toMatchObject({
-      name: "send_to_channel",
       inputSchema: { required: ["message"], additionalProperties: false },
     });
-    expect(JSON.stringify(tools[0])).not.toContain("reply_ref");
-
-    const result = await handle(toolCall());
-    expect(sendViaApp).toHaveBeenCalledWith("API is ready");
-    expect(result?.result).toMatchObject({
-      content: [{ type: "text", text: "sent message #42 to all as frontend" }],
+    expect(tools[5]).toMatchObject({
+      inputSchema: {
+        required: ["channel"],
+        properties: {
+          self_message_policy: {
+            enum: ["include_other_endpoints", "exclude_member"],
+          },
+          default_send: { type: "boolean" },
+        },
+      },
     });
+    expect(JSON.stringify(tools)).not.toContain("threadId");
   });
 
-  it("validates message before contacting the app", async () => {
-    const sendViaApp = vi.fn();
-    const handle = createReplyMcpHandler({ sendViaApp });
-
-    const empty = await handle(toolCall(""));
-    const tooLong = await handle(toolCall("x".repeat(8193)));
-    expect(empty?.result).toMatchObject({ isError: true });
-    expect(tooLong?.result).toMatchObject({ isError: true });
-    expect(sendViaApp).not.toHaveBeenCalled();
-  });
-
-  it("allows retry after a definitive app rejection", async () => {
-    const sendViaApp = vi.fn()
-      .mockResolvedValueOnce({ ok: false, outcome: "definitive", error: "channel join failed" })
-      .mockResolvedValueOnce({ ok: true, id: "43", callsign: "frontend" });
-    const handle = createReplyMcpHandler({ sendViaApp });
-
-    const failed = await handle(toolCall());
-    const retried = await handle(toolCall());
-    expect(failed?.result).toMatchObject({ isError: true });
-    expect(JSON.stringify(failed)).toContain("channel join failed");
-    expect(retried?.result).toMatchObject({
-      content: [{ text: "sent message #43 to all as frontend" }],
-    });
-  });
-
-  it("blocks later sends after an unknown app outcome", async () => {
-    const sendViaApp = vi.fn(async (): Promise<LocalSendResult> => ({
-      ok: false,
-      outcome: "unknown",
-      error: "channel send outcome is unknown",
+  it("takes the current task from protected call metadata and delegates protocol-v2 sends", async () => {
+    const requestApp = vi.fn(async (): Promise<LocalAppResult> => ({
+      ok: true,
+      result: { id: "42", callsign: "frontend", channel: "api-work" },
     }));
-    const handle = createReplyMcpHandler({ sendViaApp });
+    const handle = createReplyMcpHandler({ requestApp });
+
+    const result = await handle(toolCall("send_to_channel", {
+      message: "API is ready",
+      channel: " api-work ",
+    }));
+
+    expect(requestApp).toHaveBeenCalledWith({
+      version: 2,
+      operation: "send",
+      source: { provider: "codex", conversationId: THREAD_ID },
+      message: "API is ready",
+      channel: "api-work",
+    });
+    expect(result?.result).toMatchObject({
+      content: [{ type: "text", text: "sent message #42 on api-work to all as frontend" }],
+      structuredContent: { id: "42", callsign: "frontend", channel: "api-work" },
+    });
+  });
+
+  it("omits channel so the app can apply unique-subscription/default-send routing", async () => {
+    const requestApp = vi.fn(async (): Promise<LocalAppResult> => ({
+      ok: true,
+      result: { id: "43", callsign: "frontend", channel: "default-channel" },
+    }));
+    const handle = createReplyMcpHandler({ requestApp });
+
+    await handle(toolCall());
+    expect(requestApp).toHaveBeenCalledWith({
+      version: 2,
+      operation: "send",
+      source: { provider: "codex", conversationId: THREAD_ID },
+      message: "API is ready",
+    });
+  });
+
+  it("maps subscription and settings tools to task-scoped app operations", async () => {
+    const requestApp = vi.fn(async (request: LocalAppRequest): Promise<LocalAppResult> => ({
+      ok: true,
+      result: { message: `${request.operation} ok` },
+    }));
+    const handle = createReplyMcpHandler({ requestApp });
+
+    await handle(toolCall("list_channels", {}));
+    await handle(toolCall("subscribe_to_channel", { channel: "frontend" }));
+    await handle(toolCall("unsubscribe_from_channel", { channel: "frontend" }));
+    await handle(toolCall("get_channel_settings", { channel: "frontend" }));
+    await handle(toolCall("update_channel_settings", {
+      channel: "frontend",
+      template: "服务端说：{{message}}",
+      self_message_policy: "include_other_endpoints",
+      default_send: true,
+    }));
+
+    const source = { provider: "codex", conversationId: THREAD_ID };
+    expect(requestApp.mock.calls.map(([request]) => request)).toEqual([
+      { version: 2, operation: "list_channels", source },
+      { version: 2, operation: "subscribe", source, channel: "frontend" },
+      { version: 2, operation: "unsubscribe", source, channel: "frontend" },
+      { version: 2, operation: "get_settings", source, channel: "frontend" },
+      {
+        version: 2,
+        operation: "update_settings",
+        source,
+        channel: "frontend",
+        settings: {
+          template: "服务端说：{{message}}",
+          self_message_policy: "include_other_endpoints",
+          default_send: true,
+        },
+      },
+    ]);
+  });
+
+  it("fails closed when Codex does not provide a valid metadata threadId", async () => {
+    const requestApp = vi.fn();
+    const handle = createReplyMcpHandler({ requestApp });
+
+    const missing = await handle({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "send_to_channel",
+        arguments: { message: "hello", threadId: THREAD_ID },
+      },
+    });
+    const uri = await handle(toolCall("list_channels", {}, {
+      threadId: `codex://threads/${THREAD_ID}`,
+    }));
+    const malformed = await handle(toolCall("list_channels", {}, { threadId: "not-a-uuid" }));
+
+    for (const result of [missing, uri, malformed]) {
+      expect(result?.result).toMatchObject({ isError: true });
+      expect(JSON.stringify(result)).toContain("valid current task id");
+    }
+    expect(requestApp).not.toHaveBeenCalled();
+  });
+
+  it("validates tool arguments before contacting the app", async () => {
+    const requestApp = vi.fn();
+    const handle = createReplyMcpHandler({ requestApp });
+
+    const results = await Promise.all([
+      handle(toolCall("send_to_channel", { message: "" })),
+      handle(toolCall("send_to_channel", { message: "x".repeat(8193) })),
+      handle(toolCall("subscribe_to_channel", {})),
+      handle(toolCall("update_channel_settings", { channel: "frontend" })),
+      handle(toolCall("update_channel_settings", {
+        channel: "frontend",
+        self_message_policy: "include_all",
+      })),
+      handle(toolCall("list_channels", { threadId: THREAD_ID })),
+    ]);
+
+    for (const result of results) expect(result?.result).toMatchObject({ isError: true });
+    expect(requestApp).not.toHaveBeenCalled();
+  });
+
+  it("surfaces ambiguous app routing as a definitive error and allows retry", async () => {
+    const requestApp = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        outcome: "definitive",
+        error: "choose a channel because this task has multiple subscriptions",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: { id: "44", callsign: "frontend", channel: "api-work" },
+      });
+    const handle = createReplyMcpHandler({ requestApp });
+
+    const ambiguous = await handle(toolCall());
+    const selected = await handle(toolCall("send_to_channel", {
+      message: "API is ready",
+      channel: "api-work",
+    }));
+
+    expect(ambiguous?.result).toMatchObject({ isError: true });
+    expect(JSON.stringify(ambiguous)).toContain("multiple subscriptions");
+    expect(selected?.result).toMatchObject({ content: [{ text: expect.stringContaining("#44") }] });
+    expect(requestApp).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks unknown sends only for the affected current task", async () => {
+    const requestApp = vi.fn(async (request: LocalAppRequest): Promise<LocalAppResult> => {
+      if (request.source.conversationId === THREAD_ID) {
+        return { ok: false, outcome: "unknown", error: "channel send outcome is unknown" };
+      }
+      return { ok: true, result: { id: "45", callsign: "backend", channel: "api-work" } };
+    });
+    const handle = createReplyMcpHandler({ requestApp });
 
     const uncertain = await handle(toolCall());
-    const blocked = await handle(toolCall("different message"));
+    const blocked = await handle(toolCall("send_to_channel", { message: "different message" }));
+    const otherTask = await handle(toolCall(
+      "send_to_channel",
+      { message: "other task message" },
+      { threadId: OTHER_THREAD_ID },
+    ));
+
     expect(uncertain?.result).toMatchObject({ isError: true });
-    expect(JSON.stringify(uncertain)).toContain("outcome is unknown");
     expect(blocked?.result).toMatchObject({ isError: true });
-    expect(JSON.stringify(blocked)).toContain("previous channel send outcome is unknown");
-    expect(sendViaApp).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(blocked)).toContain("for this task is unknown");
+    expect(otherTask?.result).toMatchObject({ content: [{ text: expect.stringContaining("#45") }] });
+    expect(requestApp).toHaveBeenCalledTimes(2);
   });
 
-  it("sends only protocol version and message over the protected app socket", async () => {
+  it("blocks later sends when the app reports success without a valid send receipt", async () => {
+    const requestApp = vi.fn(async (): Promise<LocalAppResult> => ({
+      ok: true,
+      result: { channel: "api-work" },
+    }));
+    const handle = createReplyMcpHandler({ requestApp });
+
+    const malformed = await handle(toolCall());
+    const blocked = await handle(toolCall("send_to_channel", { message: "retry" }));
+
+    expect(malformed?.result).toMatchObject({ isError: true });
+    expect(JSON.stringify(malformed)).toContain("send outcome is unknown");
+    expect(blocked?.result).toMatchObject({ isError: true });
+    expect(requestApp).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the operation and host-provided source over the protected app socket", async () => {
     let received: Record<string, unknown> | undefined;
     const socketPath = await startLocalAppServer((request) => {
       received = request;
-      return { version: 1, ok: true, id: "44", callsign: "frontend" };
+      return {
+        version: 2,
+        ok: true,
+        result: { id: "46", callsign: "frontend", channel: "api-work" },
+      };
     });
+    const request: LocalAppRequest = {
+      version: 2,
+      operation: "send",
+      source: { provider: "codex", conversationId: THREAD_ID },
+      message: "backend ready",
+      channel: "api-work",
+    };
 
-    const result = await sendViaLocalApp(socketPath, "backend ready");
-    expect(received).toEqual({ version: 1, message: "backend ready" });
-    expect(result).toEqual({ ok: true, id: "44", callsign: "frontend" });
-    expect(JSON.stringify(received)).not.toMatch(/token|password|origin|channel|callsign/i);
+    const result = await requestViaLocalApp(socketPath, request);
+    expect(received).toEqual(request);
+    expect(result).toEqual({
+      ok: true,
+      result: { id: "46", callsign: "frontend", channel: "api-work" },
+    });
+    expect(JSON.stringify(received)).not.toMatch(/token|password|origin|callsign/i);
   });
 
   it("fails definitively before dispatch when the app socket is absent", async () => {
     const directory = mkdtempSync(join(tmpdir(), "agent-channels-missing-"));
-    const result = await sendViaLocalApp(join(directory, "send.sock"), "hello", 100);
+    const result = await requestViaLocalApp(join(directory, "send.sock"), {
+      version: 2,
+      operation: "send",
+      source: { provider: "codex", conversationId: THREAD_ID },
+      message: "hello",
+    }, 100);
     expect(result).toMatchObject({ ok: false, outcome: "definitive" });
     expect(JSON.stringify(result)).toContain("open it and retry");
   });
 
-  it("treats an incompatible app response as unknown after dispatch", async () => {
-    const socketPath = await startLocalAppServer(() => ({ version: 2, ok: true }));
-    const result = await sendViaLocalApp(socketPath, "hello");
-    expect(result).toMatchObject({ ok: false, outcome: "unknown" });
-    expect(JSON.stringify(result)).toContain("incompatible");
+  it("treats incompatible post-dispatch send responses as unknown but reads as retryable", async () => {
+    const sendSocket = await startLocalAppServer(() => ({ version: 1, ok: true }));
+    const readSocket = await startLocalAppServer(() => ({ version: 1, ok: true }));
+
+    const send = await requestViaLocalApp(sendSocket, {
+      version: 2,
+      operation: "send",
+      source: { provider: "codex", conversationId: THREAD_ID },
+      message: "hello",
+    });
+    const read = await requestViaLocalApp(readSocket, {
+      version: 2,
+      operation: "list_channels",
+      source: { provider: "codex", conversationId: THREAD_ID },
+    });
+
+    expect(send).toMatchObject({ ok: false, outcome: "unknown" });
+    expect(read).toMatchObject({ ok: false, outcome: "definitive" });
+    expect(JSON.stringify(send)).toContain("incompatible");
   });
 
   it("speaks newline-delimited MCP JSON-RPC over stdio", async () => {
@@ -182,9 +375,13 @@ describe("channel MCP", () => {
     expect(lines).toHaveLength(3);
     expect(lines[0]).toMatchObject({
       id: 1,
-      result: { protocolVersion: "2025-03-26", serverInfo: { name: "agent-channels" } },
+      result: {
+        protocolVersion: "2025-03-26",
+        serverInfo: { name: "agent-channels", version: "0.3.0-beta.1" },
+      },
     });
     expect(lines[1]).toEqual({ jsonrpc: "2.0", id: 2, result: {} });
-    expect(lines[2].result.tools).toEqual([expect.objectContaining({ name: "send_to_channel" })]);
+    expect(lines[2].result.tools).toHaveLength(6);
+    expect(lines[2].result.tools).toContainEqual(expect.objectContaining({ name: "list_channels" }));
   });
 });

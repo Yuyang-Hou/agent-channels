@@ -28,7 +28,7 @@ async function join(
   app: ReturnType<typeof makeApp>,
   ch: { id: string; token: string },
   callsign: string,
-): Promise<{ session_id: string }> {
+): Promise<{ session_id: string; member_id: string; endpoint_id: string }> {
   const res = await app.fetch(
     new Request(`${ORIGIN}/api/channels/${ch.id}/join`, {
       method: "POST",
@@ -37,7 +37,7 @@ async function join(
     }),
   );
   expect(res.status).toBe(200);
-  return (await res.json()) as { session_id: string };
+  return (await res.json()) as { session_id: string; member_id: string; endpoint_id: string };
 }
 
 async function send(
@@ -67,11 +67,25 @@ async function readMessages(
   res: Response,
   count: number,
   timeoutMs = 2000,
-): Promise<Array<{ id: number; from: string; text: string }>> {
+): Promise<
+  Array<{
+    id: number;
+    from: string;
+    sender_member_id: string;
+    sender_endpoint_id: string;
+    text: string;
+  }>
+> {
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  const got: Array<{ id: number; from: string; text: string }> = [];
+  const got: Array<{
+    id: number;
+    from: string;
+    sender_member_id: string;
+    sender_endpoint_id: string;
+    text: string;
+  }> = [];
   const deadline = Date.now() + timeoutMs;
   while (got.length < count) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${count} messages, got ${got.length}`);
@@ -113,6 +127,10 @@ describe("GET /api/channels/:id/stream (SSE)", () => {
     expect(msgs).toHaveLength(1);
     expect(msgs[0].from).toBe("beta");
     expect(msgs[0].text).toBe("ping");
+    expect(msgs[0]).toMatchObject({
+      sender_member_id: beta.member_id,
+      sender_endpoint_id: beta.endpoint_id,
+    });
   });
 
   it("delivers backlog buffered before stream is opened", async () => {

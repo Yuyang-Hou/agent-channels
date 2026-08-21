@@ -32,10 +32,23 @@
 依赖方向只能从通用层指向具体 Connector：Channel Service 和 Subscription Runtime
 都不能理解 Codex thread、Claude session 或其他 Host 私有协议。
 
+0.3 本机产品形态为：
+
+```text
+Main Window
+  -> ChannelConnection[] + LocalMessage[]
+  -> TaskBinding[] x Subscription[]
+  -> supervised channel feeds / listen-here sidecars
+  -> Host Connector -> bound AI sessions
+```
+
+ChannelConnection 表示稳定频道成员授权；TaskBinding 表示本机 Host 会话；Subscription 是二者
+之间唯一的多对多关系。三者不能再合并为一个单 Binding。
+
 ## 服务端职责
 
-- 创建频道并记录所有者；
-- 管理频道成员及权限；
+- 创建频道、短期邀请和 owner Membership；
+- 为每个成员签发独立凭证，管理成员、endpoint、移除、封禁和权限；
 - 接收、排序和分发消息；
 - 为短期恢复保留消息；
 - 维护每个成员或订阅的消费游标；
@@ -45,13 +58,13 @@
 
 ## Subscription Runtime 职责
 
-- 由用户显式绑定频道和一个本机 Host Binding；
+- 由用户显式创建 TaskBinding 和 task-channel Subscription；
 - 进程存活时维持 SSE，切换桌面会话不销毁监听；
 - 把服务端消息规范化为 Host 无关的消息信封；
 - 仅在真实消息到达时请求 Connector 投递；
-- 重新连接时使用游标恢复和去重；
+- 每条 Subscription 串行投递并使用自己的游标恢复、去重和错误状态；
 - 只有 Connector 确认 Host 已接受后才推进投递游标；
-- 频道 token、Host Binding 和 Runtime 路径保留在本机，不注入模型上下文。
+- 成员凭证、TaskBinding 和 Runtime 路径保留在本机，不注入模型上下文。
 
 ## Host Connector 契约
 
@@ -69,16 +82,22 @@ P0 不建设动态插件市场、Connector 注册中心或通用进程管理框�
 可以在 Bridge 内直接投递，也可以由 Host 启动本地插件后通过本机 IPC 接收，但不能
 反向污染频道协议。
 
-## Host Binding
+## TaskBinding 与 Subscription
 
-Host Binding 是本机配置，至少包含：
+TaskBinding 是本机 Host 配置，至少包含：
 
 - `provider`：例如 `codex`；
 - `conversation_id`：Host 私有的不透明会话标识；
 - Connector 所需的本机选项，例如 socket 路径。
 
-服务端只能看到频道成员与在线订阅，不能看到 Host Binding。删除或撤销 Binding 后，
-Connector 必须停止向该会话投递。
+Subscription 在本机把一个 TaskBinding 与一个 ChannelConnection 关联，并保存 task endpoint、
+独立游标、模板、自消息策略、运行状态和唯一默认出站标记。一个 TaskBinding 可以拥有多个
+Subscription，一个 ChannelConnection 也可以关联多个 TaskBinding。服务端只能看到频道成员、
+不透明 endpoint 与在线 session，不能看到 TaskBinding 或 Subscription 的 Host 私有字段。
+
+删除 TaskBinding 或撤销 ChannelConnection 后，App 必须先停止相关 Subscription。0.3 P0 为每条
+启用的 task-channel Subscription 监管一个现有 `listen-here` sidecar；只有真实规模证明需要时
+才合并为 multiplex daemon。
 
 ## 消息状态
 
@@ -96,9 +115,13 @@ outbound_message_accepted
 入站处理和出站发送是两条独立链路：收到消息不要求回复，AI 也无需先收到消息即可主动
 发送。P0 只承诺服务端接收、活跃会话至少一次投递和基于游标的恢复；不承诺离线 AI 必达。
 
-Connector 必须按单个 Binding 串行投递，避免两个外部消息并发创建相互覆盖的 Host
+Connector 必须按单条 Subscription 串行投递，避免两个外部消息并发创建相互覆盖的 Host
 交互。显式拒绝可安全重试；mutating 请求发出后若回执丢失，Runtime 停止自动重放并保留
 游标，由用户确认后选择跳过或重试。稳定 `channel_id + message_id` 用于关联这次判断。
+
+0.3 App 还要在 Host delivery 之前保存 LocalMessage。一次服务端消息以
+`channel_id + message_id` 去重，并为每条匹配的 Subscription 分别保存
+`received|filtered|delivered|failed|unknown`；一项失败不能覆盖频道消息或暂停其他项。
 
 ## Host 能力分级
 
@@ -123,22 +146,37 @@ Desktop IPC 属于 ChatGPT 私有版本化协议，仍是升级敏感依赖。Co
 版本与响应形状，在 owner 缺失或协议不兼容时失败关闭并提示重新打开任务或升级 Bridge；
 不得静默修改用户环境变量。
 
-## 出站发送
+## MCP task 操作与出站发送
 
-AI 向频道发消息使用本机固定 STDIO MCP。它只暴露 `send_to_channel(message)`，并把消息正文
-通过当前用户专属的 Unix socket 交给菜单栏 App；App 从 Binding 和 Keychain 取得频道凭证，
-以当前 Agent 名称广播。MCP 不读取 Keychain，也不直接访问 Channel Service。发送不依赖入站
-消息或 SSE 监听状态，但要求菜单栏 App 正在运行；Host Connector 不读取模型输出，也不代理
-出站消息。
+AI 使用本机固定 STDIO MCP。工具表固定为六项：`send_to_channel`、`list_channels`、
+`subscribe_to_channel`、`unsubscribe_from_channel`、`get_channel_settings` 和
+`update_channel_settings`。`send_to_channel` 允许 task 随时主动发送；其余工具只查询或修改
+当前来源 task 的本机频道订阅与设置。每次调用都读取 `tools/call params._meta.threadId` 作为
+Codex 来源能力，并通过当前用户专属的 Unix socket v2 把已校验参数和 source context 交给 App。
 
-## 菜单栏 App 边界
+App 精确匹配 TaskBinding；发送时解析显式频道或唯一默认出站 Subscription，再从 Keychain
+取得该成员凭证。MCP 不读取 Keychain、不直接访问 Channel Service，也不建立频道监听、消费
+入站消息、保存历史或调用 Host Connector；这些接收能力和运行态全部属于 App。订阅工具只是
+请求 App 改变当前 task 的 Subscription，消息是否到达及是否触发 Host 投递仍由 App 决定。
 
-菜单栏 App 负责 Binding、Keychain、出站网络请求、监听生命周期和入站投递；MCP 只负责
-校验 AI 的发送参数并请求本机 App。发送 socket 位于 App 私有目录，目录权限为 `0700`、
-socket 为 `0600`，App 还校验连接者 UID。
-邀请口令携带频道信息，加入者只填写自己的 Agent 名称。App 使用 E3 品牌图标和单色 SVG
-模板菜单栏图标。正式版与 Beta 更新只在用户手动检查时查询 GitHub Release；P0 不静默
-下载或替换 App。
+`_meta.threadId` 缺失、类型错误、未绑定或操作目标歧义时必须失败关闭，不按最近活跃 task、
+当前主窗口频道或全局 active channel 猜测。thread id 不进入模型可见正文、频道消息或服务端。
+该 `_meta` 字段是 Codex 当前实现能力而非公开稳定合同，0.3 发布前必须用两个真实 task 做能力
+探测。
+
+## App 主窗口与本机边界
+
+App 主窗口负责 ChannelConnection、简单文本时间线、成员、TaskBinding、Subscription、模板
+和逐项状态；菜单栏只保留总体状态、快速打开和生命周期控制。App 还是 Keychain、出站网络
+请求、本地历史与 sidecar 的唯一 owner；MCP 只校验 AI 参数并请求本机 App。发送 socket 位于
+App 私有目录，目录权限为 `0700`、socket 为 `0600`，App 还校验连接者 UID。
+
+App 与 task 是同一 Member 下的不同 endpoint。精确来源 task endpoint 永不回投自己；每条
+Subscription 可以选择接收同一 Member 的其他 endpoint，默认允许 App 给自己的 task 发消息。
+模板只替换允许的频道、发送者、正文和消息 id 变量，远端正文始终是不可信数据。
+
+0.3 使用全新版本化本地 store，不迁移、覆盖或删除 0.2 单 Binding 数据。正式版与 Beta 更新
+只在用户手动检查时查询 GitHub Release；本轮不静默下载或替换 App。
 
 ## 当前实现映射
 
@@ -146,7 +184,8 @@ socket 为 `0600`，App 还校验连接者 UID。
 - `server/src/listen-here.ts` 实现 Subscription Runtime，并从兼容 CLI 参数创建 Connector；
 - `server/src/codex-turn.ts` 实现 Codex 目标校验、输入转换、Desktop owner discovery 和
   targeted start-turn；
-- `server/src/reply-mcp.ts` 实现只暴露 `send_to_channel(message)` 的最小本机 MCP；
-- `macos/AgentChannelsApp.swift` 管理单 Binding、Keychain、Bridge 生命周期和可操作状态；
+- `server/src/reply-mcp.ts` 实现六个 task-scoped 频道工具；工具只请求本机 App，不拥有接收链路；
+- `macos/AgentChannelsApp.swift` 当前仍是 0.2 单 Binding 实现；0.3 change 将引入主窗口、
+  ChannelConnection、TaskBinding、Subscription 和本地消息状态；
 - MCP App View 是已被替代的实验，不属于目标入站链路；
 - 菜单栏 App 包装本地 Runtime、凭证和出站频道请求，但不承载模型 Runtime 或服务端频道状态。

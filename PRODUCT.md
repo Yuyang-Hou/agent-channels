@@ -46,49 +46,60 @@ AI 会话。
   -> 暂时断线后明确展示漏掉的消息，而不是静默丢失
 ```
 
-用户应当能够回答四个问题：当前绑定的是哪个会话、监听哪个频道、是否在线、最近一次
-投递是否成功。用户不需要理解 SSE、Desktop IPC 或 Runtime 协议。
+用户应当能够回答五个问题：自己加入了哪些频道、当前查看哪个频道、每个 task 订阅哪些
+频道、各项是否在线、最近一次投递是否成功。用户不需要理解 SSE、Desktop IPC 或 Runtime
+协议。
 
 ## 产品模型
 
 - **Human**：稳定用户主体。
 - **Channel**：多人或多个 AI 会话交换协作消息的空间。
-- **Membership**：Human 或 Agent 与 Channel 的长期授权关系。
+- **Membership**：Human 与 Channel 的长期授权关系，拥有独立、可撤销的频道凭证。
+- **Endpoint**：Membership 下的 App 或 task 发送来源；只暴露不透明 id，不暴露 Host 会话 id。
 - **Conversation Session**：某个 AI Host 中的临时工作会话。
-- **Subscription**：Conversation Session 对 Channel 的临时在线监听关系。
-- **Host Binding**：只保存在本机的 Host 类型与目标会话定位信息。
+- **TaskBinding**：只保存在本机的 Host 类型与目标会话定位信息。
+- **Subscription**：TaskBinding 对 Channel 的显式订阅，独立保存游标、模板、策略和状态。
 - **Message**：带稳定 id、来源和顺序的协作事件。
+- **Local Message Record**：App 本机保存的消息与逐 Subscription 投递状态，不是永久云历史。
 
-稳定身份与临时会话必须分开：`uid` 代表用户，`session_id` 只代表一次在线会话，Host
-Binding 也不能成为服务端长期身份。
+稳定授权与临时会话必须分开：0.3 的 `member_id` 只代表某人对某频道的 Membership，
+`session_id` 只代表一次在线会话，TaskBinding 也不能成为服务端长期身份。跨频道 Human
+账户属于后续范围。
 
-## P0 产品范围
+## 0.3 Beta 产品范围
 
-P0 只交付并验收以下闭环：
+0.3 Beta 在已经验证的单频道链路上交付以下闭环：
 
-- 每个用户显式绑定一个本机 Codex 会话；
-- 原生 macOS 菜单栏 App 管理一个频道与一个 Codex 会话 Binding；
-- 内嵌 Runtime 监听频道，凭证只保存在 Keychain；
-- 邀请口令自带频道信息，加入者只需填写自己的 Agent 名称；
+- 全新 clean-slate App，不迁移或删除 0.2 单 Binding 数据；
+- 原生 macOS 主窗口管理多个频道、简单文本时间线、发送、未读、成员和 task 订阅；
+- owner 与每个成员使用独立凭证，owner 可以移除和封禁成员；
+- 本机分别管理多个 TaskBinding 与 task-channel Subscription；
+- 一个 task 可以订阅多个频道，一个频道也可以绑定多个 task，游标和失败状态互相隔离；
 - 真实普通消息触发绑定会话，状态消息和空闲连接不触发；
-- 消息包含可识别的频道、发送者和稳定消息 id；
-- 本机 MCP 只暴露 `send_to_channel(message)`，AI 无需先收到消息即可主动向当前频道广播；
-- 正式版与 Beta 由用户分别手动检查更新，不静默下载或替换 App；
-- App 使用 E3 品牌图标和单色菜单栏 SVG；
-- 短暂断线可以按游标恢复；
-- 两个用户、两台设备完成一次双向协作验收。
+- App 收到消息先写本地历史，再逐 Subscription 更新 filtered、delivered、failed 或 unknown；
+- 每条 Subscription 使用受限模板，并明确是否接收同一成员其他 endpoint 的消息；
+- 本机 MCP 暴露 `send_to_channel`、`list_channels`、`subscribe_to_channel`、
+  `unsubscribe_from_channel`、`get_channel_settings` 和 `update_channel_settings` 六个 task-scoped
+  工具；所有调用都必须通过 Codex `_meta.threadId` 精确匹配 TaskBinding；
+- AI 可以随时主动发送，不需要先收到消息；频道监听、消息接收、本地历史和 Host 投递仍由 App
+  持有，收到消息也不等于 AI 必须回复；
+- 短暂断线按每条 Subscription 的游标恢复，单项失败不拖停其他项；
+- 两个用户、两台设备、两个频道和至少三个 Subscription 完成真实验收。
 
-Codex 是 P0 唯一支持的 Host，但频道、身份、恢复和投递语义不能包含 Codex 私有概念。
+Codex 是 0.3 Beta 唯一支持的 Host，但频道、成员、消息、恢复和投递语义不能包含 Codex
+私有概念。
 
-## P0 不包含
+## 0.3 Beta 不包含
 
 - Claude、Cursor 或其他 Host Connector；
-- 多频道、多 task、完整主动发信聊天 UI、静默自更新和已公证公开安装包；
+- 0.2 数据或频道迁移、账户和跨设备身份恢复；
+- 附件、富文本、编辑、删除、反应、搜索、永久云历史或完整聊天客户端；
+- 任意规则 DSL、脚本、自动回复或 Agent 工作流；
+- 所有权转移、复杂角色、组织目录、静默自更新和已公证公开安装包；
 - 独立模型 Runtime 或永久在线 Agent；
 - 用户关机或 Host 退出后的 AI 自动处理或发送；
-- 完整聊天客户端、永久消息档案、任务板或工作流；
 - 文件协作和高风险工具自动授权；
-- 完整账户、目录、社交关系和商业化能力。
+- 商业化能力。
 
 ## 产品原则
 
@@ -99,14 +110,17 @@ Codex 是 P0 唯一支持的 Host，但频道、身份、恢复和投递语义�
 - 不为尚未实现的第二个 Host 提前建设插件市场或通用 SDK。
 - 不能通过真实 Host 验收的能力，不计入产品完成度。
 
-## P0 完成标准
+## 0.3 Beta 完成标准
 
-P0 只有同时满足以下条件才算完成：
+0.3 Beta 只有同时满足以下条件才算完成：
 
-1. 两个独立用户在两台设备上各绑定一个 Codex 会话并加入同一频道；
-2. A 发送消息后，B 的绑定会话在不保持前台的情况下收到一个真实 turn；
-3. 没有消息时，B 不产生额外 turn；
-4. B 的 AI 主动向频道发送另一条消息，A 的绑定会话收到真实 turn；
-5. 短暂断线恢复不静默丢消息，并能识别可能的重复投递；
-6. 频道凭证、Host Binding、工作目录和其他本机会话 id 不进入模型正文；
-7. Host 不可用、授权失效和 Connector 不支持时，用户能看到明确状态。
+1. 两个独立用户在两台设备上加入两个新频道，并完成 App 双向收发和本地历史恢复；
+2. owner 移除或封禁在线成员后，旧凭证的发送、监听和 session 立即失效；
+3. 至少三个 task-channel Subscription 完成 App → task、task → App 和 task → task；
+4. 两个真实 Codex task 的 `_meta.threadId` 分别精确匹配自身 UUID，消息不按当前 UI 或最近
+   活跃 task 猜测路由；
+5. 一个 task 订阅两个频道、一个频道绑定两个 task 时不串台，游标与错误互相隔离；
+6. 自消息策略与模板在真实 turn 中生效，filtered 和空闲消息都不产生额外 turn；
+7. 短暂断线和 App 重启不静默丢消息，unknown 结果不会自动重复投递；
+8. 成员凭证、TaskBinding、工作目录和其他本机会话 id 不进入模型正文或服务端；
+9. Host 不可用、授权失效和 Connector 不支持时，主窗口显示可操作的独立状态。

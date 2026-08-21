@@ -4,7 +4,7 @@
 // stdout dump, --inbox file, --on-message hook, and reconnect with `since`.
 
 import { serve, type ServerType } from "@hono/node-server";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,8 @@ type ServerCtx = {
   channelToken: string;
   alphaSession: string;
   betaSession: string;
+  betaMemberId: string;
+  betaEndpointId: string;
   tmp: string;
 };
 
@@ -62,7 +64,7 @@ async function boot(): Promise<ServerCtx> {
             method: "POST",
             headers: { "content-type": "application/json", authorization: `Bearer ${channelToken}` },
             body: JSON.stringify({ callsign }),
-          }).then((r) => r.json() as Promise<{ session_id: string }>);
+          }).then((r) => r.json() as Promise<{ session_id: string; member_id: string; endpoint_id: string }>);
         const alpha = await joinOne("alpha");
         const beta = await joinOne("beta");
         resolve({
@@ -72,6 +74,8 @@ async function boot(): Promise<ServerCtx> {
           channelToken,
           alphaSession: alpha.session_id,
           betaSession: beta.session_id,
+          betaMemberId: beta.member_id,
+          betaEndpointId: beta.endpoint_id,
           tmp: mkdtempSync(join(tmpdir(), "rogerthat-listen-here-")),
         });
       } catch (err) {
@@ -236,6 +240,66 @@ describe("rogerthat listen-here", () => {
     expect(parsed[0].text).toBe("hello-one");
     expect(parsed[1].text).toBe("hello-two");
     expect(parsed[0].from).toBe("beta");
+  });
+
+  it("--status-json reports a received envelope before Host delivery", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const listener = runListener(
+      [
+        "--channel", ctx.channelId,
+        "--token", ctx.channelToken,
+        "--session", ctx.alphaSession,
+        "--origin", ctx.origin,
+        "--status-json",
+        "--quiet",
+      ],
+      1500,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await sendFromBeta(ctx, "ledger-first");
+    await waitFor(() => errors.mock.calls.some(([line]) => String(line).includes('"state":"received"')));
+    process.emit("SIGINT");
+    await listener;
+
+    const line = errors.mock.calls.map(([entry]) => String(entry))
+      .find((entry) => entry.startsWith("@agent-channels ") && entry.includes('"state":"received"'))!;
+    expect(JSON.parse(line.slice("@agent-channels ".length))).toMatchObject({
+      state: "received",
+      message: {
+        channel: ctx.channelId,
+        from: "beta",
+        to: "alpha",
+        text: "ledger-first",
+      },
+    });
+    errors.mockRestore();
+  });
+
+  it("filters a task's own endpoint after recording the received event", async () => {
+    const inbox = join(ctx.tmp, "rr-filtered.jsonl");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const listener = runListener(
+      [
+        "--channel", ctx.channelId,
+        "--token", ctx.channelToken,
+        "--session", ctx.alphaSession,
+        "--origin", ctx.origin,
+        "--status-json",
+        "--self-message-policy", "include_other_endpoints",
+        "--self-endpoint-id", ctx.betaEndpointId,
+        "--inbox", inbox,
+        "--quiet",
+      ],
+      1500,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await sendFromBeta(ctx, "do-not-inject");
+    await waitFor(() => errors.mock.calls.some(([line]) => String(line).includes('"state":"filtered"')));
+    process.emit("SIGINT");
+    await listener;
+    expect(messageLineCount(inbox)).toBe(0);
+    expect(errors.mock.calls.some(([line]) => String(line).includes('"state":"received"'))).toBe(true);
+    errors.mockRestore();
   });
 
   it("--format text: writes '[<from>] <text>' lines, newlines collapsed", async () => {
@@ -494,9 +558,28 @@ describe("rogerthat listen-here", () => {
 
   it("retries a message after an explicit Codex rejection", async () => {
     const socketPath = join(ctx.tmp, "codex.sock");
+    const appSocketPath = join(ctx.tmp, "app.sock");
     const rpcServer = createServer();
+    const appServer = createServer();
     let attempts = 0;
     const received: string[] = [];
+    const sequence: string[] = [];
+    appServer.on("connection", (socket) => {
+      let raw = "";
+      socket.on("data", (chunk) => {
+        raw += chunk.toString("utf8");
+        const newline = raw.indexOf("\n");
+        if (newline < 0) return;
+        const request = JSON.parse(raw.slice(0, newline)) as {
+          operation: string;
+          event: { state: string };
+        };
+        sequence.push(`app:${request.operation}:${request.event.state}`);
+        socket.end(`${JSON.stringify({ version: 2, ok: true, result: { message: "recorded" } })}\n`);
+      });
+    });
+    await new Promise<void>((resolve) => appServer.listen(appSocketPath, resolve));
+    chmodSync(appSocketPath, 0o600);
     rpcServer.on("connection", (socket) => {
       readIpcFrames(socket, (message) => {
         if (message.type !== "request" || typeof message.method !== "string") return;
@@ -528,6 +611,7 @@ describe("rogerthat listen-here", () => {
           }));
         } else if (message.method === "thread-follower-start-turn") {
           attempts += 1;
+          sequence.push("host:start-turn");
           const params = message.params as {
             turnStart?: { request?: { input?: Array<{ text?: string }> } };
           };
@@ -560,6 +644,8 @@ describe("rogerthat listen-here", () => {
         "--origin", ctx.origin,
         "--codex-thread", "01900000-0000-7000-8000-000000000001",
         "--codex-socket", socketPath,
+        "--app-socket", appSocketPath,
+        "--subscription-id", "01900000-0000-7000-8000-000000000099",
         "--quiet",
       ],
       3500,
@@ -572,8 +658,19 @@ describe("rogerthat listen-here", () => {
     expect(received).toHaveLength(2);
     expect(received[0]).toContain('"text":"retry-me"');
     expect(received[1]).toBe(received[0]);
+    expect(sequence).toEqual([
+      "app:record_received:received",
+      "app:record_outcome:attempting",
+      "host:start-turn",
+      "app:record_outcome:failed",
+      "app:record_received:received",
+      "app:record_outcome:attempting",
+      "host:start-turn",
+      "app:record_outcome:delivered",
+    ]);
 
     await new Promise<void>((resolve) => rpcServer.close(() => resolve()));
+    await new Promise<void>((resolve) => appServer.close(() => resolve()));
   });
 
   it("stops instead of automatically replaying an uncertain Codex delivery", async () => {

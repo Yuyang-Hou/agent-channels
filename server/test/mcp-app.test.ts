@@ -13,8 +13,8 @@ async function createChannel(app: ReturnType<typeof createApp>) {
     }),
   );
   expect(response.status).toBe(200);
-  const body = (await response.json()) as { channel_id: string; join_token: string };
-  return { id: body.channel_id, token: body.join_token };
+  const body = (await response.json()) as { channel_id: string; join_token: string; member_id: string };
+  return { id: body.channel_id, token: body.join_token, ownerId: body.member_id };
 }
 
 async function mcp(
@@ -114,6 +114,47 @@ describe("MCP App channel view", () => {
     expect(stream.status).toBe(200);
     expect(stream.headers.get("access-control-allow-origin")).toBe("*");
     await stream.body?.cancel();
+  });
+
+  it("binds MCP sends to the authenticated channel member", async () => {
+    const app = createApp({ publicOrigin: ORIGIN, authRequired: true });
+    const channel = await createChannel(app);
+    const initialized = await mcp(app, "initialize");
+    const joined = await mcp(
+      app,
+      "tools/call",
+      {
+        name: "join",
+        arguments: { channel_id: channel.id, token: channel.token, callsign: "mcp-agent" },
+      },
+      initialized.sessionId,
+    );
+    expect(joined.body.error).toBeUndefined();
+
+    const sent = await mcp(
+      app,
+      "tools/call",
+      { name: "send", arguments: { to: "all", message: "authenticated MCP" } },
+      initialized.sessionId,
+    );
+    expect(sent.body.error).toBeUndefined();
+
+    const history = await app.fetch(
+      new Request(`${ORIGIN}/api/channels/${channel.id}/history?limit=1`, {
+        headers: { authorization: `Bearer ${channel.token}` },
+      }),
+    );
+    expect(history.status).toBe(200);
+    expect(await history.json()).toMatchObject({
+      history: [
+        {
+          from: "mcp-agent",
+          sender_member_id: channel.ownerId,
+          sender_endpoint_id: expect.stringMatching(/^ep_[A-Za-z0-9_-]+$/),
+          text: "authenticated MCP",
+        },
+      ],
+    });
   });
 
   it("answers browser preflight for MCP and channel APIs", async () => {
