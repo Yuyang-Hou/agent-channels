@@ -58,7 +58,7 @@
 - [x] 自动化通过全量测试、typecheck、build 与 `openspec validate --strict --all`
 - [ ] 干净用户目录完成 0.3 安装；确认 0.2 数据未迁移、覆盖或删除
 - [ ] 两台 Mac、两个新频道、两个成员完成 App ↔ App 文本收发和本地历史恢复
-- [ ] owner 移除与封禁后，旧凭证不能 send/stream，其他成员与频道不受影响
+- [x] owner 移除与封禁后，旧凭证不能 send/stream，其他成员与频道不受影响
 - [ ] 至少三个 Subscription 完成 App → task、task → App 和 task → task 精确路由
 - [ ] 一个 task 同时订阅两个频道时不串台；一个频道绑定两个 task 时状态和游标独立
 - [ ] 模板和 same-member 策略在真实 turn 中生效，filtered 与空闲均为零 turn

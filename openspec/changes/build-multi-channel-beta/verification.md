@@ -33,6 +33,15 @@ real-Host, security inspection and public release gates remain pending.
 - Template tests cover all four allowed variables, invalid variables, untrusted text escaping and size limits.
 - Self-message tests cover exact endpoint suppression and both same-member policies.
 
+## Live Service Gate
+
+- Railway production deployment `2531a50f-116b-4d8c-9f30-e01af302137d` is `SUCCESS`; `/healthz` passed before cutover.
+- Public API acceptance on `https://rogerthat-production-fff6.up.railway.app` used newly created 0.3 test channels only.
+- Channel `brisk-xerus-386d` proved the minimal v2 create response, cross-channel credential rejection,
+  one-use invitation, server-owned sender identity, history, member list, remove, ban, unban and unaffected owner access.
+- Channel `olive-raven-0689` proved an already-open SSE receives `member_revoked`, closes after ban and rejects the
+  invalidated session afterward.
+
 ## Required Real-Host Acceptance
 
 Use two independent users on two Apple Silicon Macs, two newly created 0.3 channels and two real Codex
@@ -67,6 +76,7 @@ tasks. Do not reuse or import 0.2 data.
 
 ## Release Gate
 
-Only after all automated, real-Host and security checks pass may the project build and publish a new 0.3
-Beta. The verification record must include artifact path, SHA-256, signing status, two-machine evidence and
-remaining distribution limitations. Until then, existing 0.2 Release records remain historical facts.
+Only after all automated, real-Host and security checks pass may the project publish a new 0.3 Beta Release.
+The verification record must include artifact path, SHA-256, signing status, two-machine evidence and remaining
+distribution limitations. Until then, this ad-hoc DMG remains an acceptance candidate and existing 0.2 Release
+records remain historical facts.
