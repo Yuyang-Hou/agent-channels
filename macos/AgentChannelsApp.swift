@@ -15,7 +15,13 @@ private let automaticUpdateChecksKey = "automaticUpdateChecks"
 private let localSendProtocolVersion = 2
 private let maxChannelMessageLength = 8192
 private let maxLocalSendFrameBytes = 64 * 1024
-private let defaultMessageTemplate = "{message_text}"
+private let defaultMessageTemplate = """
+> **↗ Agent Channels · 外部频道消息**
+>
+> **频道** `{channel_name}` · **来自** `{sender_name}` · `#{message_id}`
+>
+> {message_text}
+"""
 
 private func compactTaskKey(_ raw: String) -> String? {
     guard let uuid = UUID(uuidString: raw) else { return nil }
@@ -164,6 +170,12 @@ private func continuesMessageGroup(
     let interval = current.at - previous.at
     return current.from == previous.from && current.direction == previous.direction
         && interval >= 0 && interval <= 5 * 60 * 1000
+}
+
+private let pendingSendStatusDelayMilliseconds = 1_000.0
+
+private func shouldShowPendingSendStatus(startedAt: Double, now: Double) -> Bool {
+    now - startedAt >= pendingSendStatusDelayMilliseconds
 }
 
 private func channelDisplayName(_ nickname: String, original: String) -> String {
@@ -3354,12 +3366,13 @@ private struct ChannelMessagesView: View {
 private struct MessageRow: View {
     let message: ChannelMessageRecord
     let continuation: Bool
+    @State private var showPendingStatus = false
 
     private var stateDetail: (String, Color)? {
         switch message.state {
         case .failed: return ("发送失败", .red)
         case .unknown: return ("投递结果未知", .red)
-        case .pending: return ("等待发送", .orange)
+        case .pending: return showPendingStatus ? ("发送中", .orange) : nil
         case .attempting: return ("正在投递", .orange)
         case .received, .filtered, .delivered, .skipped, .accepted: return nil
         }
@@ -3399,6 +3412,16 @@ private struct MessageRow: View {
                     .foregroundStyle(stateDetail.1)
                 }
             }
+        }
+        .task(id: message.id) {
+            guard message.state == .pending else { return }
+            let elapsed = Date().timeIntervalSince1970 * 1000 - message.at
+            let remaining = max(0, pendingSendStatusDelayMilliseconds - elapsed)
+            if remaining > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000))
+            }
+            guard !Task.isCancelled else { return }
+            showPendingStatus = true
         }
     }
 }
@@ -3575,12 +3598,12 @@ private struct SubscriptionCard: View {
                             Text("当前会话自己发送的消息始终不会转发回来，以避免循环。")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Text("消息正文模板").font(.caption.bold())
+                        Text("会话消息模板").font(.caption.bold())
                         TextEditor(text: $templateDraft)
                             .font(.system(.body, design: .monospaced))
-                            .frame(height: 90)
+                            .frame(height: 130)
                             .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
-                        Text("固定标题和来源栏由 Agent Channels 生成；此处只控制 Markdown 卡片正文。")
+                        Text("整段 Markdown 均可编辑；当前内容只是默认模板。")
                             .font(.caption2).foregroundStyle(.secondary)
                         Text("变量：{channel_name} {sender_name} {message_text} {message_id}")
                             .font(.caption2).foregroundStyle(.secondary)
@@ -3805,6 +3828,8 @@ private struct AgentChannelsV2SelfTest {
         groupedMessage.at = messageA.at + 6 * 60 * 1000
         precondition(!continuesMessageGroup(previous: messageA, current: groupedMessage))
         precondition(!continuesMessageGroup(previous: messageB, current: messageA))
+        precondition(!shouldShowPendingSendStatus(startedAt: 1_000, now: 1_999))
+        precondition(shouldShowPendingSendStatus(startedAt: 1_000, now: 2_000))
         precondition(channelDisplayName("  项目讨论  ", original: "quiet-owl-0001") == "项目讨论")
         precondition(channelDisplayName("  ", original: "quiet-owl-0001") == "quiet-owl-0001")
 

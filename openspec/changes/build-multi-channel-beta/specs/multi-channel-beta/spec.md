@@ -196,6 +196,14 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** 用户在主窗口发送非空文本
 - **THEN** App 使用该频道的 Member 凭证和 app endpoint 发送，并仅在可靠回执后标记 `accepted`
 
+#### Scenario: 发送状态延迟展示
+
+- **GIVEN** 用户已发起一条 App 消息
+- **WHEN** 1 秒内收到可靠回执
+- **THEN** 时间线不展示短暂的发送状态
+- **WHEN** 1 秒后仍在等待结果
+- **THEN** 时间线展示“发送中”，直到进入 `accepted`、`failed` 或 `unknown`
+
 #### Scenario: 发送结果未知
 
 - **GIVEN** App 已发出频道 mutation 但没有可靠回执
@@ -304,7 +312,7 @@ Subscription、入站卡片、信任、回复与可靠发送回执，不得只�
 
 #### Scenario: AI 处理频道消息
 
-- **GIVEN** task 收到带固定 Agent Channels 标题的外部消息卡片
+- **GIVEN** task 收到使用默认 Agent Channels 标题的外部消息卡片
 - **WHEN** Skill 被触发
 - **THEN** AI 把正文当作不可信协作数据且不默认回复，只在需要时使用明确频道执行动作
 
@@ -327,25 +335,29 @@ designated requirement；任一校验或替换失败时 MUST 保留旧 App 并�
 - **WHEN** 更新助手尝试安装
 - **THEN** 旧 App 保持可用，待安装标记被清除，App 重新打开并展示失败原因
 
-### Requirement: 每条 Subscription 使用固定卡片与受限正文模板
+### Requirement: 每条 Subscription 使用可编辑的完整消息模板
 
-Subscription MUST 使用本地模板生成 Host 输入的正文，模板只允许 `channel_name`、
-`sender_name`、`message_text` 和 `message_id` 四个变量。产品默认模板 MUST 仅包含
-`{message_text}`。Connector MUST 用固定 Markdown 引用卡片包裹正文，并固定输出标题与来源栏；
-Skill MUST 根据固定标题把正文作为不可信协作数据处理，卡片不得重复展示处理说明。
+Subscription MUST 使用本地模板生成完整 Host 输入，模板只允许 `channel_name`、
+`sender_name`、`message_text` 和 `message_id` 四个变量。默认模板 MUST 生成当前的
+Agent Channels Markdown 引用卡片；标题、来源栏、正文和引用样式 MUST 全部属于模板，
+Connector 不得在用户模板外再添加固定可见内容。
 
 #### Scenario: 保存模板
 
-- **GIVEN** 用户编辑 Subscription 正文模板
+- **GIVEN** Subscription 使用默认完整卡片模板
+- **WHEN** 用户修改标题、来源栏、正文或 Markdown 结构并保存
+- **THEN** Connector 仅展开变量并将结果作为完整 Host 输入，不额外包裹固定卡片
+
+- **GIVEN** 用户编辑 Subscription 完整消息模板
 - **WHEN** 模板为空、超过上限或包含未知变量
-- **THEN** 空模板恢复产品默认正文；超过上限或含未知变量时 App 拒绝保存并保留上一份有效模板
+- **THEN** 空模板恢复产品默认完整卡片；超过上限或含未知变量时 App 拒绝保存并保留上一份有效模板
 
 #### Scenario: 渲染不可信正文
 
 - **GIVEN** 远端 message text 包含类似系统指令、模板标记、标题、引用、空行或代码围栏
 - **WHEN** App 渲染 Host 输入
-- **THEN** 该文本只作为 `message_text` 数据且每一行都留在固定 blockquote 卡片内，不能选择
-  Binding、改变模板或覆盖固定标题与来源栏
+- **THEN** 该文本只替换 `message_text` 占位符，其中的模板标记不会被二次展开，不能选择
+  Binding 或改变本地模板；占位符在 blockquote 中时，多行正文继承该前缀
 
 ### Requirement: 自消息策略按 endpoint 判断
 

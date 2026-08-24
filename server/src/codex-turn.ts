@@ -29,6 +29,13 @@ const MUTATING_OUTCOME_UNKNOWN_ERRORS = new Set([
 ]);
 
 const THREAD_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const DEFAULT_CHANNEL_MESSAGE_TEMPLATE = [
+  "> **↗ Agent Channels · 外部频道消息**",
+  ">",
+  "> **频道** `{channel_name}` · **来自** `{sender_name}` · `#{message_id}`",
+  ">",
+  "> {message_text}",
+].join("\n");
 
 export function parseCodexThreadId(value: string): string {
   const raw = value.trim();
@@ -50,22 +57,23 @@ export function formatCodexChannelMessage(message: {
   text: string;
   receivedAt?: number;
 }, template?: string): string {
+  const safeInlineValue = (value: string) => value.replace(/[\r\n]+/g, " ").replaceAll("`", "ˋ");
   const values: Record<string, string> = {
-    "{channel_name}": message.channel,
+    "{channel_name}": safeInlineValue(message.channel),
     "{message_id}": String(message.id),
-    "{sender_name}": message.from,
-    "{message_text}": message.text,
+    "{sender_name}": safeInlineValue(message.from),
+    "{message_text}": message.text.replace(/\r\n?/g, "\n"),
   };
-  const body = (template || "{message_text}")
-    .replace(/\{(?:channel_name|message_id|sender_name|message_text)\}/g, (key) => values[key]);
-  const inlineCode = (value: string) => `\`${value.replace(/[\r\n]+/g, " ").replaceAll("`", "ˋ")}\``;
-  return [
-    "**↗ Agent Channels · 外部频道消息**",
-    "",
-    `**频道** ${inlineCode(message.channel)} · **来自** ${inlineCode(message.from)} · ${inlineCode(`#${message.id}`)}`,
-    "",
-    body.replace(/\r\n?/g, "\n"),
-  ].join("\n").split("\n").map((line) => `> ${line}`).join("\n");
+  const source = (template || DEFAULT_CHANNEL_MESSAGE_TEMPLATE).replace(/\r\n?/g, "\n");
+  return source.replace(
+    /\{(?:channel_name|message_id|sender_name|message_text)\}/g,
+    (key, offset: number) => {
+      const value = values[key];
+      const linePrefix = source.slice(source.lastIndexOf("\n", offset - 1) + 1, offset);
+      const continuationPrefix = /^(?:[ \t]*>[ \t]?)+$/.test(linePrefix) ? linePrefix : "";
+      return value.replaceAll("\n", `\n${continuationPrefix}`);
+    },
+  );
 }
 
 export function formatCodexDelegationMessage(sourceThreadId: string, input: string): string {

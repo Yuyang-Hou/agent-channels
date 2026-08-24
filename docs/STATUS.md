@@ -26,7 +26,7 @@
 | 只读 task 预检 | 已完成 | 打包版对当前真实 task owner discovery 通过且不创建 turn |
 | Task 频道工具 | 已完成 | 六个 task-scoped 工具通过 `_meta.threadId` 精确路由；MCP 不持有接收链路 |
 | Agent Channels Skill | 本地 Beta 包已完成，待实机 | 面向完整产品语义、入站信任边界和六项频道动作；不使用每 turn hook |
-| Markdown 外部消息卡片 | 本地 Beta 包已完成，待实机 | 只显示固定标题、来源栏和逐行引用正文；处理规则由 Skill 承接 |
+| Markdown 外部消息卡片 | 本地 Beta 包已完成，待实机 | 默认为当前卡片；标题、来源栏、正文和引用样式均可编辑 |
 | App 内发送凭证边界 | 本地 Beta 包已完成，待实机 | 发送工具只传正文与来源 task 到同 UID Unix socket；App 独占 Keychain 与频道 REST |
 | 断线恢复状态 | 本地 Beta 包已完成，待实机 | SSE 自动重连后清除已恢复的连接错误，不再依赖“发送测试招呼”刷新图标 |
 | 终态重放幂等 | 本地 Beta 包已完成，待实机 | 已投递、已过滤或已跳过的消息重放时只推进游标，不再次调用 Host；异常断流保留最新游标 |

@@ -10,7 +10,7 @@
 - 保持 Codex 为唯一 Connector；
 - 完成两个用户、两台设备的双向真实验收；
 - 保持 App 负责持续接收、历史和 Host 投递；MCP 只执行当前 task 的六项显式频道操作；
-- 用产品级 Skill 让 AI 理解完整频道语义，并以固定 Markdown 卡片区分外部消息；
+- 用产品级 Skill 让 AI 理解完整频道语义，并默认以 Agent Channels Markdown 卡片区分外部消息；
 - 创建时填写频道名称；邀请口令直接携带频道，加入者只需粘贴；用户昵称在设置中全局维护；
 - 明确 Host 不可用、授权失效、断线恢复和重复投递状态；
 - 用不依赖 Node、npm、Codex CLI、standalone daemon 或环境变量的菜单栏验收包完成闭环。

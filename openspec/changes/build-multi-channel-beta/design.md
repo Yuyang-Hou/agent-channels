@@ -213,8 +213,8 @@ Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设
 资源的受管理链接。更新 App 即更新 Skill；同名普通目录或指向其他内容的链接必须失败关闭，移除
 集成也只能删除本 App 的链接。启用和移除必须先读取并校验完整 Codex 配置与 Skill 归属；读取
 失败不得当作空配置，组合操作中途失败必须回滚本次受管变更，并保留用户已有配置 symlink。
-固定卡片标题触发 Skill 即可，不增加每 turn hook。可见卡片只保留标题、来源栏和正文；外部内容
-的信任边界与是否回复由 Skill 统一解释，不在每条消息中重复展示说明文案。
+默认卡片保留 Agent Channels 标题以触发 Skill，不增加每 turn hook。整段可见 Markdown 均属于本地
+用户模板；外部内容的信任边界与是否回复由 Skill 统一解释，不在每条消息中重复展示说明文案。
 
 ## Templates And Self-Message Policy
 
@@ -225,10 +225,10 @@ Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设
 - `{message_text}`
 - `{message_id}`
 
-保存时拒绝未知变量、空模板和超过本地上限的结果。模板只控制固定 Markdown 外部消息卡片的
-正文，默认仅为 `{message_text}`；标题、频道、发送者和消息 id 由 Connector 生成。模板展开后
-按换行逐行添加 blockquote 前缀，包含空行、标题、原始引用和代码围栏，避免远端 Markdown 逃出
-卡片。远端正文只作为 `{message_text}` 数据插入，不能成为模板指令或选择目标 Binding。
+保存时拒绝未知变量和超过本地上限的结果，空值恢复默认。模板控制完整 Markdown Host 输入；
+默认值包含 Agent Channels 标题、频道、发送者、消息 id、正文和 blockquote 样式。Connector 只展开
+变量，并让多行 `{message_text}` 继承该占位符所在的 blockquote 前缀，不在模板外增加可见外壳。
+远端正文只作为 `{message_text}` 数据插入，不能成为模板指令或选择目标 Binding。
 
 精确 `sender_endpoint_id == subscription.task_endpoint_id` 的消息永远过滤，避免 task 自回声循环。
 每条 Subscription 另有 `same_member_policy`：

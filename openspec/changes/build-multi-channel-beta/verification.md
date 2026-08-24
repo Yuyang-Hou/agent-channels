@@ -73,9 +73,22 @@ publication remain pending.
   a paused receive Subscription remains eligible for explicit or unique-default outbound sending.
 - MCP boundary tests prove it never opens a channel stream, consumes inbound messages, persists history or
   invokes a Host Connector; those receive-side effects remain App-owned.
-- Template tests cover all four allowed variables, invalid variables, single-pass substitution, Markdown
-  blockquote confinement and size limits.
+- Template tests cover the editable full-message template, all four allowed variables, single-pass substitution,
+  default Markdown blockquote continuation, invalid variables and size limits.
 - Self-message tests cover exact endpoint suppression and both same-member policies.
+
+## 2026-08-24 Send Status And Full Template Update
+
+- App messages show no transient state during the first second; if still pending at 1 second, the row shows
+  `发送中` until the existing reliable `accepted` / `failed` / `unknown` outcome replaces it.
+- The current external-message card is now the complete default Subscription template. Title, source row,
+  body and blockquote Markdown are editable; the Connector adds no fixed visible wrapper outside the template.
+- Existing local Subscriptions are not migrated because this Beta has not opened to users; recreate them to use the new default.
+- `npm run build`, all 11 server test files / 92 tests, Swift compilation and the macOS v2 self-test pass.
+- Local `Agent-Channels-0.3.0-beta.8-arm64.dmg` was rebuilt with the stable Beta signing identity; Swift self-test,
+  `codesign --verify --deep --strict` and `hdiutil verify` pass. SHA-256 is
+  `00870ff657f94db461cfb78a1f9142b8378202642bb2996d66e22d32a6e76a45`.
+- The rebuilt App was not installed or exercised through the real UI, so both interactions still require real acceptance.
 
 ## Live Service Gate
 

@@ -46,8 +46,8 @@ Mac 上新建频道、成员和 task 绑定，不复用 0.2 配置。
 5. 完成 App → App、App → task、task → App 和 task → task 收发；task 调用
    `send_to_channel(message)` 时必须按来源 task 的默认 Subscription 路由，不能使用当前选中的
    频道或最近活跃 task 兜底。
-6. 确认入站 turn 只显示固定标题、来源栏和 Markdown 正文；修改正文模板后，标题与来源栏仍由
-   产品固定，Skill 继续把远端正文作为不可信协作数据处理。
+6. 确认默认入站 turn 显示 Agent Channels 标题、来源栏和 Markdown 正文；修改完整消息模板后，
+   标题、来源栏、正文和引用样式均使用用户保存的内容，Connector 不再额外包裹。
 7. 重启 App，确认两个频道的本地历史、未读位置和 Subscription 独立恢复；一个 Subscription
    失败或等待人工确认时，其他 Subscription 仍继续运行。
 8. owner 移除并封禁一个在线成员，确认其旧凭证和现有连接立即失效，其他成员与频道不受影响。

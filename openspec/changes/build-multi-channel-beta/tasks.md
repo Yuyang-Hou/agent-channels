@@ -61,8 +61,8 @@
 
 ## Templates And Policies
 
-- [x] 实现每 Subscription 的正文模板选择、固定变量校验和默认纯正文模板
-- [x] 在统一 Connector 转换点生成固定 Markdown 外部消息卡片，并逐行引用所有模板正文
+- [x] 实现每 Subscription 的完整消息模板、固定变量校验和默认 Markdown 卡片模板
+- [x] Connector 仅展开用户模板，多行正文继承占位符的 blockquote 前缀，不再额外包裹固定卡片
 - [x] 实现精确来源 endpoint 永不回投的安全不变量
 - [x] 实现 `include_other_endpoints` 与 `exclude_member` 两种 same-member 策略
 - [x] filtered 只更新对应 SubscriptionDelivery，不删除消息、不推进错误游标或影响其他订阅

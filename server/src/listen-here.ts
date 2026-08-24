@@ -65,7 +65,7 @@ options:
   --codex-socket <p>  override the ChatGPT Desktop IPC socket path (diagnostics)
   --message-template <t>
                       render {channel_name}, {sender_name}, {message_text}, and
-                      {message_id} inside the fixed external-message card
+                      {message_id} as the complete Codex task input
   --self-message-policy <p>
                       include_other_endpoints (default) or exclude_member;
                       the exact current task endpoint is always excluded
