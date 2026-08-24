@@ -98,13 +98,14 @@ publication remain pending.
   the public `/healthz` endpoint returned `ok` after cutover.
 - No production test channel was created because channels have no deletion endpoint. A new message through an
   existing channel remains the required visible acceptance for the rendered sender nickname.
-- All 11 server test files / 92 tests, TypeScript typecheck/build, strict OpenSpec validation and diff checks pass.
+- All 11 server test files / 93 tests, TypeScript typecheck/build, strict OpenSpec validation and diff checks pass.
 - Live message `1787569685428` proved the deployed service now renders sender nickname `侯老师`. Its channel id
   came from an orphan pre-update listener while the installed listener already carried `--channel-name 产品协助`.
 - The stale listener was stopped; the enabled Subscription automatically recovered with exactly one App-owned
   listener and cursor `1787569685428`. Normal App termination and update handoff now stop all supervised sidecars.
 - The beta.10 product Skill recognizes editable inbound titles containing either `频道消息` or `Agent Channels`.
 - Each Subscription row exposes an `打开会话` button that opens its exact `codex://threads/<id>` binding through macOS.
+- The packaged sidecar returned a non-empty `thread_title` for a real current Codex task; the native App build passed and updates the Subscription label when adding or restoring that task, with the shortened id retained as fallback.
 
 ## Live Service Gate
 

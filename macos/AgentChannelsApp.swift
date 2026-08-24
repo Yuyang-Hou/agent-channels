@@ -1988,7 +1988,8 @@ extension AppModel {
             }
             _ = try await subscribe(
                 source: LocalSource(provider: "codex", conversationId: threadID.lowercased()),
-                profile: profile
+                profile: profile,
+                label: json["thread_title"] as? String
             )
             draftTask = ""
             lastError = ""
@@ -2127,16 +2128,24 @@ extension AppModel {
     }
 
     @discardableResult
-    private func subscribe(source: LocalSource, profile: ChannelProfile) async throws -> ChannelSubscription {
+    private func subscribe(
+        source: LocalSource,
+        profile: ChannelProfile,
+        label: String? = nil
+    ) async throws -> ChannelSubscription {
         let task: TaskBinding
-        if let existing = taskBinding(for: source) {
-            task = existing
+        if let index = state.tasks.firstIndex(where: {
+            $0.provider == source.provider && $0.conversationID.lowercased() == source.conversationId.lowercased()
+        }) {
+            if let label, !label.isEmpty { state.tasks[index].label = label }
+            task = state.tasks[index]
         } else {
+            let taskLabel = label.flatMap { $0.isEmpty ? nil : $0 } ?? "\(source.conversationId.prefix(8))…"
             task = TaskBinding(
                 id: UUID(),
                 provider: source.provider,
                 conversationID: source.conversationId.lowercased(),
-                label: "\(source.conversationId.prefix(8))…"
+                label: taskLabel
             )
             state.tasks.append(task)
         }
@@ -2264,6 +2273,14 @@ extension AppModel {
             guard preflight.status == 0 else {
                 let detail = preflight.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
                 throw AppFailure(detail.isEmpty ? "ChatGPT task 当前不可用" : detail)
+            }
+            if let data = preflight.stdout.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let title = json["thread_title"] as? String, !title.isEmpty,
+               let index = state.tasks.firstIndex(where: { $0.id == task.id }),
+               state.tasks[index].label != title {
+                state.tasks[index].label = title
+                persistState()
             }
             guard let credential = try KeychainStore.get(service: keychainService, account: profile.credentialAccount),
                   !credential.isEmpty else { throw AppFailure("Keychain 中没有频道成员凭证") }

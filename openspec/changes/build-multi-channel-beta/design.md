@@ -154,6 +154,8 @@ App 手工发送使用当前选中的 ChannelConnection 和 app endpoint。发�
 
 TaskBinding 只描述一个本机 Host 会话；Subscription 才表达“这个 task 接收这个频道”。删除
 TaskBinding 必须先停掉相关 Subscription，删除 ChannelConnection 也必须停止其全部运行态。
+TaskBinding 的展示名称只从 Codex 本机 `state_5.sqlite` 的 `name/title` 元数据读取，不读取正文或
+task snapshot；元数据缺失或格式不兼容时继续使用缩短的 conversation id。
 
 P0 每条启用的 Subscription 监管一个现有 `listen-here` sidecar，保持独立 session、游标、
 错误和不确定投递状态。一个 Subscription 失败不得暂停其他 Subscription。App 可以为频道

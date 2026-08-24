@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { lstatSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { homedir, tmpdir } from "node:os";
@@ -48,6 +49,39 @@ export function parseCodexThreadId(value: string): string {
     : raw;
   if (!THREAD_ID.test(id)) throw new Error("--codex-thread must be a task id or codex://threads/<id> URL");
   return id;
+}
+
+export function parseCodexThreadTitleOutput(output: string): string | undefined {
+  try {
+    const rows = JSON.parse(output) as unknown;
+    if (!Array.isArray(rows) || !isRecord(rows[0]) || typeof rows[0].title !== "string") return;
+    const title = rows[0].title.trim().replace(/\s+/g, " ");
+    return title ? title.slice(0, 200) : undefined;
+  } catch {
+    return;
+  }
+}
+
+export async function readCodexThreadTitle(options: {
+  threadId: string;
+  codexHome?: string;
+}): Promise<string | undefined> {
+  const threadId = parseCodexThreadId(options.threadId);
+  const database = join(options.codexHome ?? CODEX_HOME, "state_5.sqlite");
+  const sql = `SELECT COALESCE(NULLIF(TRIM(name), ''), NULLIF(TRIM(title), '')) AS title FROM threads WHERE id = '${threadId}' LIMIT 1`;
+  try {
+    const output = await new Promise<string>((resolve, reject) => {
+      execFile(
+        "/usr/bin/sqlite3",
+        ["-readonly", "-json", database, sql],
+        { encoding: "utf8", maxBuffer: 64 * 1024 },
+        (error, stdout) => error ? reject(error) : resolve(stdout),
+      );
+    });
+    return parseCodexThreadTitleOutput(output);
+  } catch {
+    return;
+  }
 }
 
 export function formatCodexChannelMessage(message: {

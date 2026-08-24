@@ -245,6 +245,12 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** 用户点击“打开会话”
 - **THEN** App 启动 ChatGPT 并通过该 TaskBinding 的 `codex://threads/<id>` 打开目标会话
 
+#### Scenario: 显示目标会话名称
+
+- **GIVEN** Codex 本机元数据包含目标会话名称
+- **WHEN** App 添加会话或恢复该会话的监听
+- **THEN** Subscription 展示 Codex 会话名称；名称不可用时回退到缩短的会话 ID，且不读取会话正文或 snapshot
+
 #### Scenario: 重启恢复
 
 - **GIVEN** 多条 Subscription 已启用

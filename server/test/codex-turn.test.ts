@@ -8,6 +8,7 @@ import {
   formatCodexChannelMessage,
   formatCodexDelegationMessage,
   parseCodexThreadId,
+  parseCodexThreadTitleOutput,
   preflightCodexThread,
 } from "../src/codex-turn.js";
 
@@ -45,6 +46,12 @@ describe("Codex task bridge", () => {
     expect(parseCodexThreadId(THREAD_ID)).toBe(THREAD_ID);
     expect(parseCodexThreadId(`codex://threads/${THREAD_ID}`)).toBe(THREAD_ID);
     expect(() => parseCodexThreadId("codex://wrong/nope")).toThrow();
+  });
+
+  it("reads a bounded single-line task title from Codex metadata", () => {
+    expect(parseCodexThreadTitleOutput('[{"title":"  API design\\nreview  "}]')).toBe("API design review");
+    expect(parseCodexThreadTitleOutput("[]")).toBeUndefined();
+    expect(parseCodexThreadTitleOutput("not json")).toBeUndefined();
   });
 
   it("wraps trusted source metadata and escapes untrusted message text", () => {

@@ -146,12 +146,14 @@ async function main(): Promise<void> {
       process.exit(2);
     }
     try {
-      const { parseCodexThreadId, preflightCodexThread } = await import("./codex-turn.js");
+      const { parseCodexThreadId, preflightCodexThread, readCodexThreadTitle } = await import("./codex-turn.js");
+      const threadId = parseCodexThreadId(thread);
       await preflightCodexThread({
-        threadId: thread,
+        threadId,
         socketPath: parsed.values["codex-socket"],
       });
-      console.log(JSON.stringify({ ok: true, thread_id: parseCodexThreadId(thread) }));
+      const title = await readCodexThreadTitle({ threadId });
+      console.log(JSON.stringify({ ok: true, thread_id: threadId, ...(title ? { thread_title: title } : {}) }));
       process.exit(0);
     } catch (error) {
       console.error(`error: ${(error as Error).message}`);
