@@ -269,12 +269,13 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** App 正常退出或交给更新助手重启
 - **THEN** App 在终止前停止所有受管 sidecar，重新打开后每条 Subscription 只有一个监听器
 
-### Requirement: Codex MCP 提供六个 task-scoped 频道工具
+### Requirement: Codex MCP 提供七个 task-scoped 频道工具
 
 Codex MCP MUST 暴露 `send_to_channel`、`list_channels`、`subscribe_to_channel`、
-`unsubscribe_from_channel`、`get_channel_settings` 和 `update_channel_settings` 六个工具。每个工具
-MUST 从 `tools/call params._meta.threadId` 读取来源 task，并通过本机 socket v2 交给 App 精确
-匹配 TaskBinding。App 和 MCP MUST NOT 使用最近活跃 task 或当前 UI 频道兜底。
+`unsubscribe_from_channel`、`get_channel_settings`、`update_channel_settings` 和
+`inspect_message_source` 七个工具。每个工具 MUST 从 `tools/call params._meta.threadId` 读取来源
+task，并通过本机 socket v2 交给 App 精确匹配 TaskBinding。App 和 MCP MUST NOT 使用最近活跃
+task 或当前 UI 频道兜底。
 
 MCP MUST NOT 读取 Keychain、直接访问 Channel Service、建立频道监听、消费入站消息、保存历史
 或调用 Host Connector；这些消息接收能力 MUST 由 App 持有。`send_to_channel` MUST 可以在没有
@@ -284,7 +285,21 @@ MCP MUST NOT 读取 Keychain、直接访问 Channel Service、建立频道监听
 
 - **GIVEN** Codex 加载 Agent Channels MCP
 - **WHEN** Codex 请求工具表
-- **THEN** 只返回上述六项，且频道空闲或消息到达都不会由 MCP 自行轮询或创建 Host turn
+- **THEN** 只返回上述七项，且频道空闲或消息到达都不会由 MCP 自行轮询或创建 Host turn
+
+#### Scenario: 用户主动追溯刚才的消息
+
+- **GIVEN** 当前 task 已成功接收至少一条 Agent Channels 消息
+- **WHEN** 用户明确询问“这条或刚才的消息是否来自 Agent Channels、由谁发送”，AI 调用 `inspect_message_source`
+- **THEN** App 仅从当前 task 的 TaskBinding、SubscriptionDelivery 与 LocalMessage 读取最近一条
+  `delivered` 记录，返回频道消息 id、服务端认证发送者和声明的 App/MCP 来源，不修改模板或 Host 输入
+
+#### Scenario: 用户没有追问或本地没有记录
+
+- **GIVEN** 普通消息到达，或当前 task 没有可追溯的成功投递记录
+- **WHEN** 用户没有主动追问来源，或主动查询但 App 未命中记录
+- **THEN** Skill 不自动调用来源工具；未命中结果只说明本地没有 Agent Channels 投递记录，
+  App 和 AI 不据此断言消息由用户手动输入
 
 #### Scenario: 当前 task 管理订阅
 

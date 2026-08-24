@@ -158,11 +158,12 @@ Desktop IPC 属于 ChatGPT 私有版本化协议，仍是升级敏感依赖。Co
 
 ## MCP task 操作与出站发送
 
-AI 使用本机固定 STDIO MCP。工具表固定为六项：`send_to_channel`、`list_channels`、
-`subscribe_to_channel`、`unsubscribe_from_channel`、`get_channel_settings` 和
-`update_channel_settings`。`send_to_channel` 允许 task 随时主动发送；其余工具只查询或修改
-当前来源 task 的本机频道订阅与设置。每次调用都读取 `tools/call params._meta.threadId` 作为
-Codex 来源能力，并通过当前用户专属的 Unix socket v2 把已校验参数和 source context 交给 App。
+AI 使用本机固定 STDIO MCP。工具表固定为七项：`send_to_channel`、`list_channels`、
+`subscribe_to_channel`、`unsubscribe_from_channel`、`get_channel_settings`、
+`update_channel_settings` 和 `inspect_message_source`。前六项执行当前来源 task 的显式频道动作；
+来源查询只在用户主动追问时读取该 task 最近一条成功投递的本地消息记录。每次调用都读取
+`tools/call params._meta.threadId` 作为 Codex 来源能力，并通过当前用户专属的 Unix socket v2
+把已校验参数和 source context 交给 App。
 
 App 精确匹配 TaskBinding；发送时解析显式频道或唯一默认出站 Subscription，再从 Keychain
 取得该成员凭证。MCP 不读取 Keychain、不直接访问 Channel Service，也不建立频道监听、消费
@@ -215,7 +216,7 @@ Subscription 可以选择接收同一 Member 的其他 endpoint，默认允许 A
 - `server/src/listen-here.ts` 实现 Subscription Runtime，并从兼容 CLI 参数创建 Connector；
 - `server/src/codex-turn.ts` 实现 Codex 目标校验、输入转换、Desktop owner discovery 和
   targeted start-turn；
-- `server/src/reply-mcp.ts` 实现六个 task-scoped 频道工具；工具只请求本机 App，不拥有接收链路；
+- `server/src/reply-mcp.ts` 实现七个 task-scoped 频道工具；工具只请求本机 App，不拥有接收链路；
 - `skills/agent-channels/SKILL.md` 定义完整产品语义、入站信任边界和工具使用流程；
 - `macos/AgentChannelsApp.swift` 实现 0.3 主窗口、ChannelConnection、TaskBinding、Subscription、
   本地消息状态和显式 Codex MCP + Skill 安装；

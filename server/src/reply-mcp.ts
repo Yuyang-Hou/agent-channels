@@ -41,6 +41,7 @@ export type ChannelSettingsPatch = {
 
 export type LocalAppRequest =
   | { version: 2; operation: "list_channels"; source: ConversationSource }
+  | { version: 2; operation: "inspect_message_source"; source: ConversationSource }
   | { version: 2; operation: "send"; source: ConversationSource; message: string; channel?: string }
   | { version: 2; operation: "subscribe"; source: ConversationSource; channel: string }
   | { version: 2; operation: "unsubscribe"; source: ConversationSource; channel: string }
@@ -136,6 +137,23 @@ const LIST_CHANNELS_TOOL = {
   },
 };
 
+const INSPECT_MESSAGE_SOURCE_TOOL = {
+  name: "inspect_message_source",
+  description:
+    "Inspect the latest Agent Channels message delivered to the current Codex task. Use only when the user explicitly asks whether this or the immediately preceding message came from Agent Channels or asks who sent it. A missing record does not prove the message was manually typed.",
+  inputSchema: {
+    type: "object",
+    properties: {},
+    additionalProperties: false,
+  },
+  annotations: {
+    title: "Inspect Agent Channels Message Source",
+    readOnlyHint: true,
+    destructiveHint: false,
+    openWorldHint: false,
+  },
+};
+
 const SUBSCRIBE_TOOL = {
   name: "subscribe_to_channel",
   description: "Subscribe the current Codex task to receive messages from a locally configured channel.",
@@ -225,6 +243,7 @@ const TOOLS = [
   UNSUBSCRIBE_TOOL,
   GET_SETTINGS_TOOL,
   UPDATE_SETTINGS_TOOL,
+  INSPECT_MESSAGE_SOURCE_TOOL,
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -361,6 +380,9 @@ function buildLocalRequest(
     case "list_channels":
       assertOnlyKeys(args, []);
       return { version: LOCAL_APP_PROTOCOL_VERSION, operation: "list_channels", source };
+    case "inspect_message_source":
+      assertOnlyKeys(args, []);
+      return { version: LOCAL_APP_PROTOCOL_VERSION, operation: "inspect_message_source", source };
     case "send_to_channel": {
       assertOnlyKeys(args, ["message", "channel"]);
       const message = args.message;

@@ -67,7 +67,7 @@ publication remain pending.
 - Local-store/runtime tests prove the App acknowledges `record_received` only after committing LocalMessage
   and SubscriptionDelivery, Connector invocation happens after that ack, and persistence failure leaves the
   Host untouched.
-- MCP tests prove the tool table contains exactly send/list/subscribe/unsubscribe/get_settings/update_settings;
+- MCP tests prove the tool table contains exactly send/list/subscribe/unsubscribe/get_settings/update_settings/inspect_message_source;
   every tool uses `_meta.threadId` as its task source, and missing, wrong-type or malformed metadata is rejected
   before the App socket. App routing rejects unbound or ambiguous targets before Channel Service access, while
   a paused receive Subscription remains eligible for explicit or unique-default outbound sending.
@@ -114,6 +114,16 @@ publication remain pending.
 - Each Subscription row exposes an `打开会话` button that opens its exact `codex://threads/<id>` binding through macOS.
 - The working-tree sidecar can search the live Codex index by title or id while excluding internal subagent/reviewer sessions. Titles remain transient search data; TaskBinding persists only provider and conversation id, and Subscription rows use the shortened id.
 
+## 2026-08-24 On-demand Message Source Inspection
+
+- `inspect_message_source` is the seventh task-scoped MCP tool. It has no model-supplied target arguments and
+  uses protected `_meta.threadId` to ask the App for that TaskBinding's latest successful Channel delivery.
+- The App joins existing SubscriptionDelivery and LocalMessage JSONL records; it does not read Codex history,
+  change the editable template or add visible source text. A missing record remains unknown rather than proof
+  of manual user input.
+- All 11 server test files / 95 tests, TypeScript typecheck/build, Swift warnings-as-errors typecheck and focused
+  self-test, strict OpenSpec validation and diff checks pass. No App package was built, installed or published.
+
 ## Live Service Gate
 
 - Railway production deployment `2531a50f-116b-4d8c-9f30-e01af302137d` is `SUCCESS`; `/healthz` passed before cutover.
@@ -134,7 +144,7 @@ tasks. Do not reuse or import 0.2 data.
    `codex://threads/...` UUID. Source-code inspection alone does not pass this gate.
 3. Configure at least three task-channel Subscriptions, including one task subscribed to both channels and
    one channel subscribed by both tasks.
-4. From both tasks, exercise all six MCP tools, then complete App → task, task → App and task → task sends.
+4. From both tasks, exercise all seven MCP tools, then complete App → task, task → App and task → task sends.
    No message or configuration mutation may use the currently selected UI channel or most recently active
    task as an implicit route; task sends must also work before either task receives a message.
 5. In a new task, verify the installed Skill explains App-only creation, invitation, member, history and

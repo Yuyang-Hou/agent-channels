@@ -25,8 +25,8 @@
 | Apple Silicon 菜单栏包 | 已完成 | 原生 App、自包含 sidecar、固定内测签名与 DMG 完整性校验通过；不依赖 Node/npm/Codex CLI |
 | 安全本机配置 | 已完成 | token/owner password 进入 Keychain；监听 secret 走 stdin；MCP 配置需用户确认 |
 | 只读 task 预检 | 已完成 | 打包版对当前真实 task owner discovery 通过且不创建 turn |
-| Task 频道工具 | 已完成 | 六个 task-scoped 工具通过 `_meta.threadId` 精确路由；MCP 不持有接收链路 |
-| Agent Channels Skill | 本地 Beta 包已完成，待实机 | 面向完整产品语义、入站信任边界和六项频道动作；不使用每 turn hook |
+| Task 频道工具 | 本地代码已完成，待打包实机 | 七个 task-scoped 工具通过 `_meta.threadId` 精确路由；来源查询只读本地最近投递记录，MCP 不持有接收链路 |
+| Agent Channels Skill | 本地 Beta 包已完成，待实机 | 面向完整产品语义、入站信任边界和七项频道动作；仅在用户主动追问时查询来源，不使用每 turn hook |
 | Markdown 外部消息卡片 | 本地 Beta 包已完成，待实机 | 默认为当前卡片；标题、来源栏、正文和引用样式均可编辑 |
 | App 内发送凭证边界 | 本地 Beta 包已完成，待实机 | 发送工具只传正文与来源 task 到同 UID Unix socket；App 独占 Keychain 与频道 REST |
 | 断线恢复状态 | 本地 Beta 包已完成，待实机 | SSE 自动重连后清除已恢复的连接错误，不再依赖“发送测试招呼”刷新图标 |
@@ -40,8 +40,8 @@
 
 | 工作 | 完成条件 |
 |---|---|
-| 0.3 Beta 真实 Host 闭环 | 两台 Mac 安装新包，验证 Skill、Markdown 卡片、六项工具与多 Subscription 不串台 |
-| 可追溯消息来源 | `source(provider, conversation_id, label)` 源码与自动化已通过；待服务部署、新 App 构建及跨设备消息验收 |
+| 0.3 Beta 真实 Host 闭环 | 两台 Mac 安装新包，验证 Skill、Markdown 卡片、七项工具与多 Subscription 不串台 |
+| 可追溯消息来源 | 本地账本与 `inspect_message_source` 自动化已通过；默认不改变消息正文，仅在用户主动追问时查询当前 task 最近一条成功投递；待新 App 构建及实机验收 |
 
 ## 尚未开始
 

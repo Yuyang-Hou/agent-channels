@@ -72,7 +72,7 @@ afterEach(async () => {
 });
 
 describe("channel MCP", () => {
-  it("exposes only the six current-task channel tools", async () => {
+  it("exposes only the seven current-task channel tools", async () => {
     const handle = createReplyMcpHandler();
     const listed = await handle({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     const tools = (listed?.result as { tools: Array<Record<string, unknown>> }).tools;
@@ -84,6 +84,7 @@ describe("channel MCP", () => {
       "unsubscribe_from_channel",
       "get_channel_settings",
       "update_channel_settings",
+      "inspect_message_source",
     ]);
     expect(tools[0]).toMatchObject({
       inputSchema: { required: ["message"], additionalProperties: false },
@@ -100,6 +101,38 @@ describe("channel MCP", () => {
       },
     });
     expect(JSON.stringify(tools)).not.toContain("threadId");
+  });
+
+  it("reads the latest delivered channel message source only on explicit request", async () => {
+    const provenance = {
+      found: true,
+      origin: "agent_channels",
+      channel: "api-work",
+      channel_name: "API 协作",
+      message_id: "42",
+      sender_name: "backend",
+      sender_member_id: "member-backend",
+      source_kind: "codex_mcp",
+      source_provider: "codex",
+      received_at: 123,
+    };
+    const requestApp = vi.fn(async (): Promise<LocalAppResult> => ({
+      ok: true,
+      result: { message: "最近一条已投递消息来自 Agent Channels", provenance },
+    }));
+    const handle = createReplyMcpHandler({ requestApp });
+
+    const result = await handle(toolCall("inspect_message_source", {}));
+
+    expect(requestApp).toHaveBeenCalledWith({
+      version: 2,
+      operation: "inspect_message_source",
+      source: { provider: "codex", conversationId: THREAD_ID },
+    });
+    expect(result?.result).toMatchObject({
+      content: [{ type: "text", text: "最近一条已投递消息来自 Agent Channels" }],
+      structuredContent: { provenance },
+    });
   });
 
   it("takes the current task from protected call metadata and delegates protocol-v2 sends", async () => {
@@ -220,6 +253,7 @@ describe("channel MCP", () => {
         self_message_policy: "include_all",
       })),
       handle(toolCall("list_channels", { threadId: THREAD_ID })),
+      handle(toolCall("inspect_message_source", { message_id: "42" })),
     ]);
 
     for (const result of results) expect(result?.result).toMatchObject({ isError: true });
@@ -381,7 +415,7 @@ describe("channel MCP", () => {
       },
     });
     expect(lines[1]).toEqual({ jsonrpc: "2.0", id: 2, result: {} });
-    expect(lines[2].result.tools).toHaveLength(6);
+    expect(lines[2].result.tools).toHaveLength(7);
     expect(lines[2].result.tools).toContainEqual(expect.objectContaining({ name: "list_channels" }));
   });
 });

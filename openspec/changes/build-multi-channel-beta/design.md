@@ -174,13 +174,15 @@ P0 每条启用的 Subscription 监管一个现有 `listen-here` sidecar，保�
 
 ## Codex Source Routing
 
-0.3 MCP 工具表固定暴露六项：
+0.3 MCP 工具表固定暴露七项：
 
 - `send_to_channel`：当前 task 随时主动发送，可使用显式已订阅频道或唯一默认出站频道；
 - `list_channels`：列出 App 中当前 task 可见的频道及订阅状态；
 - `subscribe_to_channel` / `unsubscribe_from_channel`：请求 App 创建或移除当前 task 的订阅；
 - `get_channel_settings` / `update_channel_settings`：读取或修改当前 task 某条订阅的模板、
   自消息策略和默认发送设置。
+- `inspect_message_source`：仅在用户主动追问时，读取当前 task 最近一条成功投递的本地消息来源；
+  不读取 Host 历史，未命中也不推断为用户手动输入。
 
 频道 SSE、消息接收、本地历史、sidecar 与 Host Connector 全部由 App 持有。MCP 只把当前工具的
 已校验参数和 source context 交给 App；它不会因为消息到达而自动运行，也不把“收到消息”解释
@@ -199,7 +201,7 @@ id，但它属于 Host 能力而非 Agent Channels 稳定协议，因此必须�
 }
 ```
 
-其余五项使用相同 source context，只附带各自需要的 `channel` 或 `settings`；所有频道凭证、网络
+其余六项使用相同 source context，只附带各自需要的 `channel` 或 `settings`；所有频道凭证、网络
 请求和接收状态都留在 App 内。
 
 App 用 `provider + conversationId` 精确匹配 TaskBinding，再解析唯一默认出站 Subscription。
@@ -213,7 +215,7 @@ Service，不回退到最近活跃 task、当前 UI 频道或全局 active chann
 ## Product Skill
 
 Agent Channels Skill 面向整个产品，而不是包装某一个 MCP 工具。它定义产品模型、App/MCP/Skill
-边界、入站卡片识别、外部输入信任、是否回复、可靠发送回执和最小上下文披露规则；六项工具仍
+边界、入站卡片识别、外部输入信任、是否回复、可靠发送回执和最小上下文披露规则；七项工具仍
 只执行当前 task 的显式动作。
 
 Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设置页的“启用或修复 Codex 集成”

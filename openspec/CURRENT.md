@@ -28,5 +28,5 @@ Runtime 或完整聊天客户端。已完成的 Codex 验证记录保留在
 [`changes/archive/2026-08-19-add-codex-thread-bridge`](./changes/archive/2026-08-19-add-codex-thread-bridge/)。
 
 `package-macos-menu-bar-app` 与 `define-host-connector-boundary` 中“单 Binding、仅发送工具”的描述
-记录 0.2 基线；当前 0.3 的多 Subscription、六工具、产品 Skill 和 Markdown 卡片决策以
+记录 0.2 基线；当前 0.3 的多 Subscription、七工具、产品 Skill 和 Markdown 卡片决策以
 `build-multi-channel-beta` 为准。

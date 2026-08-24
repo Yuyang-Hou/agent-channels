@@ -85,8 +85,9 @@ AI 会话。
 - App 收到消息先写本地历史，再逐 Subscription 更新 filtered、delivered、failed 或 unknown；
 - 每条 Subscription 使用受限模板，并明确是否接收同一成员其他 endpoint 的消息；
 - 本机 MCP 暴露 `send_to_channel`、`list_channels`、`subscribe_to_channel`、
-  `unsubscribe_from_channel`、`get_channel_settings` 和 `update_channel_settings` 六个 task-scoped
-  工具；所有调用都必须通过 Codex `_meta.threadId` 精确匹配 TaskBinding；
+  `unsubscribe_from_channel`、`get_channel_settings`、`update_channel_settings` 和
+  `inspect_message_source` 七个 task-scoped 工具；所有调用都必须通过 Codex `_meta.threadId`
+  精确匹配 TaskBinding；来源查询只在用户主动追问时读取当前 task 最近一条成功投递的本地记录；
 - AI 可以随时主动发送，不需要先收到消息；频道监听、消息接收、本地历史和 Host 投递仍由 App
   持有，收到消息也不等于 AI 必须回复；
 - App 以当前 Markdown 外部消息卡片作为默认完整模板；用户可编辑标题、来源栏、正文和引用样式，

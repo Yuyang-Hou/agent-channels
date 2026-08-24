@@ -178,6 +178,52 @@ struct SubscriptionDeliveryRecord: Codable, Equatable, Identifiable {
     var id: String { "\(subscriptionID.uuidString):\(channelID.uuidString):\(messageID)" }
 }
 
+private struct LocalMessageProvenance: Encodable {
+    let found: Bool
+    let origin: String?
+    let channel: String?
+    let channelName: String?
+    let messageID: String?
+    let senderName: String?
+    let senderMemberID: String?
+    let senderEndpointID: String?
+    let sourceKind: String?
+    let sourceProvider: String?
+    let sourceConversationID: String?
+    let sourceLabel: String?
+    let receivedAt: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case found, origin, channel
+        case channelName = "channel_name"
+        case messageID = "message_id"
+        case senderName = "sender_name"
+        case senderMemberID = "sender_member_id"
+        case senderEndpointID = "sender_endpoint_id"
+        case sourceKind = "source_kind"
+        case sourceProvider = "source_provider"
+        case sourceConversationID = "source_conversation_id"
+        case sourceLabel = "source_label"
+        case receivedAt = "received_at"
+    }
+
+    static let notFound = LocalMessageProvenance(
+        found: false,
+        origin: nil,
+        channel: nil,
+        channelName: nil,
+        messageID: nil,
+        senderName: nil,
+        senderMemberID: nil,
+        senderEndpointID: nil,
+        sourceKind: nil,
+        sourceProvider: nil,
+        sourceConversationID: nil,
+        sourceLabel: nil,
+        receivedAt: nil
+    )
+}
+
 private enum ReceivedDeliveryDecision: String {
     case record = "recorded"
     case alreadyProcessed = "already_processed"
@@ -241,6 +287,23 @@ private func recoverSubscriptionDeliveryState(
     subscription.enabled = false
     subscription.uncertainMessageID = messageID
     subscription.uncertainDetail = last.detail ?? "上次 Host 投递没有可靠终态，请人工核对"
+}
+
+private func latestDeliveredChannelMessage(
+    taskID: UUID,
+    subscriptions: [ChannelSubscription],
+    deliveries: (UUID) -> [SubscriptionDeliveryRecord],
+    messages: (UUID) -> [ChannelMessageRecord]
+) -> ChannelMessageRecord? {
+    let candidates = subscriptions.filter { $0.taskID == taskID }.flatMap { subscription in
+        deliveries(subscription.id).filter { $0.state == .delivered }.map { (subscription.channelID, $0) }
+    }.sorted { $0.1.updatedAt > $1.1.updatedAt }
+    for (channelID, delivery) in candidates {
+        if let message = messages(channelID).first(where: { $0.messageID == delivery.messageID }) {
+            return message
+        }
+    }
+    return nil
 }
 
 struct ChannelMember: Codable, Equatable, Identifiable {
@@ -631,7 +694,7 @@ private struct LocalSendRequest: Decodable {
             throw AppFailure("当前 AI 会话上下文无效或尚未支持")
         }
         let operations = [
-            "list_channels", "send", "subscribe", "unsubscribe", "get_settings", "update_settings",
+            "list_channels", "inspect_message_source", "send", "subscribe", "unsubscribe", "get_settings", "update_settings",
             "record_received", "record_outcome",
         ]
         guard operations.contains(request.operation) else {
@@ -695,6 +758,7 @@ private struct LocalOperationResult: Encodable {
     let channel: String?
     let channels: [LocalChannelSummary]?
     let settings: LocalSubscriptionSummary?
+    let provenance: LocalMessageProvenance?
     let message: String?
 
     init(
@@ -703,6 +767,7 @@ private struct LocalOperationResult: Encodable {
         channel: String? = nil,
         channels: [LocalChannelSummary]? = nil,
         settings: LocalSubscriptionSummary? = nil,
+        provenance: LocalMessageProvenance? = nil,
         message: String? = nil
     ) {
         self.id = id
@@ -710,6 +775,7 @@ private struct LocalOperationResult: Encodable {
         self.channel = channel
         self.channels = channels
         self.settings = settings
+        self.provenance = provenance
         self.message = message
     }
 
@@ -1957,6 +2023,44 @@ extension AppModel {
                     )
                 }
                 return .success(LocalOperationResult(channels: channels))
+            case "inspect_message_source":
+                guard let task = taskBinding(for: request.source),
+                      let record = latestDeliveredChannelMessage(
+                          taskID: task.id,
+                          subscriptions: state.subscriptions,
+                          deliveries: MessageLedger.loadDeliveries,
+                          messages: MessageLedger.load
+                      ),
+                      let profile = state.channels.first(where: { $0.id == record.channelID }) else {
+                    return .success(LocalOperationResult(
+                        provenance: .notFound,
+                        message: "当前会话没有可追溯的已投递 Agent Channels 消息；这不证明其他消息一定是用户手动输入"
+                    ))
+                }
+                let sourceKind: String
+                switch record.source?.provider {
+                case "agent-channels": sourceKind = "agent_channels_app"
+                case "codex": sourceKind = "codex_mcp"
+                default: sourceKind = "unknown"
+                }
+                return .success(LocalOperationResult(
+                    provenance: LocalMessageProvenance(
+                        found: true,
+                        origin: "agent_channels",
+                        channel: profile.channel,
+                        channelName: profile.displayName,
+                        messageID: record.messageID,
+                        senderName: record.from,
+                        senderMemberID: record.senderMemberID,
+                        senderEndpointID: record.senderEndpointID,
+                        sourceKind: sourceKind,
+                        sourceProvider: record.source?.provider,
+                        sourceConversationID: record.source?.conversationID,
+                        sourceLabel: record.source?.label,
+                        receivedAt: record.at
+                    ),
+                    message: "最近一条已投递消息来自 Agent Channels：\(profile.displayName) #\(record.messageID)，发送者 \(record.from)"
+                ))
             case "send":
                 guard let message = request.message else { throw AppFailure("message is required") }
                 let (task, subscription, profile) = try outboundRoute(source: request.source, channel: request.channel)
@@ -4007,6 +4111,8 @@ private struct AgentChannelsV2SelfTest {
         precondition(removed == "model = \"gpt-5\"\n")
         let request = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"send","source":{"provider":"codex","conversationId":"01900000-0000-7000-8000-000000000001"},"message":"hello"}"#.utf8))
         precondition(request.message == "hello")
+        let inspectRequest = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"inspect_message_source","source":{"provider":"codex","conversationId":"01900000-0000-7000-8000-000000000001"}}"#.utf8))
+        precondition(inspectRequest.operation == "inspect_message_source")
         do {
             _ = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"send","source":{"provider":"codex","conversationId":"bad"},"message":"hello"}"#.utf8))
             preconditionFailure("invalid source was accepted")
@@ -4079,6 +4185,8 @@ private struct AgentChannelsV2SelfTest {
             text: "hello",
             at: 1,
             state: .received,
+            senderMemberID: "member-peer",
+            senderEndpointID: "endpoint-peer",
             source: MessageSourceReference(
                 provider: "codex",
                 conversationID: "01900000-0000-7000-8000-000000000001",
@@ -4087,6 +4195,27 @@ private struct AgentChannelsV2SelfTest {
         )
         precondition(messageA.source?.provider == "codex")
         precondition(messageA.source?.conversationID == "01900000-0000-7000-8000-000000000001")
+        let delivered = SubscriptionDeliveryRecord(
+            subscriptionID: subscriptionID,
+            channelID: channelID,
+            messageID: messageA.messageID,
+            state: .delivered,
+            detail: nil,
+            updatedAt: 3
+        )
+        let latest = latestDeliveredChannelMessage(
+            taskID: taskID,
+            subscriptions: [manuallyStopped],
+            deliveries: { $0 == subscriptionID ? [attempting, delivered] : [] },
+            messages: { $0 == channelID ? [messageA] : [] }
+        )
+        precondition(latest?.messageID == messageA.messageID)
+        precondition(latestDeliveredChannelMessage(
+            taskID: UUID(),
+            subscriptions: [manuallyStopped],
+            deliveries: { _ in [delivered] },
+            messages: { _ in [messageA] }
+        ) == nil)
         var messageB = messageA
         messageB.direction = .outbound
         precondition(messageA.id == messageB.id)

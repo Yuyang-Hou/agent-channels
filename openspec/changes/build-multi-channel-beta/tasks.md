@@ -56,11 +56,12 @@
 
 ## Codex MCP Routing
 
-- [x] 将单一本机 App IPC 升级为 v2；六个 MCP 工具只传各自参数与已校验的 source context
-- [x] 固定工具表为 send/list/subscribe/unsubscribe/get_settings/update_settings，并确认接收链路只在 App
-- [x] 从 `tools/call params._meta.threadId` 读取 Codex 来源 task；六项均覆盖合法、缺失、错误类型和非法 UUID
+- [x] 将单一本机 App IPC 升级为 v2；七个 MCP 工具只传各自参数与已校验的 source context
+- [x] 固定工具表为 send/list/subscribe/unsubscribe/get_settings/update_settings/inspect_message_source，并确认接收链路只在 App
+- [x] 从 `tools/call params._meta.threadId` 读取 Codex 来源 task；七项均覆盖合法、缺失、错误类型和非法 UUID
 - [x] App 按 provider + conversationId 匹配 TaskBinding，并解析唯一默认出站 Subscription
 - [x] missing、unbound 或 ambiguous 路由失败关闭且不访问 Channel Service；暂停接收不阻止主动发送
+- [x] 用户主动追问时只读返回当前 task 最近一条成功投递的来源；未命中不推断为用户手动输入
 - [ ] 用两个真实 Codex task 验证 `_meta.threadId` 分别精确匹配各自 UUID
 
 ## Templates And Policies
@@ -76,7 +77,7 @@
 
 ## Agent Channels Skill
 
-- [x] 定义面向完整产品的 Skill，覆盖产品边界、入站信任、回复决策、六项工具与可靠回执
+- [x] 定义面向完整产品的 Skill，覆盖产品边界、入站信任、回复决策、七项工具与可靠回执
 - [x] 把 Skill 作为静态资源打入 App，并由用户显式 Codex 集成操作安装受管理链接
 - [x] 拒绝覆盖或删除同名普通目录和外来链接；覆盖首次安装、幂等修复与安全移除自测
 - [x] 集成操作对不可读 Codex 配置失败关闭，预检 Skill 归属，并在组合写入失败时回滚
