@@ -90,6 +90,13 @@ publication remain pending.
   `00870ff657f94db461cfb78a1f9142b8378202642bb2996d66e22d32a6e76a45`.
 - The rebuilt App was not installed or exercised through the real UI, so both interactions still require real acceptance.
 
+## 2026-08-24 Template Name Resolution
+
+- `{channel_name}` is now supplied from the App's saved channel display name; the internal channel id remains the fallback.
+- `{sender_name}` already uses the service-owned member nickname, but Railway production is still the 2026-08-21
+  `0.3.0-beta.1` deployment and must be updated before live messages expose that field.
+- All 11 server test files / 92 tests, TypeScript typecheck/build, strict OpenSpec validation and diff checks pass.
+
 ## Live Service Gate
 
 - Railway production deployment `2531a50f-116b-4d8c-9f30-e01af302137d` is `SUCCESS`; `/healthz` passed before cutover.

@@ -342,6 +342,9 @@ Subscription MUST 使用本地模板生成完整 Host 输入，模板只允许 `
 Agent Channels Markdown 引用卡片；标题、来源栏、正文和引用样式 MUST 全部属于模板，
 Connector 不得在用户模板外再添加固定可见内容。
 
+`channel_name` MUST 展开为 App 中保存的频道展示名称，`sender_name` MUST 展开为服务端按
+成员身份解析的发送者昵称；只有对应名称不可用时才可回退为内部标识。
+
 #### Scenario: 保存模板
 
 - **GIVEN** Subscription 使用默认完整卡片模板

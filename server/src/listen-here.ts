@@ -63,6 +63,7 @@ options:
                       hint using this trusted local task as the source. Only
                       valid together with --codex-thread.
   --codex-socket <p>  override the ChatGPT Desktop IPC socket path (diagnostics)
+  --channel-name <n>  display name used for {channel_name}; defaults to channel id
   --message-template <t>
                       render {channel_name}, {sender_name}, {message_text}, and
                       {message_id} as the complete Codex task input
@@ -162,6 +163,7 @@ type Args = {
   codexThread?: string;
   codexSourceThread?: string;
   codexSocket?: string;
+  channelName?: string;
   messageTemplate?: string;
   selfMessagePolicy: SelfMessagePolicy;
   selfEndpointId?: string;
@@ -202,6 +204,7 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
         "codex-thread": { type: "string" },
         "codex-source-thread": { type: "string" },
         "codex-socket": { type: "string" },
+        "channel-name": { type: "string" },
         "message-template": { type: "string" },
         "self-message-policy": { type: "string" },
         "self-endpoint-id": { type: "string" },
@@ -298,6 +301,7 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
     codexThread: parsed.values["codex-thread"],
     codexSourceThread: parsed.values["codex-source-thread"],
     codexSocket: parsed.values["codex-socket"],
+    channelName: parsed.values["channel-name"],
     messageTemplate: parsed.values["message-template"],
     selfMessagePolicy,
     selfEndpointId: parsed.values["self-endpoint-id"],
@@ -896,6 +900,7 @@ export async function runListenHere(
         threadId: args.codexThread,
         sourceThreadId: args.codexSourceThread,
         socketPath: args.codexSocket,
+        channelName: args.channelName,
         messageTemplate: args.messageTemplate,
       });
     } catch (err) {

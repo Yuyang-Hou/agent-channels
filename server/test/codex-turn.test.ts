@@ -227,7 +227,7 @@ describe("Codex task bridge", () => {
         }),
     );
 
-    const delivery = createCodexDelivery({ threadId: THREAD_ID, socketPath });
+    const delivery = createCodexDelivery({ threadId: THREAD_ID, socketPath, channelName: "产品协助" });
     const receipt = await delivery({
       channelId: "test-channel",
       messageId: 7,
@@ -246,7 +246,7 @@ describe("Codex task bridge", () => {
     ]);
     expect(probeRejected).toBe(true);
     expect(startTarget).toBe(ownerId);
-    expect(turnText).toContain("> **频道** `test-channel` · **来自** `backend` · `#7`");
+    expect(turnText).toContain("> **频道** `产品协助` · **来自** `backend` · `#7`");
     expect(turnText).toContain("> API is /v1");
     expect(turnText).not.toContain("reply_ref");
     expect(turnText).not.toContain("reply_to_message");

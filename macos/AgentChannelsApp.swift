@@ -2275,6 +2275,7 @@ extension AppModel {
                 "--secrets-stdin",
                 "--status-json",
                 "--quiet",
+                "--channel-name", profile.displayName,
                 "--message-template", subscription.template,
                 "--self-message-policy", subscription.selfMessagePolicy.rawValue,
                 "--self-endpoint-id", txEndpointID,

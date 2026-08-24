@@ -91,6 +91,7 @@ export function createCodexDelivery(options: {
   threadId: string;
   sourceThreadId?: string;
   socketPath?: string;
+  channelName?: string;
   messageTemplate?: string;
 }): HostDelivery {
   const threadId = parseCodexThreadId(options.threadId);
@@ -101,7 +102,7 @@ export function createCodexDelivery(options: {
 
   return serializeHostDelivery(async (message) => {
     const text = formatCodexChannelMessage({
-      channel: message.channelId,
+      channel: options.channelName || message.channelId,
       id: message.messageId,
       from: message.from,
       text: message.text,
