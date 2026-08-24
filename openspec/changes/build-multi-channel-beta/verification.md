@@ -1,12 +1,12 @@
 # Verification
 
-Status: 0.3.0-beta.1 local acceptance candidate built; automated gates pass. Clean-install, two-machine,
+Status: 0.3.0-beta.2 local acceptance candidate built; automated gates pass. Clean-install, two-machine,
 real-Host, security inspection and public release gates remain pending.
 
 ## Current Beta Candidate
 
-- Artifact: `macos/build/Agent-Channels-0.3.0-beta.1-arm64.dmg`
-- SHA-256: `4e087e1f36fe3890feb7ee2fe9e68a9db74c39e0cf876e69f148aeac24f772af`
+- Artifact: `macos/build/Agent-Channels-0.3.0-beta.2-arm64.dmg`
+- SHA-256: `b58bc2cb608f36a517406f0ac4a57038533e98ab5d363f0d056877e15270a55d`
 - Signing: ad-hoc local acceptance signature; not Developer ID signed or notarized.
 - Local package checks: `hdiutil verify` and `codesign --verify --deep --strict` pass; the embedded MCP lists
   the six task-scoped tools.
@@ -16,6 +16,8 @@ real-Host, security inspection and public release gates remain pending.
 - `npm test`: 11 files and 89 tests pass with the new member and multi-channel paths.
 - `npm run typecheck` and `npm run build` pass.
 - The macOS candidate build completes its focused Swift self-test before compiling and packaging the App.
+- The legacy 0.2 detection banner has a persistent dismiss control; dismissing it does not alter legacy data or
+  hide the detection status in Settings.
 - `openspec validate --strict --all`: 4 items pass.
 - Service tests prove member credentials are channel-scoped, owner-only mutations are enforced, and remove or
   ban invalidates existing sessions and streams, clears queued SSE messages and stops further delivery.

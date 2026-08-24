@@ -9,7 +9,7 @@ task-channel Subscription 和本地消息历史；菜单栏保留运行状态与
 
 ```bash
 ./macos/build-app.sh
-open "macos/build/Agent-Channels-0.3.0-beta.1-arm64.dmg"
+open "macos/build/Agent-Channels-0.3.0-beta.2-arm64.dmg"
 ```
 
 构建脚本默认使用 `xcrun --sdk macosx` 返回的 SDK。需要指定 SDK 时，可传绝对路径或
@@ -54,7 +54,7 @@ Mac 上新建频道、成员和 task 绑定，不复用 0.2 配置。
 App 图标使用 E3 品牌稿；菜单栏使用同一识别特征的单色 SVG，并由 macOS 作为模板图标渲染。
 
 本地构建产物采用 ad-hoc 签名，尚未 Developer ID 签名或公证。只有自动化、双机真实 Host
-与安全检查全部通过后，才发布 `v0.3.0-beta.1` GitHub prerelease。
+与安全检查全部通过后，才发布 `v0.3.0-beta.2` GitHub prerelease。
 
 ## 本机数据
 

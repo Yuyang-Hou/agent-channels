@@ -30,12 +30,12 @@
 
 ## macOS 0.3 Beta 验收包
 
-当前候选版本为 `0.3.0-beta.1`，它内嵌自包含 Bridge，不要求用户安装 Node、npm 或 Codex CLI。
+当前候选版本为 `0.3.0-beta.2`，它内嵌自包含 Bridge，不要求用户安装 Node、npm 或 Codex CLI。
 正式发布 GitHub prerelease 前可从源码构建：
 
 ```bash
 ./macos/build-app.sh
-open "macos/build/Agent-Channels-0.3.0-beta.1-arm64.dmg"
+open "macos/build/Agent-Channels-0.3.0-beta.2-arm64.dmg"
 ```
 
 0.3 不迁移 0.2 数据。把 App 拖入 Applications 后，在主窗口新建或用 `ac2:` 邀请加入频道，

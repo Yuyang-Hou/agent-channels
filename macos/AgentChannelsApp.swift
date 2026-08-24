@@ -2559,6 +2559,7 @@ private struct V2MenuPanel: View {
 
 private struct MainWindowView: View {
     @ObservedObject var model: AppModel
+    @AppStorage("legacyBetaNoticeDismissed") private var legacyBetaNoticeDismissed = false
 
     var body: some View {
         NavigationSplitView {
@@ -2617,11 +2618,18 @@ private struct MainWindowView: View {
             AddChannelSheet(model: model)
         }
         .safeAreaInset(edge: .top) {
-            if model.oldBetaDataDetected {
+            if model.oldBetaDataDetected && !legacyBetaNoticeDismissed {
                 HStack {
                     Image(systemName: "info.circle")
                     Text("检测到 0.2 Beta 数据。0.3 不会读取、迁移、覆盖或删除它，请重新配置频道。")
                     Spacer()
+                    Button {
+                        legacyBetaNoticeDismissed = true
+                    } label: {
+                        Image(systemName: "xmark")
+                            .accessibilityLabel("关闭提示")
+                    }
+                    .buttonStyle(.plain)
                 }
                 .font(.caption)
                 .padding(8)
