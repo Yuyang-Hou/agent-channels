@@ -48,6 +48,7 @@
 - [x] SSE body 异常断开仍保留本连接最新游标，所有持久终态游标只向前推进
 - [x] 一个 Subscription 的 failed/unknown/restart 不影响其他 Subscription
 - [x] App 重启恢复 enabled Subscription；成员撤权停止对应 feed 和全部 Subscription
+- [x] Subscription 列表可通过 `codex://threads/<id>` 启动 ChatGPT 并打开目标会话
 - [x] 确保空闲频道、filtered 消息和 App 状态事件不创建 Host turn
 
 ## Codex MCP Routing

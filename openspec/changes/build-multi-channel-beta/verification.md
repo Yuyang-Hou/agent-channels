@@ -103,6 +103,8 @@ publication remain pending.
   came from an orphan pre-update listener while the installed listener already carried `--channel-name 产品协助`.
 - The stale listener was stopped; the enabled Subscription automatically recovered with exactly one App-owned
   listener and cursor `1787569685428`. Normal App termination and update handoff now stop all supervised sidecars.
+- The beta.9 product Skill recognizes editable inbound titles containing either `频道消息` or `Agent Channels`.
+- Each Subscription row exposes an `打开会话` button that opens its exact `codex://threads/<id>` binding through macOS.
 
 ## Live Service Gate
 

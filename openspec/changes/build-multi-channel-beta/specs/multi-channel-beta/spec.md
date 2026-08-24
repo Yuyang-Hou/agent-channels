@@ -233,6 +233,12 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** A 收到一条普通消息
 - **THEN** App 为 T1、T2 分别记录 delivery 状态，一个失败不暂停另一个
 
+#### Scenario: 从 Subscription 打开目标会话
+
+- **GIVEN** 用户查看已绑定 Codex task 的 Subscription
+- **WHEN** 用户点击“打开会话”
+- **THEN** App 启动 ChatGPT 并通过该 TaskBinding 的 `codex://threads/<id>` 打开目标会话
+
 #### Scenario: 重启恢复
 
 - **GIVEN** 多条 Subscription 已启用

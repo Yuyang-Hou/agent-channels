@@ -2043,6 +2043,15 @@ extension AppModel {
         return "Codex · \(task.label.isEmpty ? "\(task.conversationID.prefix(8))…" : task.label)"
     }
 
+    func openTask(_ taskID: UUID) {
+        guard let task = state.tasks.first(where: { $0.id == taskID }),
+              let url = URL(string: "codex://threads/\(task.conversationID)"),
+              NSWorkspace.shared.open(url) else {
+            fail(AppFailure("无法打开 ChatGPT 会话，请确认 ChatGPT 已安装且该会话仍存在"))
+            return
+        }
+    }
+
     private func taskBinding(for source: LocalSource) -> TaskBinding? {
         state.tasks.first {
             $0.provider == source.provider && $0.conversationID.lowercased() == source.conversationId.lowercased()
@@ -3539,26 +3548,39 @@ private struct SubscriptionCard: View {
         if let subscription {
             let status = model.listenerStatus[subscription.id] ?? (subscription.enabled ? "准备接收" : "已暂停")
             VStack(alignment: .leading, spacing: 0) {
-                Button {
-                    isExpanded.toggle()
-                } label: {
-                    HStack(spacing: 10) {
-                        Circle().fill(statusColor(status)).frame(width: 8, height: 8)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(model.taskLabel(subscription.taskID)).font(.headline)
-                            Text(status).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    Button {
+                        isExpanded.toggle()
+                    } label: {
+                        HStack(spacing: 10) {
+                            Circle().fill(statusColor(status)).frame(width: 8, height: 8)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(model.taskLabel(subscription.taskID)).font(.headline)
+                                Text(status).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if subscription.uncertainMessageID != nil {
+                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            }
                         }
-                        Spacer()
-                        if subscription.uncertainMessageID != nil {
-                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        model.openTask(subscription.taskID)
+                    } label: {
+                        Label("打开会话", systemImage: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.borderless)
+                    Button {
+                        isExpanded.toggle()
+                    } label: {
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                             .font(.caption.bold())
                             .foregroundStyle(.secondary)
                     }
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
                 if isExpanded {
                     Divider().padding(.vertical, 12)
                     VStack(alignment: .leading, spacing: 10) {
