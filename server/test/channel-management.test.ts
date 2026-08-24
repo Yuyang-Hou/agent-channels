@@ -60,6 +60,7 @@ async function joinDetails(
   credential: string,
   callsign: string,
   sessionId?: string,
+  name?: string,
 ): Promise<Joined> {
   const response = await instance.request(`/api/channels/${channelId}/join`, {
     method: "POST",
@@ -68,7 +69,7 @@ async function joinDetails(
       "content-type": "application/json",
       ...(sessionId ? { "x-session-id": sessionId } : {}),
     },
-    body: JSON.stringify({ callsign }),
+    body: JSON.stringify({ callsign, ...(name ? { name } : {}) }),
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as {
@@ -116,13 +117,20 @@ describe("managed channel members", () => {
     const response = await instance.request("/api/channels", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ api_version: 2, retention: "none", trust_mode: "untrusted" }),
+      body: JSON.stringify({
+        api_version: 2,
+        retention: "none",
+        trust_mode: "untrusted",
+        channel_name: "产品协作",
+        name: "小明",
+      }),
     });
     expect(response.status).toBe(200);
     const body = (await response.json()) as Record<string, unknown>;
     expect(body).toMatchObject({
       api_version: 2,
       channel_id: expect.any(String),
+      channel_name: "产品协作",
       member_id: expect.any(String),
       member_credential: expect.any(String),
       role: "owner",
@@ -149,6 +157,45 @@ describe("managed channel members", () => {
       "owner",
     );
     expect(joined.memberId).toBe(body.member_id);
+
+    const renamed = await instance.request(`/api/channels/${body.channel_id as string}/members/me`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${body.member_credential as string}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "小红" }),
+    });
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ member: { name: "小红" } });
+    const renamedSession = await joinDetails(
+      instance,
+      body.channel_id as string,
+      body.member_credential as string,
+      "owner-renamed",
+      undefined,
+      "小红",
+    );
+    const sent = await send(
+      instance,
+      body.channel_id as string,
+      body.member_credential as string,
+      renamedSession.sessionId,
+      "new nickname",
+    );
+    expect(await sent.json()).toMatchObject({ sender_name: "小红" });
+
+    const invitation = await instance.request(`/api/channels/${body.channel_id as string}/invites`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${body.member_credential as string}` },
+    });
+    const invite = (await invitation.json()) as { invite_token: string };
+    const redeemed = await instance.request(`/api/channels/${body.channel_id as string}/invites/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ invite_token: invite.invite_token, name: "小李" }),
+    });
+    expect(await redeemed.json()).toMatchObject({ channel_name: "产品协作", name: "小李" });
   });
 
   it("issues one-time invitations and independent member credentials", async () => {
@@ -367,7 +414,7 @@ describe("managed channel members", () => {
     const instance = app();
     const channel = await createChannel(instance);
     const member = await inviteMember(instance, channel, "Backend");
-    const backend = await joinDetails(instance, channel.id, member.credential, "backend");
+    const backend = await joinDetails(instance, channel.id, member.credential, "backend", undefined, "Peer");
 
     expect(backend.memberId).toBe(member.id);
     expect(backend.endpointId).toMatch(/^ep_[A-Za-z0-9_-]+$/);
@@ -398,6 +445,7 @@ describe("managed channel members", () => {
     expect(sent.status).toBe(200);
     expect(await sent.json()).toMatchObject({
       from: "backend",
+      sender_name: "Peer",
       sender_member_id: backend.memberId,
       sender_endpoint_id: backend.endpointId,
     });
@@ -410,6 +458,7 @@ describe("managed channel members", () => {
       history: [
         {
           from: "backend",
+          sender_name: "Peer",
           sender_member_id: backend.memberId,
           sender_endpoint_id: backend.endpointId,
           text: "identity check",

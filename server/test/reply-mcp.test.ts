@@ -377,7 +377,7 @@ describe("channel MCP", () => {
       id: 1,
       result: {
         protocolVersion: "2025-03-26",
-        serverInfo: { name: "agent-channels", version: "0.3.0-beta.1" },
+        serverInfo: { name: "agent-channels", version: "0.3.0-beta.8" },
       },
     });
     expect(lines[1]).toEqual({ jsonrpc: "2.0", id: 2, result: {} });

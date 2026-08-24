@@ -19,9 +19,9 @@
   <key>CFBundleShortVersionString</key>
   <string>0.3.0</string>
   <key>AgentChannelsReleaseVersion</key>
-  <string>0.3.0-beta.2</string>
+  <string>0.3.0-beta.8</string>
   <key>CFBundleVersion</key>
-  <string>4</string>
+  <string>9</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>LSMinimumSystemVersion</key>

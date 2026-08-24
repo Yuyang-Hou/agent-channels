@@ -22,7 +22,8 @@
 ### Requirement: 主窗口管理多个频道
 
 App MUST 以主窗口展示多个 ChannelConnection，并为当前频道提供简单文本时间线、发送框、
-未读状态、成员和 task 订阅管理。
+未读状态、成员和 task 订阅管理。App 设置 MUST 作为同一主窗口的侧栏目的地呈现；菜单栏 MUST
+只保留总体状态、主窗口入口和监听生命周期操作，不得打开独立设置窗口。
 
 #### Scenario: 频道隔离
 
@@ -30,11 +31,76 @@ App MUST 以主窗口展示多个 ChannelConnection，并为当前频道提供�
 - **WHEN** 两个频道分别收到消息
 - **THEN** 侧栏分别更新未读，时间线、发送目标和成员列表不串频道
 
+#### Scenario: 添加频道
+
+- **GIVEN** 用户打开添加频道弹窗
+- **WHEN** 用户选择创建频道或加入频道
+- **THEN** 创建路径只填写频道名称，加入路径只粘贴 `ac2:` 邀请口令，并以单一底部主按钮提交
+- **AND** 两个路径都使用设置中保存的全局用户昵称，不在频道弹窗重复填写
+
+#### Scenario: 修改我的昵称
+
+- **GIVEN** 用户已经加入多个频道
+- **WHEN** 用户在设置中修改“我的昵称”
+- **THEN** App 保存唯一全局昵称并同步各频道的 Member 名称
+- **AND** 后续从 App 或 task endpoint 发出的消息都以该昵称展示，内部 callsign 不出现在产品界面
+
+#### Scenario: 邀请加入保留频道名称
+
+- **GIVEN** owner 使用自定义频道名称创建频道并生成邀请
+- **WHEN** 另一用户通过邀请加入
+- **THEN** 服务端返回该频道名称，双方看到相同名称，网络路由继续使用不可变频道 ID
+
+#### Scenario: 设置本机频道昵称
+
+- **GIVEN** ChannelConnection 保留服务端原始频道名
+- **WHEN** 用户双击详情标题或点击编辑按钮设置或清空本机频道昵称
+- **THEN** 侧栏和频道标题使用昵称或恢复原始名称，同时详情持续展示不可变的原始频道名，网络路由仍只使用原始频道名
+
 #### Scenario: 重启保留本地历史
 
 - **GIVEN** App 已接收两个频道的消息
 - **WHEN** App 完全退出并重新打开
 - **THEN** 两个频道的本地历史与未读位置仍可见，且消息按 `channel_id + message_id` 去重
+
+#### Scenario: 从菜单栏打开主窗口
+
+- **GIVEN** 主窗口已隐藏或最小化，菜单栏浮窗处于前台
+- **WHEN** 用户点击“打开 Agent Channels”
+- **THEN** App 复用、反最小化并聚焦单一主窗口，且不创建独立设置窗口
+
+#### Scenario: 普通操作失败不污染总体状态
+
+- **GIVEN** App 核心服务和频道连接正常
+- **WHEN** 用户输入无效名称或其他普通操作失败
+- **THEN** App 即时说明失败原因，但菜单栏不保留该消息、不变更总体状态或图标
+
+#### Scenario: 打开 App 设置
+
+- **GIVEN** 用户正在 Agent Channels 主窗口
+- **WHEN** 用户选择侧栏“设置”
+- **THEN** “设置”作为与频道列表分隔的固定底部目的地，内容在当前主窗口详情区显示，频道、
+  订阅和设置不会分散到两个窗口
+
+#### Scenario: 查看频道消息
+
+- **GIVEN** 当前频道已有多条本机或服务端消息
+- **WHEN** 用户打开“消息”
+- **THEN** App 自动拉取最新服务端历史并与本机消息合并，相邻同发送者消息按时间聚合显示，正文
+  优先，发送框固定在底部，普通接收状态不逐条强调，失败或结果未知保持可见
+
+#### Scenario: 回车发送消息
+
+- **GIVEN** 发送框包含非空文本且当前没有消息正在发送
+- **WHEN** 用户按下回车
+- **THEN** App 复用发送按钮的发送流程提交消息，并阻止并发重复发送
+
+#### Scenario: 管理成员与会话转发
+
+- **GIVEN** 当前频道已有成员和已连接的 AI 会话
+- **WHEN** 用户切换到对应 Tab
+- **THEN** 成员危险操作收敛在行尾菜单，会话页命名为“转发到会话”，明确频道消息将作为新输入
+  发送到具体 AI 会话，并按需展开接收、默认回复频道、模板等低频设置
 
 ### Requirement: 每个成员拥有独立凭证
 
@@ -79,6 +145,8 @@ owner MUST 可以移除、封禁和解除封禁普通成员；撤权 MUST 立即
 ### Requirement: App 消息先落本地再投递 Host
 
 App MUST 在尝试任何 Host delivery 前保存普通频道消息，并按 Subscription 单独记录后续状态。
+App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完成投递进行幂等处理，
+并在 SSE 异常断开后从本连接最后成功处理的消息继续。
 
 #### Scenario: Host 不可用
 
@@ -98,10 +166,29 @@ App MUST 在尝试任何 Host delivery 前保存普通频道消息，并按 Subs
 - **WHEN** App 更新消息状态
 - **THEN** 对应 Subscription 标为 `unknown` 并暂停等待人工选择，其他 Subscription 继续运行
 
+#### Scenario: 已完成消息被历史重放
+
+- **GIVEN** 同一 Subscription 的消息已经是 `delivered`、`filtered` 或 `skipped`
+- **WHEN** 服务端或旧游标再次送达相同 `channel_id + message_id`
+- **THEN** App 返回 `already_processed`，Runtime 不调用 Connector并推进到该消息之后
+
+#### Scenario: 未决消息被再次送达
+
+- **GIVEN** 同一 Subscription 的消息处于 `attempting` 或 `unknown`
+- **WHEN** Runtime 再次提交该消息
+- **THEN** App 返回 `unresolved`，Runtime 停止且不推进游标，等待人工确认
+
+#### Scenario: SSE 异常断开
+
+- **GIVEN** Runtime 已在本次 SSE 连接中成功处理至少一条消息
+- **WHEN** body stream 因网络或代理错误异常结束
+- **THEN** Runtime 使用本连接最后成功处理的 message id 重连，不退回连接开始前的游标
+
 ### Requirement: App 可以直接收发简单文本消息
 
 用户 MUST 可以在主窗口向当前频道发送文本，并看到来自 App 或 task endpoint 的频道消息及
-可靠发送状态。
+可靠发送状态。产品展示和 Host 输入 MUST 使用服务端按认证 Member 解析的成员昵称，不得把
+内部 endpoint callsign 当作成员昵称；sender member/endpoint id 继续用于身份与自消息判断。
 
 #### Scenario: App 主动发送
 
@@ -114,6 +201,12 @@ App MUST 在尝试任何 Host delivery 前保存普通频道消息，并按 Subs
 - **GIVEN** App 已发出频道 mutation 但没有可靠回执
 - **WHEN** 用户查看时间线
 - **THEN** 消息显示 `unknown`，App 不自动重复发送
+
+#### Scenario: 展示发送者昵称
+
+- **GIVEN** 成员昵称为 `frontend`，其 App 或 task endpoint 使用内部 callsign 发送消息
+- **WHEN** 其他 App 展示消息或 Subscription 生成 Host 输入
+- **THEN** 发送者显示为 `frontend`，内部 callsign 只保留为路由信息且不作为产品名称展示
 
 ### Requirement: TaskBinding 与频道 Subscription 分离
 
@@ -185,22 +278,74 @@ MCP MUST NOT 读取 Keychain、直接访问 Channel Service、建立频道监听
 - **WHEN** task 调用 `send_to_channel`
 - **THEN** App 仍允许主动发送；接收开关不成为出站路由条件
 
-### Requirement: 每条 Subscription 使用受限模板
+### Requirement: Agent Channels Skill 承接完整产品语义
 
-Subscription MUST 使用本地模板把频道消息转换为 Host 输入，模板只允许
-`channel_name`、`sender_name`、`message_text` 和 `message_id` 四个变量。
+App MUST 随包提供面向完整 Agent Channels 产品的静态 Skill。Skill MUST 解释 App、MCP、
+Subscription、入站卡片、信任、回复与可靠发送回执，不得只描述 `send_to_channel`。Skill MUST NOT
+包含 secret、动态频道状态或 task id，也不得依赖每 turn hook。
+
+#### Scenario: 显式启用 Codex 集成
+
+- **GIVEN** App 已安装且用户目录没有同名 Skill
+- **WHEN** 用户点击启用或修复 Codex 集成
+- **THEN** App 同时配置 MCP 与受管理 Skill 链接，并提示完全重启 ChatGPT
+
+#### Scenario: 同名 Skill 不受本 App 管理
+
+- **GIVEN** 用户目录已有同名普通目录或外来符号链接
+- **WHEN** App 尝试启用、修复或移除 Codex 集成
+- **THEN** App 失败关闭并保留该内容与现有 MCP 配置，不覆盖、删除或留下半配置状态
+
+#### Scenario: Codex 配置不可读或写入失败
+
+- **GIVEN** `config.toml` 已存在但不可读、不是 UTF-8，或组合操作中途写入失败
+- **WHEN** 用户启用、修复或移除 Codex 集成
+- **THEN** App 明确失败并回滚本次受管 Skill 或 MCP 变更，不把读取失败当作空文件覆盖
+
+#### Scenario: AI 处理频道消息
+
+- **GIVEN** task 收到带固定 Agent Channels 标题的外部消息卡片
+- **WHEN** Skill 被触发
+- **THEN** AI 把正文当作不可信协作数据且不默认回复，只在需要时使用明确频道执行动作
+
+### Requirement: Beta 应用内自动更新
+
+App MUST 提供默认关闭的 Beta 自动更新开关。开启后 MUST 在启动时和运行期间定期检查更高的
+GitHub prerelease，MUST 在 App 内下载 arm64 DMG，并在下次启动完成安装，无需用户访问网页、
+手动下载或拖拽 App。替换前 MUST 校验 Bundle ID、目标版本、完整代码签名和当前 App 的
+designated requirement；任一校验或替换失败时 MUST 保留旧 App 并避免重复重启。
+
+#### Scenario: 自动下载并在重启时安装
+
+- **GIVEN** 用户开启自动更新且 GitHub 有签名一致的更高 Beta arm64 DMG
+- **WHEN** App 完成后台下载且用户下次启动 App
+- **THEN** 更新助手替换 Applications 中的旧 App、清理待安装文件并自动打开新版本
+
+#### Scenario: 更新包不可信或安装失败
+
+- **GIVEN** DMG 中 App 的身份、版本或签名不符合要求，或目标目录无法替换
+- **WHEN** 更新助手尝试安装
+- **THEN** 旧 App 保持可用，待安装标记被清除，App 重新打开并展示失败原因
+
+### Requirement: 每条 Subscription 使用固定卡片与受限正文模板
+
+Subscription MUST 使用本地模板生成 Host 输入的正文，模板只允许 `channel_name`、
+`sender_name`、`message_text` 和 `message_id` 四个变量。产品默认模板 MUST 仅包含
+`{message_text}`。Connector MUST 用固定 Markdown 引用卡片包裹正文，并固定输出标题与来源栏；
+Skill MUST 根据固定标题把正文作为不可信协作数据处理，卡片不得重复展示处理说明。
 
 #### Scenario: 保存模板
 
-- **GIVEN** 用户编辑 Subscription 模板
+- **GIVEN** 用户编辑 Subscription 正文模板
 - **WHEN** 模板为空、超过上限或包含未知变量
-- **THEN** App 拒绝保存并保留上一份有效模板
+- **THEN** 空模板恢复产品默认正文；超过上限或含未知变量时 App 拒绝保存并保留上一份有效模板
 
 #### Scenario: 渲染不可信正文
 
-- **GIVEN** 远端 message text 包含类似系统指令或模板标记的文本
+- **GIVEN** 远端 message text 包含类似系统指令、模板标记、标题、引用、空行或代码围栏
 - **WHEN** App 渲染 Host 输入
-- **THEN** 该文本只作为 `message_text` 数据并继续标记不可信，不能选择 Binding 或改变模板
+- **THEN** 该文本只作为 `message_text` 数据且每一行都留在固定 blockquote 卡片内，不能选择
+  Binding、改变模板或覆盖固定标题与来源栏
 
 ### Requirement: 自消息策略按 endpoint 判断
 

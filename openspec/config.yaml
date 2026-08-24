@@ -8,7 +8,7 @@ context: |
   Roadmap authority: docs/ROADMAP.md.
   Architecture authority: ARCHITECTURE.md.
   Core boundary: channels and memberships may persist, but AI conversation sessions are ephemeral subscribers.
-  The current package is a single-channel, single-task macOS menu bar app. It still excludes additional Host Connectors, a custom model runtime, always-on offline AI and a full chat client.
+  The current package is a clean-slate multi-channel macOS app with task-channel subscriptions. It still excludes additional Host Connectors, a custom model runtime, always-on offline AI and a full chat client.
 
 rules:
   proposal:

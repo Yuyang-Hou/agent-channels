@@ -1,7 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="Agent Channels pigeon">
-  <g fill="black">
-    <path d="M12 2.4c4.3 0 7 3.35 7 8.35 0 6.65-2.55 10.05-7 10.05s-7-3.4-7-10.05c0-5 2.7-8.35 7-8.35Z"/>
-    <ellipse cx="3.8" cy="13.75" rx="3.1" ry="5.35" transform="rotate(24 3.8 13.75)"/>
-    <ellipse cx="20.2" cy="13.75" rx="3.1" ry="5.35" transform="rotate(-24 20.2 13.75)"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Agent Channels pigeon head">
+  <mask id="eye-cutout" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse">
+    <rect width="128" height="128" fill="white"/>
+    <circle cx="54" cy="48" r="8.5" fill="black"/>
+    <circle cx="51.8" cy="48" r="2.4" fill="white"/>
+  </mask>
+  <g fill="black" mask="url(#eye-cutout)">
+    <path transform="translate(7.3 6.3) scale(.9)" d="M77 11c28 0 46 20 46 50 0 32-21 54-52 54-30 0-50-20-50-50 0-32 22-54 56-54Z"/>
+    <path d="M31 55c-6 0-13 3-19 7-3 2-3 5 0 7 6 4 13 6 19 5 5-1 9-5 9-10s-4-8-9-9Z"/>
   </g>
 </svg>

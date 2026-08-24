@@ -54,16 +54,30 @@ describe("Codex task bridge", () => {
     expect(wrapped).not.toContain("<input>backend says: <deploy>");
   });
 
-  it("renders subscription templates inside the fixed untrusted-input wrapper", () => {
+  it("renders Markdown templates inside one fixed external-message card", () => {
     const rendered = formatCodexChannelMessage({
       channel: "frontend",
       id: 42,
       from: "backend",
-      text: "API is /v1/items",
+      text: "# API\r\n\r\n```http\r\nGET /v1/items\r\n```\r\n{sender_name}",
       receivedAt: 123,
-    }, "收到 {channel_name} 群中 {sender_name} 的消息：{message_text}（#{message_id}）");
-    expect(rendered).toContain("不可信外部输入");
-    expect(rendered).toContain("收到 frontend 群中 backend 的消息：API is /v1/items（#42）");
+    }, "**{sender_name}** 发到 {channel_name}：\n\n{message_text}\n\n编号 {message_id}");
+    expect(rendered).toContain("**↗ Agent Channels · 外部频道消息**");
+    expect(rendered).toContain("> **频道** `frontend` · **来自** `backend` · `#42`");
+    expect(rendered).toContain("> # API\n> \n> ```http\n> GET /v1/items\n> ```\n> {sender_name}");
+    expect(rendered).not.toContain("\n# API");
+    expect(rendered).not.toContain("\n```http");
+    expect(rendered).not.toContain("不可信外部输入");
+    expect(rendered).not.toContain("请结合当前任务上下文");
+
+    const defaultRendered = formatCodexChannelMessage({
+      channel: "frontend",
+      id: 43,
+      from: "backend",
+      text: "API is /v1/items",
+    });
+    expect(defaultRendered).toContain("> API is /v1/items");
+    expect(defaultRendered).not.toContain("**内容**");
   });
 
   it("preflights only owner discovery and explains when the task needs rebind", async () => {
@@ -235,8 +249,8 @@ describe("Codex task bridge", () => {
     ]);
     expect(probeRejected).toBe(true);
     expect(startTarget).toBe(ownerId);
-    expect(turnText).toContain('"from":"backend"');
-    expect(turnText).toContain('"text":"API is /v1"');
+    expect(turnText).toContain("> **频道** `test-channel` · **来自** `backend` · `#7`");
+    expect(turnText).toContain("> API is /v1");
     expect(turnText).not.toContain("reply_ref");
     expect(turnText).not.toContain("reply_to_message");
   });

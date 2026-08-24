@@ -29,6 +29,7 @@ import {
   revokeMemberInvite,
   setMemberStatus,
   unbanMember,
+  updateMemberName,
 } from "./channel-management.js";
 // startPeriodicGc imported above with ChannelError
 import { buildConnectInfo } from "./connect.js";
@@ -54,6 +55,7 @@ import {
   createChannel,
   ensureBands,
   getChannelIsBand,
+  getChannelName,
   getChannelRetention,
   getChannelSessionTtlMs,
   getChannelTrustMode,
@@ -246,7 +248,17 @@ export function createApp(opts: AppOptions): Hono {
     if (!ownerPassword && preset?.autoMintOwnerPassword) {
       ownerPassword = randomUUID().replace(/-/g, "").slice(0, 16);
     }
+    const memberName = typeof body.name === "string" ? body.name.trim() : "Owner";
+    if (!memberName || memberName.length > 64) return c.json({ error: "name must be 1-64 characters" }, 400);
+    if (body.channel_name !== undefined && typeof body.channel_name !== "string") {
+      return c.json({ error: "channel_name must be a string" }, 400);
+    }
+    const channelName = typeof body.channel_name === "string" ? body.channel_name.trim() : "";
+    if (body.channel_name !== undefined && (!channelName || channelName.length > 64)) {
+      return c.json({ error: "channel_name must be 1-64 characters" }, 400);
+    }
     const result = createChannel({
+      channel_name: channelName || undefined,
       retention,
       trust_mode: trustMode,
       session_ttl_seconds: sessionTtlSeconds,
@@ -255,17 +267,19 @@ export function createApp(opts: AppOptions): Hono {
     if ("error" in result) return c.json(result, 400);
     const {
       id,
+      name: createdName,
       token,
       retention: createdRetention,
       trust_mode: createdTrustMode,
       session_ttl_seconds: createdTtl,
       has_owner_password,
     } = result;
-    const owner = registerOwner(id, token);
+    const owner = registerOwner(id, token, memberName);
     if (isV2) {
       return c.json({
         api_version: 2,
         channel_id: id,
+        channel_name: createdName,
         member_id: owner.member_id,
         member_credential: token,
         role: owner.role,
@@ -277,6 +291,7 @@ export function createApp(opts: AppOptions): Hono {
     }
     return c.json({
       ...buildConnectInfo(id, token, opts.publicOrigin, { ownerPassword, trustMode, mode }),
+      channel_name: createdName,
       member_id: owner.member_id,
       member_credential: token,
       role: owner.role,
@@ -302,6 +317,7 @@ export function createApp(opts: AppOptions): Hono {
     const base = `${opts.publicOrigin}/api/channels/${channelId}`;
     return c.json({
       channel_id: channelId,
+      channel_name: getChannelName(channelId),
       exists: true,
       retention: getChannelRetention(channelId),
       trust_mode: getChannelTrustMode(channelId),
@@ -326,7 +342,7 @@ export function createApp(opts: AppOptions): Hono {
     });
   });
 
-  type ChannelPrincipal = { memberId: string; role: "owner" | "member"; isPublic: boolean };
+  type ChannelPrincipal = { memberId: string; role: "owner" | "member"; name: string; isPublic: boolean };
 
   function bearerToken(c: Context): string {
     const auth = c.req.header("authorization") ?? c.req.header("Authorization") ?? "";
@@ -335,16 +351,16 @@ export function createApp(opts: AppOptions): Hono {
 
   function resolveChannelPrincipal(c: Context, channelId: string): ChannelPrincipal | undefined {
     if (!channelExists(channelId)) return undefined;
-    if (getChannelIsBand(channelId)) return { memberId: "public", role: "member", isPublic: true };
+    if (getChannelIsBand(channelId)) return { memberId: "public", role: "member", name: "", isPublic: true };
     const token = bearerToken(c);
     if (!token) return undefined;
     const member = authenticateMember(channelId, token);
-    if (member) return { memberId: member.member_id, role: member.role, isPublic: false };
+    if (member) return { memberId: member.member_id, role: member.role, name: member.name, isPublic: false };
     // Compatibility for a pre-0.3 channel token. Fresh 0.3 channels already
     // register this token as their owner's credential at creation time.
     if (verifyChannel(channelId, token)) {
       const owner = registerOwner(channelId, token);
-      return { memberId: owner.member_id, role: "owner", isPublic: false };
+      return { memberId: owner.member_id, role: "owner", name: owner.name, isPublic: false };
     }
     return undefined;
   }
@@ -496,6 +512,7 @@ export function createApp(opts: AppOptions): Hono {
     if (!redeemed) return c.json({ error: "invalid or already redeemed invitation" }, 401);
     return c.json({
       channel_id: channelId,
+      channel_name: getChannelName(channelId),
       member_id: redeemed.member.member_id,
       member_credential: redeemed.member_credential,
       role: redeemed.member.role,
@@ -523,6 +540,25 @@ export function createApp(opts: AppOptions): Hono {
       online: member.callsigns.some((callsign) => online.has(callsign)),
     }));
     return c.json({ channel_id: channelId, members });
+  });
+
+  app.patch("/api/channels/:id/members/me", async (c) => {
+    const channelId = c.req.param("id");
+    const denied = requireChannelBearer(c, channelId);
+    if (denied) return denied;
+    const principal = resolveChannelPrincipal(c, channelId)!;
+    if (principal.isPublic) return c.json({ error: "public bands do not have managed members" }, 400);
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.json();
+      if (raw && typeof raw === "object") body = raw as Record<string, unknown>;
+    } catch {
+      /* handled below */
+    }
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name || name.length > 64) return c.json({ error: "name must be 1-64 characters" }, 400);
+    const member = updateMemberName(channelId, principal.memberId, name);
+    return member ? c.json({ ok: true, member }) : c.json({ error: "active member not found" }, 404);
   });
 
   app.delete("/api/channels/:id/members/:memberId", (c) => {
@@ -597,9 +633,13 @@ export function createApp(opts: AppOptions): Hono {
     const sourceMemberId = principal.isPublic
       ? publicBandMemberId(channelId, normalizedCallsign)
       : principal.memberId;
+    const requestedName = typeof body.name === "string" ? body.name.trim() : "";
+    if (requestedName.length > 64) return c.json({ error: "name must be 1-64 characters", code: "invalid" }, 400);
+    if (requestedName && !principal.isPublic) updateMemberName(channelId, principal.memberId, requestedName);
     const source = {
       memberId: sourceMemberId,
       endpointId: authenticatedEndpointId(channelId, sourceMemberId, normalizedCallsign),
+      memberName: principal.isPublic ? normalizedCallsign : (requestedName || undefined),
     };
     if (!principal.isPublic) {
       const existingMember = memberBySession.get(channelId)?.get(newId);
@@ -764,6 +804,7 @@ export function createApp(opts: AppOptions): Hono {
         id: msg.id,
         at: msg.at,
         from: msg.from,
+        sender_name: msg.sender_name,
         sender_member_id: msg.sender_member_id,
         sender_endpoint_id: msg.sender_endpoint_id,
         queued,
@@ -1069,8 +1110,10 @@ export function createApp(opts: AppOptions): Hono {
       const callsign = channel.callsignOf(effectiveSessionId)!;
       const isPublic = getChannelIsBand(effectiveChannelId);
       let sourceMemberId: string | undefined;
+      let sourceMemberName: string | undefined;
       if (isPublic) {
         sourceMemberId = publicBandMemberId(effectiveChannelId, callsign);
+        sourceMemberName = callsign;
       } else if (effectiveToken) {
         let member =
           authenticateMember(effectiveChannelId, effectiveToken) ??
@@ -1114,6 +1157,7 @@ export function createApp(opts: AppOptions): Hono {
         channel.bindAuthenticatedSource(effectiveSessionId, {
           memberId: sourceMemberId,
           endpointId: authenticatedEndpointId(effectiveChannelId, sourceMemberId, callsign),
+          memberName: sourceMemberName,
         });
       } catch (error) {
         if (error instanceof ChannelError) {

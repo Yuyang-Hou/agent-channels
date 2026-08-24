@@ -11,10 +11,11 @@ private let keychainService = "com.agentchannels.channel"
 private let managedConfigStart = "# >>> Agent Channels managed MCP >>>"
 private let managedConfigEnd = "# <<< Agent Channels managed MCP <<<"
 private let githubReleasesURL = URL(string: "https://api.github.com/repos/Yuyang-Hou/agent-channels/releases?per_page=100")!
+private let automaticUpdateChecksKey = "automaticUpdateChecks"
 private let localSendProtocolVersion = 2
 private let maxChannelMessageLength = 8192
 private let maxLocalSendFrameBytes = 64 * 1024
-private let defaultMessageTemplate = "收到 {channel_name} 频道中 {sender_name} 的消息。你可以不回复或简单回复。\n内容：{message_text}"
+private let defaultMessageTemplate = "{message_text}"
 
 private func compactTaskKey(_ raw: String) -> String? {
     guard let uuid = UUID(uuidString: raw) else { return nil }
@@ -136,6 +137,40 @@ struct SubscriptionDeliveryRecord: Codable, Equatable, Identifiable {
     var id: String { "\(subscriptionID.uuidString):\(channelID.uuidString):\(messageID)" }
 }
 
+private enum ReceivedDeliveryDecision: String {
+    case record = "recorded"
+    case alreadyProcessed = "already_processed"
+    case unresolved
+}
+
+private func receivedDeliveryDecision(_ state: MessageDeliveryState?) -> ReceivedDeliveryDecision {
+    guard let state else { return .record }
+    switch state {
+    case .delivered, .filtered, .skipped: return .alreadyProcessed
+    case .attempting, .unknown: return .unresolved
+    default: return .record
+    }
+}
+
+private func advancedDeliveryCursor(_ current: Int64?, through messageID: Int64) -> Int64 {
+    max(current ?? messageID, messageID)
+}
+
+private func continuesMessageGroup(
+    previous: ChannelMessageRecord?,
+    current: ChannelMessageRecord
+) -> Bool {
+    guard let previous else { return false }
+    let interval = current.at - previous.at
+    return current.from == previous.from && current.direction == previous.direction
+        && interval >= 0 && interval <= 5 * 60 * 1000
+}
+
+private func channelDisplayName(_ nickname: String, original: String) -> String {
+    let value = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
+    return value.isEmpty ? original : value
+}
+
 private func recoverSubscriptionDeliveryState(
     _ subscription: inout ChannelSubscription,
     deliveries: [SubscriptionDeliveryRecord]
@@ -217,6 +252,23 @@ enum InvitationCodec {
 }
 
 enum CodexConfigEditor {
+    static func reading(_ url: URL) throws -> String? {
+        var info = stat()
+        if lstat(url.path, &info) != 0 {
+            if errno == ENOENT { return nil }
+            throw AppFailure("无法检查 Codex 配置：\(String(cString: strerror(errno)))")
+        }
+        return try String(contentsOf: url, encoding: .utf8)
+    }
+
+    static func writing(_ value: String, to url: URL) throws {
+        var info = stat()
+        let destination = lstat(url.path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFLNK
+            ? url.resolvingSymlinksInPath()
+            : url
+        try value.write(to: destination, atomically: true, encoding: .utf8)
+    }
+
     static func managedBlock(sidecar: String, binding: String) -> String {
         [
             managedConfigStart,
@@ -308,9 +360,15 @@ enum AppPaths {
     static let legacyBinding = support.appendingPathComponent("binding.json")
     static let sendSocket = support.appendingPathComponent("send.sock")
     static let messages = support.appendingPathComponent("messages", isDirectory: true)
+    static let updates = support.appendingPathComponent("updates", isDirectory: true)
+    static let pendingUpdateDMG = updates.appendingPathComponent("pending-update.dmg")
+    static let pendingUpdate = updates.appendingPathComponent("pending-update.json")
+    static let updateError = updates.appendingPathComponent("last-error.txt")
     static let codexDirectory = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".codex", isDirectory: true)
     static let codexConfig = codexDirectory.appendingPathComponent("config.toml")
+    static let codexSkills = codexDirectory.appendingPathComponent("skills", isDirectory: true)
+    static let agentChannelsSkill = codexSkills.appendingPathComponent("agent-channels", isDirectory: true)
 
     static var appIsInstalled: Bool {
         let app = Bundle.main.bundleURL.standardizedFileURL.path
@@ -324,6 +382,134 @@ enum AppPaths {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: support.path)
         try FileManager.default.createDirectory(at: messages, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: messages.path)
+    }
+}
+
+enum AgentChannelsSkillInstaller {
+    static var bundledSkill: URL {
+        Bundle.main.resourceURL!
+            .appendingPathComponent("skills", isDirectory: true)
+            .appendingPathComponent("agent-channels", isDirectory: true)
+    }
+
+    static func isInstalled(
+        source: URL = bundledSkill,
+        destination: URL = AppPaths.agentChannelsSkill
+    ) -> Bool {
+        FileManager.default.fileExists(atPath: source.appendingPathComponent("SKILL.md").path)
+            && isManagedLink(source: source, destination: destination)
+    }
+
+    static func isManagedLink(
+        source: URL = bundledSkill,
+        destination: URL = AppPaths.agentChannelsSkill
+    ) -> Bool {
+        guard isSymbolicLink(destination),
+              let target = try? resolvedLinkTarget(destination) else { return false }
+        return target.standardizedFileURL == source.standardizedFileURL
+    }
+
+    static func install(
+        source: URL = bundledSkill,
+        destination: URL = AppPaths.agentChannelsSkill
+    ) throws {
+        guard FileManager.default.fileExists(atPath: source.appendingPathComponent("SKILL.md").path) else {
+            throw AppFailure("App 安装包缺少 Agent Channels Skill，请重新安装")
+        }
+        if itemExists(destination) {
+            guard isSymbolicLink(destination) else {
+                throw AppFailure("~/.codex/skills/agent-channels 已存在且不由本 App 管理，请先手动处理")
+            }
+            guard try resolvedLinkTarget(destination).standardizedFileURL == source.standardizedFileURL else {
+                throw AppFailure("~/.codex/skills/agent-channels 指向其他内容，未覆盖")
+            }
+            return
+        }
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: source)
+    }
+
+    static func remove(
+        source: URL = bundledSkill,
+        destination: URL = AppPaths.agentChannelsSkill
+    ) throws {
+        try validateRemoval(source: source, destination: destination)
+        guard itemExists(destination) else { return }
+        try FileManager.default.removeItem(at: destination)
+    }
+
+    static func validateRemoval(
+        source: URL = bundledSkill,
+        destination: URL = AppPaths.agentChannelsSkill
+    ) throws {
+        guard itemExists(destination) else { return }
+        guard isSymbolicLink(destination),
+              try resolvedLinkTarget(destination).standardizedFileURL == source.standardizedFileURL else {
+            throw AppFailure("未移除不由本 App 管理的 Agent Channels Skill")
+        }
+    }
+
+    private static func itemExists(_ url: URL) -> Bool {
+        var info = stat()
+        return lstat(url.path, &info) == 0
+    }
+
+    private static func isSymbolicLink(_ url: URL) -> Bool {
+        var info = stat()
+        return lstat(url.path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFLNK
+    }
+
+    private static func resolvedLinkTarget(_ destination: URL) throws -> URL {
+        let raw = try FileManager.default.destinationOfSymbolicLink(atPath: destination.path)
+        return raw.hasPrefix("/")
+            ? URL(fileURLWithPath: raw)
+            : destination.deletingLastPathComponent().appendingPathComponent(raw)
+    }
+}
+
+enum CodexIntegrationInstaller {
+    static func install(
+        configURL: URL,
+        block: String,
+        skillSource: URL = AgentChannelsSkillInstaller.bundledSkill,
+        skillDestination: URL = AppPaths.agentChannelsSkill
+    ) throws {
+        let existing = try CodexConfigEditor.reading(configURL) ?? ""
+        let updated = try CodexConfigEditor.installing(block: block, into: existing)
+        let skillLinkAlreadyExisted = AgentChannelsSkillInstaller.isManagedLink(
+            source: skillSource,
+            destination: skillDestination
+        )
+        do {
+            try AgentChannelsSkillInstaller.install(source: skillSource, destination: skillDestination)
+            if updated != existing { try CodexConfigEditor.writing(updated, to: configURL) }
+        } catch {
+            if !skillLinkAlreadyExisted {
+                try? AgentChannelsSkillInstaller.remove(source: skillSource, destination: skillDestination)
+            }
+            throw error
+        }
+    }
+
+    static func remove(
+        configURL: URL,
+        skillSource: URL = AgentChannelsSkillInstaller.bundledSkill,
+        skillDestination: URL = AppPaths.agentChannelsSkill
+    ) throws {
+        try AgentChannelsSkillInstaller.validateRemoval(source: skillSource, destination: skillDestination)
+        let existing = try CodexConfigEditor.reading(configURL)
+        let updated = try existing.map { try CodexConfigEditor.removingManagedBlock(from: $0) }
+        let configChanged = existing != updated
+        if let updated, configChanged { try CodexConfigEditor.writing(updated, to: configURL) }
+        do {
+            try AgentChannelsSkillInstaller.remove(source: skillSource, destination: skillDestination)
+        } catch {
+            if let existing, configChanged { try? CodexConfigEditor.writing(existing, to: configURL) }
+            throw error
+        }
     }
 }
 
@@ -355,11 +541,13 @@ private struct LocalSidecarEvent: Codable {
 
     let senderMemberID: String?
     let senderEndpointID: String?
+    let senderName: String?
 
     enum CodingKeys: String, CodingKey {
         case id, from, to, text, at, state, error
         case senderMemberID = "sender_member_id"
         case senderEndpointID = "sender_endpoint_id"
+        case senderName = "sender_name"
     }
 }
 
@@ -385,7 +573,7 @@ private struct LocalSendRequest: Decodable {
         }
         guard request.source.provider == "codex",
               UUID(uuidString: request.source.conversationId) != nil else {
-            throw AppFailure("当前 Codex task 上下文无效")
+            throw AppFailure("当前 Codex 会话上下文无效")
         }
         let operations = [
             "list_channels", "send", "subscribe", "unsubscribe", "get_settings", "update_settings",
@@ -751,6 +939,56 @@ struct GitHubRelease: Decodable {
     }
 }
 
+private struct PendingUpdate: Codable {
+    let version: String
+}
+
+private enum UpdateCoordinator {
+    static func pendingVersion() -> String? {
+        guard FileManager.default.fileExists(atPath: AppPaths.pendingUpdateDMG.path),
+              let data = try? Data(contentsOf: AppPaths.pendingUpdate),
+              let pending = try? JSONDecoder().decode(PendingUpdate.self, from: data) else { return nil }
+        return pending.version
+    }
+
+    static func saveDownloadedDMG(_ temporaryURL: URL, version: String) throws {
+        let manager = FileManager.default
+        try manager.createDirectory(at: AppPaths.updates, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? manager.removeItem(at: AppPaths.pendingUpdateDMG)
+        try manager.moveItem(at: temporaryURL, to: AppPaths.pendingUpdateDMG)
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: AppPaths.pendingUpdateDMG.path)
+        try JSONEncoder().encode(PendingUpdate(version: version)).write(to: AppPaths.pendingUpdate, options: .atomic)
+    }
+
+    static func launchInstallerIfNeeded(currentVersion: String) throws -> Bool {
+        guard let pending = pendingVersion(), let current = ReleaseVersion(currentVersion),
+              let available = ReleaseVersion(pending) else { return false }
+        guard current < available else {
+            try? FileManager.default.removeItem(at: AppPaths.pendingUpdate)
+            try? FileManager.default.removeItem(at: AppPaths.pendingUpdateDMG)
+            return false
+        }
+        guard AppPaths.appIsInstalled else { throw AppFailure("更新已下载；请先把 App 移到 Applications") }
+        let helper = Bundle.main.executableURL!.deletingLastPathComponent().appendingPathComponent("agent-channels-updater")
+        guard FileManager.default.isExecutableFile(atPath: helper.path) else { throw AppFailure("更新助手缺失") }
+        let process = Process()
+        process.executableURL = helper
+        process.arguments = [
+            String(getpid()), AppPaths.pendingUpdateDMG.path, Bundle.main.bundleURL.path,
+            pending, AppPaths.pendingUpdate.path, AppPaths.updateError.path,
+        ]
+        try process.run()
+        DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+        return true
+    }
+
+    static func consumeInstallError() -> String? {
+        guard let message = try? String(contentsOf: AppPaths.updateError, encoding: .utf8) else { return nil }
+        try? FileManager.default.removeItem(at: AppPaths.updateError)
+        return message
+    }
+}
+
 enum BrandAssets {
     static let menuBarImage: NSImage? = {
         guard let url = Bundle.main.url(forResource: "AgentChannelsMenuBar", withExtension: "svg"),
@@ -860,17 +1098,25 @@ extension AppModel {
         busy = true
         defer { busy = false }
         do {
-            let callsign = try normalizedCallsign(draftCallsign)
+            let nickname = try normalizedDisplayName(state.defaultCallsign, label: "昵称")
+            let channelName = try normalizedDisplayName(draftChannelName, label: "频道名称")
             let url = URL(string: "\(defaultOrigin)/api/channels")!
             let json = try await requestJSON(
                 url: url,
                 method: "POST",
-                body: ["api_version": 2, "retention": "none", "trust_mode": "untrusted"]
+                body: [
+                    "api_version": 2,
+                    "retention": "none",
+                    "trust_mode": "untrusted",
+                    "name": nickname,
+                    "channel_name": channelName,
+                ]
             )
             guard let channel = json["channel_id"] as? String,
                   let credential = (json["member_credential"] as? String) ?? (json["join_token"] as? String) else {
                 throw AppFailure("服务端未返回频道成员凭证")
             }
+            let memberID = (json["member_id"] as? String) ?? "owner"
             let profileID = UUID()
             let account = "channel:\(profileID.uuidString):credential"
             try KeychainStore.set(credential, service: keychainService, account: account)
@@ -878,15 +1124,15 @@ extension AppModel {
                 id: profileID,
                 origin: defaultOrigin,
                 channel: channel,
-                displayName: channel,
-                callsign: callsign,
-                memberID: (json["member_id"] as? String) ?? "owner",
+                displayName: (json["channel_name"] as? String) ?? channelName,
+                callsign: internalCallsign(memberID),
+                memberID: memberID,
                 role: (json["role"] as? String) ?? "owner",
                 credentialAccount: account,
                 lastViewedMessageID: nil
             )
-            state.defaultCallsign = callsign
             state.channels.append(profile)
+            draftChannelName = ""
             selectedChannelID = profile.id
             persistState()
             startChannelFeed(profile.id)
@@ -902,7 +1148,7 @@ extension AppModel {
         busy = true
         defer { busy = false }
         do {
-            let callsign = try normalizedCallsign(draftCallsign)
+            let nickname = try normalizedDisplayName(state.defaultCallsign, label: "昵称")
             let invitation = try InvitationCodec.decode(invitationInput)
             guard let encoded = invitation.channel.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
                   let url = URL(string: "\(invitation.origin)/api/channels/\(encoded)/invites/redeem") else {
@@ -911,7 +1157,7 @@ extension AppModel {
             let json = try await requestJSON(
                 url: url,
                 method: "POST",
-                body: ["invite_token": invitation.inviteToken, "name": callsign]
+                body: ["invite_token": invitation.inviteToken, "name": nickname]
             )
             guard let credential = json["member_credential"] as? String,
                   let memberID = json["member_id"] as? String else {
@@ -924,14 +1170,13 @@ extension AppModel {
                 id: profileID,
                 origin: invitation.origin,
                 channel: invitation.channel,
-                displayName: invitation.channel,
-                callsign: callsign,
+                displayName: (json["channel_name"] as? String) ?? invitation.channel,
+                callsign: internalCallsign(memberID),
                 memberID: memberID,
                 role: (json["role"] as? String) ?? "member",
                 credentialAccount: account,
                 lastViewedMessageID: nil
             )
-            state.defaultCallsign = callsign
             state.channels.append(profile)
             invitationInput = ""
             selectedChannelID = profile.id
@@ -971,7 +1216,7 @@ extension AppModel {
         guard let profile = selectedChannel else { return }
         let alert = NSAlert()
         alert.messageText = "从本机移除 \(profile.displayName)？"
-        alert.informativeText = "将停止该频道全部 task 监听并删除本机成员凭证与消息历史。"
+        alert.informativeText = "将停止该频道向全部会话的消息转发，并删除本机成员凭证与消息历史。"
         alert.addButton(withTitle: "移除")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -992,6 +1237,29 @@ extension AppModel {
         selectedChannelID = state.channels.first?.id
         persistState()
         refreshSelectedChannel()
+    }
+
+    func renameSelectedChannel() {
+        guard let selectedChannelID,
+              let index = state.channels.firstIndex(where: { $0.id == selectedChannelID }) else { return }
+        let profile = state.channels[index]
+        let field = NSTextField(string: profile.displayName == profile.channel ? "" : profile.displayName)
+        field.placeholderString = profile.channel
+        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
+        let alert = NSAlert()
+        alert.messageText = "修改频道昵称"
+        alert.informativeText = "频道 ID：\(profile.channel)；留空恢复服务端频道名称。"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let nickname = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard nickname.count <= 64 else {
+            showNotice(title: "Agent Channels", message: "频道昵称不能超过 64 个字符")
+            return
+        }
+        state.channels[index].displayName = channelDisplayName(nickname, original: profile.channel)
+        persistState()
     }
 
     func refreshHistory() async {
@@ -1061,14 +1329,14 @@ extension AppModel {
     }
 
     func sendComposerMessage() async {
-        guard let profile = selectedChannel else { return }
+        guard !busy, let profile = selectedChannel else { return }
         let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         let pending = ChannelMessageRecord(
             channelID: profile.id,
             messageID: "local-\(UUID().uuidString.lowercased())",
             direction: .outbound,
-            from: endpointCallsign(profile, kind: "app"),
+            from: state.defaultCallsign,
             to: "all",
             text: text,
             at: Date().timeIntervalSince1970 * 1000,
@@ -1085,7 +1353,7 @@ extension AppModel {
                 channelID: profile.id,
                 messageID: result.id,
                 direction: .outbound,
-                from: result.callsign,
+                from: state.defaultCallsign,
                 to: "all",
                 text: text,
                 at: Date().timeIntervalSince1970 * 1000,
@@ -1126,7 +1394,7 @@ extension AppModel {
                 url: base.appendingPathComponent("join"),
                 method: "POST",
                 bearer: credential,
-                body: ["callsign": endpoint]
+                body: ["callsign": endpoint, "name": state.defaultCallsign]
             )
         } catch {
             throw ChannelSendFailure.definitive("频道加入失败：\(error.localizedDescription)")
@@ -1214,13 +1482,16 @@ extension AppModel {
         return url
     }
 
-    private func normalizedCallsign(_ raw: String) throws -> String {
-        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard value.range(of: #"^[a-z0-9][a-z0-9_-]{0,31}$"#, options: .regularExpression) != nil,
-              value != "all" else {
-            throw AppFailure("Agent 名称须为 1–32 位字母、数字、_ 或 -，且不能是 all")
+    private func normalizedDisplayName(_ raw: String, label: String) throws -> String {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.utf16.count <= 64 else {
+            throw AppFailure("\(label)须为 1–64 个字符")
         }
         return value
+    }
+
+    private func internalCallsign(_ memberID: String) -> String {
+        "agent-\(memberID.lowercased().filter { $0.isLetter || $0.isNumber }.prefix(10))"
     }
 
     private func memberEndpointPrefix(_ profile: ChannelProfile) -> String {
@@ -1253,7 +1524,7 @@ extension AppModel {
             channelID: channelID,
             messageID: id,
             direction: .inbound,
-            from: (json["from"] as? String) ?? "unknown",
+            from: (json["sender_name"] as? String) ?? (json["from"] as? String) ?? "unknown",
             to: (json["to"] as? String) ?? "all",
             text: (json["text"] as? String) ?? "",
             at: at,
@@ -1435,9 +1706,11 @@ final class AppModel: ObservableObject {
     @Published var lastError = ""
     @Published var busy = false
     @Published var launchAtLogin = false
-    @Published var sendStatus = "未启用"
+    @Published var codexIntegrationStatus = "未启用"
     @Published var updateStatus = "未检查"
-    @Published var draftCallsign = ""
+    @Published var automaticUpdateChecks = UserDefaults.standard.bool(forKey: automaticUpdateChecksKey)
+    @Published var draftNickname = ""
+    @Published var draftChannelName = ""
     @Published var invitationInput = ""
     @Published var draftTask = ""
     @Published var composerText = ""
@@ -1447,8 +1720,12 @@ final class AppModel: ObservableObject {
     private var listeners: [UUID: SubscriptionListener] = [:]
     private var startingListeners: Set<UUID> = []
     private var listenerGenerations: [UUID: Int] = [:]
+    private var bridgeErrorKinds: [UUID: String] = [:]
+    private var bridgeErrorMessages: [UUID: String] = [:]
+    private var presentedBridgeError: String?
     private var feedTasks: [UUID: Task<Void, Never>] = [:]
     private var localSendServer: LocalSendServer?
+    private var updateTimer: Timer?
 
     private init() {
         try? AppPaths.prepare()
@@ -1456,11 +1733,24 @@ final class AppModel: ObservableObject {
         Self.recoverDeliveryState(&loaded)
         state = loaded
         selectedChannelID = state.selectedChannelID ?? state.channels.first?.id
-        draftCallsign = state.defaultCallsign
+        draftNickname = state.defaultCallsign
         launchAtLogin = SMAppService.mainApp.status == .enabled
         persistState()
-        refreshSendStatus()
+        refreshCodexIntegrationStatus()
         refreshSelectedChannel()
+        if let installError = UpdateCoordinator.consumeInstallError() {
+            updateStatus = "安装失败"
+            DispatchQueue.main.async { [weak self] in self?.showNotice(title: "更新安装失败", message: installError) }
+        } else {
+            do {
+                if try UpdateCoordinator.launchInstallerIfNeeded(currentVersion: currentVersion) {
+                    updateStatus = "正在安装更新…"
+                    return
+                }
+            } catch {
+                updateStatus = error.localizedDescription
+            }
+        }
         do {
             let server = LocalSendServer(socketURL: AppPaths.sendSocket) { [weak self] request in
                 guard let self else { return .failure("Agent Channels app is unavailable") }
@@ -1477,6 +1767,7 @@ final class AppModel: ObservableObject {
             for subscription in self.state.subscriptions where subscription.enabled {
                 Task { await self.startListener(subscription.id) }
             }
+            self.configureAutomaticUpdateChecks()
         }
     }
 
@@ -1596,7 +1887,7 @@ extension AppModel {
                         channelID: profile.id,
                         messageID: receipt.id,
                         direction: .outbound,
-                        from: receipt.callsign,
+                        from: state.defaultCallsign,
                         to: "all",
                         text: message,
                         at: Date().timeIntervalSince1970 * 1000,
@@ -1619,14 +1910,14 @@ extension AppModel {
                 return .success(LocalOperationResult(
                     channel: profile.channel,
                     settings: subscriptionSummary(subscription, profile: profile),
-                    message: "当前 task 已订阅 \(profile.displayName)"
+                    message: "当前会话将接收 \(profile.displayName) 的消息"
                 ))
             case "unsubscribe":
                 let profile = try resolveChannel(request.channel)
                 let subscription = try requireSubscription(source: request.source, profile: profile)
                 stopListener(subscription.id)
                 updateSubscription(subscription.id) { $0.enabled = false }
-                return .success(LocalOperationResult(channel: profile.channel, message: "当前 task 已停止监听 \(profile.displayName)"))
+                return .success(LocalOperationResult(channel: profile.channel, message: "已停止向当前会话转发 \(profile.displayName) 的消息"))
             case "get_settings":
                 let profile = try resolveChannel(request.channel)
                 let subscription = try requireSubscription(source: request.source, profile: profile)
@@ -1640,11 +1931,11 @@ extension AppModel {
                 return .success(LocalOperationResult(
                     channel: profile.channel,
                     settings: subscriptionSummary(updated, profile: profile),
-                    message: "当前 task 的频道设置已更新"
+                    message: "当前会话的频道设置已更新"
                 ))
             case "record_received":
-                try recordSidecarEvent(request, expectedState: .received)
-                return .success(LocalOperationResult(message: "recorded"))
+                let message = try recordSidecarEvent(request, expectedState: .received)
+                return .success(LocalOperationResult(message: message))
             case "record_outcome":
                 try recordSidecarOutcome(request)
                 return .success(LocalOperationResult(message: "recorded"))
@@ -1662,7 +1953,7 @@ extension AppModel {
         defer { busy = false }
         do {
             let raw = draftTask.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !raw.isEmpty else { throw AppFailure("请粘贴 codex://threads/...") }
+            guard !raw.isEmpty else { throw AppFailure("请粘贴 Codex 会话链接") }
             let result = try await Sidecar.run(["codex-preflight", "--codex-thread", raw])
             guard result.status == 0,
                   let data = result.stdout.data(using: .utf8),
@@ -1671,7 +1962,7 @@ extension AppModel {
                   let threadID = json["thread_id"] as? String,
                   UUID(uuidString: threadID) != nil else {
                 let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-                throw AppFailure(detail.isEmpty ? "Codex task 检测失败" : detail)
+                throw AppFailure(detail.isEmpty ? "Codex 会话检测失败" : detail)
             }
             _ = try await subscribe(
                 source: LocalSource(provider: "codex", conversationId: threadID.lowercased()),
@@ -1736,8 +2027,8 @@ extension AppModel {
     }
 
     func taskLabel(_ taskID: UUID) -> String {
-        guard let task = state.tasks.first(where: { $0.id == taskID }) else { return "未知 task" }
-        return task.label.isEmpty ? "\(task.conversationID.prefix(8))…" : task.label
+        guard let task = state.tasks.first(where: { $0.id == taskID }) else { return "未知会话" }
+        return "Codex · \(task.label.isEmpty ? "\(task.conversationID.prefix(8))…" : task.label)"
     }
 
     private func taskBinding(for source: LocalSource) -> TaskBinding? {
@@ -1766,7 +2057,7 @@ extension AppModel {
               let subscription = state.subscriptions.first(where: {
                   $0.taskID == task.id && $0.channelID == profile.id
               }) else {
-            throw AppFailure("当前 task 尚未订阅该频道")
+            throw AppFailure("当前会话尚未接收该频道消息")
         }
         return subscription
     }
@@ -1775,7 +2066,7 @@ extension AppModel {
         source: LocalSource,
         channel: String?
     ) throws -> (TaskBinding, ChannelSubscription, ChannelProfile) {
-        guard let task = taskBinding(for: source) else { throw AppFailure("当前 task 尚未绑定 Agent Channels") }
+        guard let task = taskBinding(for: source) else { throw AppFailure("当前会话尚未连接 Agent Channels") }
         let candidates = state.subscriptions.filter { subscription in
             guard subscription.taskID == task.id,
                   state.channels.contains(where: { $0.id == subscription.channelID }) else { return false }
@@ -1788,15 +2079,15 @@ extension AppModel {
         let subscription: ChannelSubscription
         if channel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
             guard candidates.count == 1, let value = candidates.first else {
-                throw AppFailure("当前 task 未启用该频道订阅")
+                throw AppFailure("当前会话未启用该频道的消息接收")
             }
             subscription = value
         } else {
             let defaults = candidates.filter(\.defaultSend)
             if defaults.count == 1, let value = defaults.first { subscription = value }
             else if defaults.isEmpty, candidates.count == 1, let value = candidates.first { subscription = value }
-            else if candidates.isEmpty { throw AppFailure("当前 task 没有可发送的频道订阅") }
-            else { throw AppFailure("当前 task 有多个频道，请指定 channel 或设置唯一默认发送频道") }
+            else if candidates.isEmpty { throw AppFailure("当前会话没有可发送的频道") }
+            else { throw AppFailure("当前会话连接了多个频道，请指定 channel 或设置唯一默认回复频道") }
         }
         guard let profile = state.channels.first(where: { $0.id == subscription.channelID }) else {
             throw AppFailure("订阅对应的频道不存在")
@@ -1955,7 +2246,7 @@ extension AppModel {
                 url: try channelBaseURL(profile).appendingPathComponent("join"),
                 method: "POST",
                 bearer: credential,
-                body: ["callsign": txEndpoint]
+                body: ["callsign": txEndpoint, "name": state.defaultCallsign]
             )
             guard listenerCanStart(id, generation: generation) else { return }
             guard txJoin["member_id"] as? String == profile.memberID,
@@ -2015,7 +2306,6 @@ extension AppModel {
             input.fileHandleForWriting.write(secret)
             try? input.fileHandleForWriting.close()
             listenerStatus[id] = "正在连接…"
-            lastError = ""
         } catch {
             guard listenerGenerations[id, default: 0] == generation else { return }
             listenerStatus[id] = "不可用：\(error.localizedDescription)"
@@ -2120,6 +2410,19 @@ extension AppModel {
         }
     }
 
+    private func clearRecoveredBridgeError(_ id: UUID, state: String) {
+        guard bridgeRecoveryClearsError(kind: bridgeErrorKinds[id], state: state) else { return }
+        let displayed = presentedBridgeError
+        bridgeErrorKinds.removeValue(forKey: id)
+        bridgeErrorMessages.removeValue(forKey: id)
+        guard lastError == displayed else {
+            if bridgeErrorMessages.isEmpty { presentedBridgeError = nil }
+            return
+        }
+        presentedBridgeError = bridgeErrorMessages.values.first
+        lastError = presentedBridgeError ?? ""
+    }
+
     private func consumeListenerStderr(_ data: Data, id: UUID) {
         guard let listener = listeners[id] else { return }
         listener.remainder += String(decoding: data, as: UTF8.self)
@@ -2130,16 +2433,24 @@ extension AppModel {
                   let raw = line.dropFirst("@agent-channels ".count).data(using: .utf8),
                   let event = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
                   let state = event["state"] as? String else { continue }
+            clearRecoveredBridgeError(id, state: state)
             switch state {
             case "joined", "connecting": listenerStatus[id] = "正在连接…"
-            case "connected": listenerStatus[id] = "已连接"
+            case "connected": listenerStatus[id] = "正在接收"
             case "reconnecting": listenerStatus[id] = "正在重连…"
-            case "delivered": listenerStatus[id] = "已投递 #\(event["messageId"] ?? "")"
+            case "delivered": listenerStatus[id] = "已转发到会话 #\(event["messageId"] ?? "")"
             case "filtered": listenerStatus[id] = "已过滤自消息"
             case "error":
                 let detail = (event["error"] as? String) ?? (event["kind"] as? String) ?? "未知错误"
                 listenerStatus[id] = "异常：\(detail)"
-                lastError = "订阅异常：\(detail)"
+                let kind = (event["kind"] as? String) ?? "unknown"
+                if bridgeErrorShouldReplace(current: bridgeErrorKinds[id], incoming: kind) {
+                    let message = "订阅异常：\(detail)"
+                    bridgeErrorKinds[id] = kind
+                    bridgeErrorMessages[id] = message
+                    presentedBridgeError = message
+                    lastError = message
+                }
                 if (event["status"] as? NSNumber)?.intValue == 401,
                    let channelID = self.state.subscriptions.first(where: { $0.id == id })?.channelID {
                     markChannelAuthorizationLost(channelID, detail: detail)
@@ -2150,11 +2461,17 @@ extension AppModel {
         }
     }
 
-    private func recordSidecarEvent(_ request: LocalSendRequest, expectedState: MessageDeliveryState) throws {
+    private func recordSidecarEvent(
+        _ request: LocalSendRequest,
+        expectedState: MessageDeliveryState
+    ) throws -> String {
         guard expectedState == .received,
               let subscriptionID = request.subscriptionID.flatMap(UUID.init(uuidString:)),
-              let subscription = state.subscriptions.first(where: { $0.id == subscriptionID }),
-              let task = state.tasks.first(where: { $0.id == subscription.taskID }),
+              let subscriptionIndex = state.subscriptions.firstIndex(where: { $0.id == subscriptionID }) else {
+            throw AppFailure("sidecar received event does not match its subscription")
+        }
+        let subscription = state.subscriptions[subscriptionIndex]
+        guard let task = state.tasks.first(where: { $0.id == subscription.taskID }),
               task.provider == request.source.provider,
               task.conversationID.caseInsensitiveCompare(request.source.conversationId) == .orderedSame,
               let profile = state.channels.first(where: { $0.id == subscription.channelID }),
@@ -2166,11 +2483,29 @@ extension AppModel {
               let senderEndpointID = event.senderEndpointID, !senderEndpointID.isEmpty else {
             throw AppFailure("sidecar received event does not match its subscription")
         }
+        let key = String(id)
+        let latestDelivery = MessageLedger.loadDeliveries(subscriptionID).last {
+            $0.channelID == profile.id && $0.messageID == key
+        }
+        let decision = receivedDeliveryDecision(latestDelivery?.state)
+        if decision == .alreadyProcessed {
+            let cursor = advancedDeliveryCursor(
+                state.subscriptions[subscriptionIndex].lastDeliveredMessageID,
+                through: id
+            )
+            if cursor != state.subscriptions[subscriptionIndex].lastDeliveredMessageID {
+                state.subscriptions[subscriptionIndex].lastDeliveredMessageID = cursor
+                try persistStateOrThrow()
+            }
+            return decision.rawValue
+        }
+        if decision == .unresolved { return decision.rawValue }
+        let senderName = event.senderName?.trimmingCharacters(in: .whitespacesAndNewlines)
         let record = ChannelMessageRecord(
             channelID: profile.id,
-            messageID: String(id),
+            messageID: key,
             direction: senderMemberID == profile.memberID ? .outbound : .inbound,
-            from: from,
+            from: senderName.flatMap { $0.isEmpty ? nil : $0 } ?? from,
             to: to,
             text: text,
             at: at,
@@ -2183,11 +2518,12 @@ extension AppModel {
         try MessageLedger.appendDelivery(SubscriptionDeliveryRecord(
             subscriptionID: subscriptionID,
             channelID: profile.id,
-            messageID: String(id),
+            messageID: key,
             state: .received,
             detail: nil,
             updatedAt: Date().timeIntervalSince1970
         ))
+        return decision.rawValue
     }
 
     private func recordSidecarOutcome(_ request: LocalSendRequest) throws {
@@ -2216,7 +2552,10 @@ extension AppModel {
             updatedAt: Date().timeIntervalSince1970
         ))
         if outcome == .delivered || outcome == .filtered {
-            state.subscriptions[subscriptionIndex].lastDeliveredMessageID = id
+            state.subscriptions[subscriptionIndex].lastDeliveredMessageID = advancedDeliveryCursor(
+                state.subscriptions[subscriptionIndex].lastDeliveredMessageID,
+                through: id
+            )
             state.subscriptions[subscriptionIndex].lastDeliveredAt = Date().timeIntervalSince1970
             state.subscriptions[subscriptionIndex].uncertainMessageID = nil
             state.subscriptions[subscriptionIndex].uncertainDetail = nil
@@ -2225,11 +2564,11 @@ extension AppModel {
             state.subscriptions[subscriptionIndex].enabled = false
             state.subscriptions[subscriptionIndex].uncertainMessageID = id
             state.subscriptions[subscriptionIndex].uncertainDetail = event.error
-            listenerStatus[subscriptionID] = "结果未知，已暂停"
+            listenerStatus[subscriptionID] = "转发结果未知，已暂停"
         } else if outcome == .failed, let error = event.error {
-            listenerStatus[subscriptionID] = "投递失败：\(error)"
+            listenerStatus[subscriptionID] = "转发失败：\(error)"
         } else if outcome == .attempting {
-            listenerStatus[subscriptionID] = "正在投递 #\(id)"
+            listenerStatus[subscriptionID] = "正在转发 #\(id)"
         }
         try persistStateOrThrow()
     }
@@ -2243,10 +2582,15 @@ extension AppModel {
                 channelID: state.subscriptions[index].channelID,
                 messageID: String(messageID),
                 state: retry ? .received : .skipped,
-                detail: retry ? "用户确认目标 task 未出现，允许重试" : "用户确认目标 task 已出现，跳过重放",
+                detail: retry ? "用户确认目标会话未出现，允许重试" : "用户确认目标会话已出现，跳过重放",
                 updatedAt: Date().timeIntervalSince1970
             ))
-            if !retry { state.subscriptions[index].lastDeliveredMessageID = messageID }
+            if !retry {
+                state.subscriptions[index].lastDeliveredMessageID = advancedDeliveryCursor(
+                    state.subscriptions[index].lastDeliveredMessageID,
+                    through: messageID
+                )
+            }
             state.subscriptions[index].uncertainMessageID = nil
             state.subscriptions[index].uncertainDetail = nil
             state.subscriptions[index].enabled = true
@@ -2284,7 +2628,7 @@ extension AppModel {
                     url: try channelBaseURL(profile).appendingPathComponent("join"),
                     method: "POST",
                     bearer: credential,
-                    body: ["callsign": endpoint]
+                    body: ["callsign": endpoint, "name": state.defaultCallsign]
                 )
                 guard let session = join["session_id"] as? String else { throw AppFailure("频道加入响应缺少 session_id") }
                 let base = try channelBaseURL(profile)
@@ -2366,39 +2710,36 @@ extension AppModel {
 }
 
 extension AppModel {
-    func refreshSendStatus() {
-        guard let raw = try? String(contentsOf: AppPaths.codexConfig, encoding: .utf8) else {
-            sendStatus = "未启用"
-            return
+    func refreshCodexIntegrationStatus() {
+        let raw = (try? String(contentsOf: AppPaths.codexConfig, encoding: .utf8)) ?? ""
+        let mcp = raw.contains(managedConfigStart) && raw.contains(AppPaths.state.path)
+        let skill = AgentChannelsSkillInstaller.isInstalled()
+        switch (mcp, skill) {
+        case (true, true): codexIntegrationStatus = "MCP + Skill 已配置"
+        case (true, false): codexIntegrationStatus = "MCP 已配置，Skill 待修复"
+        case (false, true): codexIntegrationStatus = "Skill 已配置，MCP 待修复"
+        case (false, false): codexIntegrationStatus = "未启用"
         }
-        sendStatus = raw.contains(managedConfigStart) && raw.contains(AppPaths.state.path) ? "已配置" : "未启用"
     }
 
-    func enableSending() {
+    func enableCodexIntegration() {
+        defer { refreshCodexIntegrationStatus() }
         do {
-            guard AppPaths.appIsInstalled else { throw AppFailure("请先把 Agent Channels.app 移到 Applications 后再启用 MCP") }
+            guard AppPaths.appIsInstalled else { throw AppFailure("请先把 Agent Channels.app 移到 Applications 后再启用 Codex 集成") }
             persistState()
             try FileManager.default.createDirectory(at: AppPaths.codexDirectory, withIntermediateDirectories: true)
-            let existing = (try? String(contentsOf: AppPaths.codexConfig, encoding: .utf8)) ?? ""
             let block = CodexConfigEditor.managedBlock(sidecar: Sidecar.executable.path, binding: AppPaths.state.path)
-            let updated = try CodexConfigEditor.installing(block: block, into: existing)
-            try updated.write(to: AppPaths.codexConfig, atomically: true, encoding: .utf8)
-            refreshSendStatus()
-            showNotice(title: "MCP 已启用", message: "请完全退出并重新打开 ChatGPT，让所有 task 加载 Agent Channels 工具。")
+            try CodexIntegrationInstaller.install(configURL: AppPaths.codexConfig, block: block)
+            showNotice(title: "Codex 集成已启用", message: "请完全退出并重新打开 ChatGPT，让所有 task 加载 Agent Channels 工具与 Skill。")
         } catch {
             fail(error)
         }
     }
 
-    func removeManagedMCP() {
+    func removeCodexIntegration() {
+        defer { refreshCodexIntegrationStatus() }
         do {
-            guard let existing = try? String(contentsOf: AppPaths.codexConfig, encoding: .utf8) else {
-                sendStatus = "未启用"
-                return
-            }
-            let updated = try CodexConfigEditor.removingManagedBlock(from: existing)
-            try updated.write(to: AppPaths.codexConfig, atomically: true, encoding: .utf8)
-            refreshSendStatus()
+            try CodexIntegrationInstaller.remove(configURL: AppPaths.codexConfig)
         } catch {
             fail(error)
         }
@@ -2425,7 +2766,29 @@ extension AppModel {
         messages = []
     }
 
-    func checkBetaUpdate() async {
+    func setAutomaticUpdateChecks(_ enabled: Bool) {
+        automaticUpdateChecks = enabled
+        UserDefaults.standard.set(enabled, forKey: automaticUpdateChecksKey)
+        configureAutomaticUpdateChecks()
+    }
+
+    private func configureAutomaticUpdateChecks() {
+        updateTimer?.invalidate()
+        updateTimer = nil
+        guard automaticUpdateChecks else { return }
+        Task { await checkBetaUpdate(interactive: false) }
+        updateTimer = Timer.scheduledTimer(withTimeInterval: 24 * 60 * 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in await self?.checkBetaUpdate(interactive: false) }
+        }
+    }
+
+    func checkBetaUpdate(interactive: Bool = true) async {
+        if let pending = UpdateCoordinator.pendingVersion() {
+            updateStatus = "已下载 " + pending + "，重启后安装"
+            if interactive { showNotice(title: "Agent Channels", message: "更新 " + pending + " 已下载，重启 App 后自动安装。") }
+            return
+        }
+        guard !busy else { return }
         busy = true
         defer { busy = false }
         do {
@@ -2439,21 +2802,31 @@ extension AppModel {
                 .sorted { ($0.version ?? current) > ($1.version ?? current) }
             guard let release = available.first, let version = release.version else {
                 updateStatus = "已是最新 Beta"
-                showNotice(title: "Agent Channels", message: "当前已是最新 Beta。")
+                if interactive { showNotice(title: "Agent Channels", message: "当前已是最新 Beta。") }
                 return
             }
-            updateStatus = "可更新到 \(version)"
-            let alert = NSAlert()
-            alert.messageText = "发现 Agent Channels Beta 更新"
-            alert.informativeText = "当前 \(current)，最新 \(version)。"
-            alert.addButton(withTitle: release.arm64DMG == nil ? "查看 Release" : "下载 DMG")
-            alert.addButton(withTitle: "取消")
-            if alert.runModal() == .alertFirstButtonReturn {
-                NSWorkspace.shared.open(release.arm64DMG ?? release.htmlURL)
+            guard let dmg = release.arm64DMG else {
+                updateStatus = "\(version) 缺少 arm64 更新包"
+                if interactive { NSWorkspace.shared.open(release.htmlURL) }
+                return
             }
+            if interactive {
+                let alert = NSAlert()
+                alert.messageText = "发现 Agent Channels Beta 更新"
+                alert.informativeText = "当前 \(current)，最新 \(version)。下载后只需重启 App 即可完成更新。"
+                alert.addButton(withTitle: "下载更新")
+                alert.addButton(withTitle: "取消")
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+            }
+            updateStatus = "正在下载 \(version)…"
+            let (temporaryURL, downloadResponse) = try await URLSession.shared.download(from: dmg)
+            guard (downloadResponse as? HTTPURLResponse)?.statusCode == 200 else { throw AppFailure("更新包下载失败") }
+            try UpdateCoordinator.saveDownloadedDMG(temporaryURL, version: version.description)
+            updateStatus = "已下载 \(version)，重启后安装"
+            if interactive { showNotice(title: "更新已下载", message: "重启 Agent Channels 后将自动安装 \(version)。") }
         } catch {
             updateStatus = "检查失败"
-            fail(error)
+            if interactive { fail(error) }
         }
     }
 
@@ -2479,7 +2852,7 @@ extension AppModel {
         listenerStatus = [:]
         channelStatus = [:]
         try? FileManager.default.removeItem(at: AppPaths.state)
-        removeManagedMCP()
+        removeCodexIntegration()
     }
 
     func quit() {
@@ -2489,7 +2862,6 @@ extension AppModel {
     }
 
     fileprivate func fail(_ error: Error) {
-        lastError = error.localizedDescription
         showNotice(title: "Agent Channels", message: error.localizedDescription)
     }
 
@@ -2503,12 +2875,29 @@ extension AppModel {
 }
 
 extension AppModel {
-    func saveDefaultCallsign() {
+    func saveNickname() async {
         do {
-            let callsign = try normalizedCallsign(draftCallsign)
-            state.defaultCallsign = callsign
-            draftCallsign = callsign
+            let nickname = try normalizedDisplayName(draftNickname, label: "昵称")
+            state.defaultCallsign = nickname
+            draftNickname = nickname
             persistState()
+            var failed = 0
+            for profile in state.channels {
+                do {
+                    _ = try await authorizedJSON(
+                        profile,
+                        suffix: "members/me",
+                        method: "PATCH",
+                        body: ["name": nickname]
+                    )
+                } catch {
+                    failed += 1
+                }
+            }
+            if failed > 0 {
+                showNotice(title: "昵称已保存", message: "\(failed) 个频道暂未同步，将在下次连接时自动使用新昵称。")
+            }
+            await refreshMembers()
         } catch {
             fail(error)
         }
@@ -2519,59 +2908,111 @@ private struct V2MenuPanel: View {
     @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
 
+    private var statusColor: Color {
+        if !model.lastError.isEmpty { return .red }
+        if model.enabledSubscriptionCount == 0 { return .secondary }
+        return model.runningListenerCount == model.enabledSubscriptionCount ? .green : .orange
+    }
+
+    private func openMainWindow() {
+        openWindow(id: "main")
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+            guard let window = NSApp.windows.first(where: {
+                $0.level == .normal && $0.canBecomeMain
+            }) else { return }
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 BrandIcon(fallback: model.menuIcon, size: 22)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Agent Channels").font(.headline)
-                    Text("\(model.state.channels.count) 个频道 · \(model.runningListenerCount)/\(model.enabledSubscriptionCount) 个监听在线")
-                        .font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 5) {
+                        Circle().fill(statusColor).frame(width: 7, height: 7)
+                        Text("\(model.state.channels.count) 个频道 · \(model.runningListenerCount)/\(model.enabledSubscriptionCount) 个监听")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
             if !model.lastError.isEmpty {
-                Text(model.lastError).font(.caption).foregroundStyle(.red).lineLimit(3)
+                HStack(alignment: .top, spacing: 7) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                    Text(model.lastError).lineLimit(3)
+                }
+                .font(.caption)
+                .foregroundStyle(.red)
+                .padding(9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             }
-            Button("打开 Agent Channels…") {
-                NSApp.activate(ignoringOtherApps: true)
-                openWindow(id: "main")
+            Button(action: openMainWindow) {
+                Label("打开 Agent Channels", systemImage: "arrow.up.forward.app")
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
-            .frame(maxWidth: .infinity)
+            .controlSize(.large)
+            Divider()
             HStack {
                 if model.enabledSubscriptionCount > 0 {
-                    Button("暂停全部监听") { model.setAllListening(false) }
+                    Button { model.setAllListening(false) } label: {
+                        Label("暂停监听", systemImage: "pause.fill")
+                    }
                 } else if !model.state.subscriptions.isEmpty {
-                    Button("恢复全部监听") { model.setAllListening(true) }
-                }
-                if #available(macOS 14.0, *) {
-                    SettingsLink { Text("设置…") }
-                } else {
-                    Button("设置…") {
-                        NSApp.activate(ignoringOtherApps: true)
-                        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                    Button { model.setAllListening(true) } label: {
+                        Label("恢复监听", systemImage: "play.fill")
                     }
                 }
                 Spacer()
                 Button("退出") { model.quit() }
             }
+            .controlSize(.small)
         }
         .padding(14)
-        .frame(width: 350)
+        .frame(width: 330)
     }
+}
+
+private enum MainDestination: Hashable {
+    case channel(UUID)
+    case settings
 }
 
 private struct MainWindowView: View {
     @ObservedObject var model: AppModel
     @AppStorage("legacyBetaNoticeDismissed") private var legacyBetaNoticeDismissed = false
+    @State private var showingSettings = false
+
+    private var destination: Binding<MainDestination?> {
+        Binding(
+            get: {
+                if showingSettings { return .settings }
+                return model.selectedChannelID.map(MainDestination.channel)
+            },
+            set: { value in
+                switch value {
+                case .channel(let id):
+                    showingSettings = false
+                    model.selectChannel(id)
+                case .settings:
+                    showingSettings = true
+                case nil:
+                    showingSettings = false
+                    model.selectChannel(nil)
+                }
+            }
+        )
+    }
 
     var body: some View {
         NavigationSplitView {
-            List(selection: Binding(
-                get: { model.selectedChannelID },
-                set: { model.selectChannel($0) }
-            )) {
+            List(selection: destination) {
                 Section("频道") {
                     ForEach(model.state.channels) { channel in
                         HStack {
@@ -2580,7 +3021,9 @@ private struct MainWindowView: View {
                                 .frame(width: 7, height: 7)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(channel.displayName).lineLimit(1)
-                                Text("\(channel.callsign) · \(channel.role)")
+                                Text(channel.displayName == channel.channel
+                                     ? (channel.role == "owner" ? "所有者" : "成员")
+                                     : "\(channel.channel) · \(channel.role == "owner" ? "所有者" : "成员")")
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -2593,20 +3036,38 @@ private struct MainWindowView: View {
                                     .foregroundStyle(.white)
                             }
                         }
-                        .tag(channel.id)
+                        .tag(MainDestination.channel(channel.id))
                     }
                 }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Button {
+                    destination.wrappedValue = .settings
+                } label: {
+                    Label("设置", systemImage: "gearshape")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(showingSettings ? .white : .primary)
+                .background(showingSettings ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 6))
+                .padding(8)
             }
             .navigationTitle("Agent Channels")
             .toolbar {
                 Button {
+                    showingSettings = false
                     model.showAddChannel = true
                 } label: {
                     Label("添加频道", systemImage: "plus")
                 }
             }
         } detail: {
-            if let channel = model.selectedChannel {
+            if showingSettings {
+                AgentChannelsSettingsView(model: model)
+            } else if let channel = model.selectedChannel {
                 ChannelDetailView(model: model, channel: channel)
             } else {
                 EmptyStateView(
@@ -2644,73 +3105,149 @@ private struct MainWindowView: View {
     }
 }
 
+private enum AddChannelMode: Hashable {
+    case create
+    case join
+}
+
 private struct AddChannelSheet: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var mode = AddChannelMode.create
+
+    private var actionDisabled: Bool {
+        model.busy
+            || model.state.defaultCallsign.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || (mode == .create && model.draftChannelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            || (mode == .join && model.invitationInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    private func submit() {
+        guard !actionDisabled else { return }
+        let count = model.state.channels.count
+        Task {
+            if mode == .create {
+                await model.createChannel()
+            } else {
+                await model.joinInvitation()
+            }
+            if model.state.channels.count > count { dismiss() }
+        }
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("添加频道").font(.title2.bold())
-            TextField("你的 Agent 名称，例如 frontend", text: $model.draftCallsign)
-                .textFieldStyle(.roundedBorder)
-            GroupBox("创建新频道") {
-                HStack {
-                    Text("创建后可复制一次性邀请口令给其他成员。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("创建") {
-                        let count = model.state.channels.count
-                        Task {
-                            await model.createChannel()
-                            if model.state.channels.count > count { dismiss() }
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-                .padding(.vertical, 4)
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("添加频道").font(.title2.bold())
+                Text("创建一个新频道，或使用邀请口令加入已有频道。")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
-            GroupBox("加入已有频道") {
+
+            Picker("添加方式", selection: $mode) {
+                Text("创建频道").tag(AddChannelMode.create)
+                Text("加入频道").tag(AddChannelMode.join)
+            }
+            .pickerStyle(.segmented)
+
+            if mode == .create {
                 VStack(alignment: .leading, spacing: 8) {
-                    SecureField("粘贴 ac2: 邀请口令", text: $model.invitationInput)
-                        .textFieldStyle(.roundedBorder)
-                    Text("邀请口令已经包含频道名，无需再次填写。每个成员会获得独立凭证。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    HStack {
-                        Spacer()
-                        Button("加入") {
-                            let count = model.state.channels.count
-                            Task {
-                                await model.joinInvitation()
-                                if model.state.channels.count > count { dismiss() }
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(model.invitationInput.isEmpty)
-                    }
+                    Text("频道名称").font(.headline)
+                    TextField("例如 产品协作", text: $model.draftChannelName)
+                        .onSubmit(submit)
+                    Text("创建后可以复制一次性邀请口令给其他成员。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 4)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("邀请口令").font(.headline)
+                    HStack {
+                        SecureField("ac2: ...", text: $model.invitationInput)
+                            .onSubmit(submit)
+                        Button {
+                            if let value = NSPasteboard.general.string(forType: .string) {
+                                model.invitationInput = value
+                            }
+                        } label: {
+                            Label("粘贴", systemImage: "doc.on.clipboard")
+                        }
+                    }
+                    Text("口令已包含频道信息；加入后你会获得独立的成员凭证。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
+
+            Label(
+                model.state.defaultCallsign.isEmpty
+                    ? "请先在设置中填写我的昵称"
+                    : "将使用昵称「\(model.state.defaultCallsign)」",
+                systemImage: "person.crop.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(model.state.defaultCallsign.isEmpty ? Color.red : Color.secondary)
+
+            Divider()
+
             HStack {
-                Spacer()
                 Button("取消") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                if model.busy {
+                    ProgressView().controlSize(.small)
+                }
+                Button(mode == .create ? "创建频道" : "加入频道", action: submit)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(actionDisabled)
             }
         }
-        .padding(20)
-        .frame(width: 520)
-        .disabled(model.busy)
+        .padding(24)
+        .frame(width: 460)
     }
+}
+
+private enum ChannelDetailTab: Hashable {
+    case messages
+    case members
+    case subscriptions
 }
 
 private struct ChannelDetailView: View {
     @ObservedObject var model: AppModel
     let channel: ChannelProfile
+    @State private var selectedTab = ChannelDetailTab.messages
+
+    @ViewBuilder
+    private func tabButton(_ title: String, tab: ChannelDetailTab) -> some View {
+        Button {
+            selectedTab = tab
+        } label: {
+            Text(title)
+                .fontWeight(selectedTab == tab ? .semibold : .regular)
+                .foregroundStyle(selectedTab == tab ? Color.primary : Color.secondary)
+                .padding(.horizontal, 2)
+                .frame(height: 42)
+                .overlay(alignment: .bottom) {
+                    if selectedTab == tab {
+                        Rectangle().fill(Color.accentColor).frame(height: 2)
+                    }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(channel.displayName).font(.title2.bold())
-                    Text("\(channel.channel) · \(channel.callsign) · \(channel.role)")
+                    Text(channel.displayName)
+                        .font(.title2.bold())
+                        .onTapGesture(count: 2) { model.renameSelectedChannel() }
+                        .help("双击修改频道名称")
+                    Text("频道 ID：\(channel.channel) · 我的昵称：\(model.state.defaultCallsign) · \(channel.role == "owner" ? "所有者" : "成员") · \(model.channelStatus[channel.id] ?? "未连接")")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -2720,100 +3257,149 @@ private struct ChannelDetailView: View {
                 if model.channelStatus[channel.id]?.contains("权限已撤销") == true {
                     Button("重新连接") { model.reconnectChannel(channel.id) }
                 }
-                Button("刷新") {
-                    Task {
-                        await model.refreshHistory()
-                        await model.refreshMembers()
-                    }
-                }
                 Menu {
+                    Button("修改频道昵称…") { model.renameSelectedChannel() }
+                    Button("刷新") {
+                        Task {
+                            await model.refreshHistory()
+                            await model.refreshMembers()
+                        }
+                    }
+                    if selectedTab == .messages {
+                        Button("清空本机历史", role: .destructive) { model.clearSelectedHistory() }
+                            .disabled(model.messages.isEmpty)
+                    }
+                    Divider()
                     Button("移除本机频道", role: .destructive) { model.removeSelectedChannel() }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
             }
-            .padding()
-            Divider()
-            TabView {
-                ChannelMessagesView(model: model, channel: channel)
-                    .tabItem { Label("消息", systemImage: "message") }
-                ChannelMembersView(model: model, channel: channel)
-                    .tabItem { Label("成员", systemImage: "person.2") }
-                ChannelSubscriptionsView(model: model, channel: channel)
-                    .tabItem { Label("Task 订阅", systemImage: "link") }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            HStack(spacing: 24) {
+                tabButton("消息", tab: .messages)
+                tabButton("成员", tab: .members)
+                tabButton("转发到会话", tab: .subscriptions)
+                Spacer()
             }
-            .padding([.horizontal, .bottom])
+            .padding(.horizontal, 20)
+            .overlay(alignment: .bottom) { Divider() }
+            Group {
+                switch selectedTab {
+                case .messages:
+                    ChannelMessagesView(model: model)
+                case .members:
+                    ChannelMembersView(model: model, channel: channel)
+                case .subscriptions:
+                    ChannelSubscriptionsView(model: model)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
 
 private struct ChannelMessagesView: View {
     @ObservedObject var model: AppModel
-    let channel: ChannelProfile
+
+    private func isContinuation(at index: Int) -> Bool {
+        continuesMessageGroup(
+            previous: index > 0 ? model.messages[index - 1] : nil,
+            current: model.messages[index]
+        )
+    }
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack {
-                Text("本机最近消息").font(.headline)
-                Spacer()
-                Button("清空本机历史", role: .destructive) { model.clearSelectedHistory() }
-                    .disabled(model.messages.isEmpty)
-            }
+        VStack(spacing: 0) {
             if model.messages.isEmpty {
                 EmptyStateView(
                     title: "暂无消息",
                     systemImage: "text.bubble",
-                    detail: "频道消息会先写入这里，再投递给已订阅的 task。"
+                    detail: "频道消息会先显示在这里，再转发到已连接的 AI 会话。"
                 ) { EmptyView() }
                     .frame(maxHeight: .infinity)
             } else {
-                List(model.messages) { message in
-                    MessageRow(message: message)
+                List {
+                    ForEach(Array(model.messages.enumerated()), id: \.element.id) { index, message in
+                        let continuation = isContinuation(at: index)
+                        MessageRow(message: message, continuation: continuation)
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(
+                                top: continuation ? 2 : 8,
+                                leading: 16,
+                                bottom: continuation ? 2 : 8,
+                                trailing: 16
+                            ))
+                    }
                 }
-                .listStyle(.inset)
+                .listStyle(.plain)
             }
+            Divider()
             HStack(alignment: .bottom) {
-                TextField("向频道发送消息", text: $model.composerText, axis: .vertical)
+                TextField("向频道发送消息", text: $model.composerText)
                     .textFieldStyle(.roundedBorder)
-                    .lineLimit(1...5)
+                    .onSubmit { Task { await model.sendComposerMessage() } }
                 Button("发送") { Task { await model.sendComposerMessage() } }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.busy || model.composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+            .padding(12)
+            .background(.bar)
         }
-        .padding(.top, 8)
+        .task(id: model.selectedChannelID) { await model.refreshHistory() }
     }
 }
 
 private struct MessageRow: View {
     let message: ChannelMessageRecord
+    let continuation: Bool
 
-    private var stateColor: Color {
+    private var stateDetail: (String, Color)? {
         switch message.state {
-        case .delivered, .accepted: return .green
-        case .failed, .unknown: return .red
-        case .pending, .attempting: return .orange
-        case .filtered, .skipped: return .secondary
-        case .received: return .blue
+        case .failed: return ("发送失败", .red)
+        case .unknown: return ("投递结果未知", .red)
+        case .pending: return ("等待发送", .orange)
+        case .attempting: return ("正在投递", .orange)
+        case .received, .filtered, .delivered, .skipped, .accepted: return nil
         }
     }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: message.direction == .outbound ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
-                .foregroundStyle(message.direction == .outbound ? .blue : .secondary)
+            if continuation {
+                Color.clear.frame(width: 30, height: 1)
+            } else {
+                Text(String(message.from.prefix(1)).uppercased())
+                    .font(.caption.bold())
+                    .frame(width: 30, height: 30)
+                    .foregroundStyle(message.direction == .outbound ? Color.blue : Color.secondary)
+                    .background(
+                        message.direction == .outbound ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 8)
+                    )
+            }
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(message.from).font(.subheadline.bold())
-                    Text(DateFormatter.delivery.string(from: Date(timeIntervalSince1970: message.at / 1000)))
-                        .font(.caption2).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(message.state.rawValue).font(.caption2).foregroundStyle(stateColor)
+                if !continuation {
+                    HStack(spacing: 8) {
+                        Text(message.from).font(.subheadline.bold())
+                        Text(DateFormatter.delivery.string(from: Date(timeIntervalSince1970: message.at / 1000)))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
-                Text(message.text).textSelection(.enabled)
+                Text(message.text)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let stateDetail {
+                    HStack(spacing: 4) {
+                        Image(systemName: "exclamationmark.circle.fill")
+                        Text(stateDetail.0)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(stateDetail.1)
+                }
             }
         }
-        .padding(.vertical, 3)
     }
 }
 
@@ -2821,62 +3407,81 @@ private struct ChannelMembersView: View {
     @ObservedObject var model: AppModel
     let channel: ChannelProfile
 
+    private func memberSummary(_ member: ChannelMember) -> String {
+        let role = member.role == "owner" ? "所有者" : "成员"
+        let status: String
+        switch member.status {
+        case "active": status = member.online == true ? "在线" : "离线"
+        case "banned": status = "已封禁"
+        default: status = member.status
+        }
+        return "\(role) · \(status) · \(member.memberID.prefix(8))…"
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("成员").font(.headline).padding(.top, 8)
-            Text("0.3 Beta 的封禁只撤销当前成员身份；没有账号体系时，无法阻止同一自然人通过新邀请创建新成员。")
+        VStack(alignment: .leading, spacing: 0) {
+            Text("封禁只撤销当前成员身份；没有账号体系时，仍可通过新邀请加入。")
                 .font(.caption).foregroundStyle(.secondary)
+                .padding(12)
+            Divider()
             List(model.members) { member in
-                HStack {
+                HStack(spacing: 10) {
                     Circle().fill(member.online == true ? .green : .secondary.opacity(0.35)).frame(width: 8, height: 8)
-                    VStack(alignment: .leading) {
+                    VStack(alignment: .leading, spacing: 2) {
                         Text(member.name.isEmpty ? member.memberID : member.name)
-                        Text("\(member.role) · \(member.status) · \(member.memberID.prefix(8))…")
+                        Text(memberSummary(member))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     if channel.role == "owner", member.memberID != channel.memberID {
-                        if member.status == "banned" {
-                            Button("解除封禁") { Task { await model.unbanMember(member) } }
-                        } else if member.status == "active" {
-                            Button("移除", role: .destructive) { Task { await model.removeMember(member, ban: false) } }
-                            Button("封禁", role: .destructive) { Task { await model.removeMember(member, ban: true) } }
+                        Menu {
+                            if member.status == "banned" {
+                                Button("解除封禁") { Task { await model.unbanMember(member) } }
+                            } else if member.status == "active" {
+                                Button("移除成员", role: .destructive) { Task { await model.removeMember(member, ban: false) } }
+                                Button("封禁成员", role: .destructive) { Task { await model.removeMember(member, ban: true) } }
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
                         }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
                     }
                 }
+                .padding(.vertical, 4)
             }
-            .listStyle(.inset)
+            .listStyle(.plain)
         }
     }
 }
 
 private struct ChannelSubscriptionsView: View {
     @ObservedObject var model: AppModel
-    let channel: ChannelProfile
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Task 订阅").font(.headline).padding(.top, 8)
-            HStack {
-                TextField("codex://threads/...", text: $model.draftTask)
-                    .textFieldStyle(.roundedBorder)
-                Button("检查并订阅") { Task { await model.addTaskSubscription() } }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    TextField("粘贴 Codex 会话链接", text: $model.draftTask)
+                        .textFieldStyle(.roundedBorder)
+                    Button("添加会话") { Task { await model.addTaskSubscription() } }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                Text("本频道的新消息会作为新输入发送到这些 AI 会话。没有新消息时，不会创建新的对话轮次。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Text("每个 task 可订阅多个频道；默认发送频道每个 task 最多一个。空闲监听不会创建 turn。")
-                .font(.caption).foregroundStyle(.secondary)
+            .padding(16)
+            Divider()
             if model.selectedSubscriptions.isEmpty {
-                EmptyStateView(title: "暂无 Task 订阅", systemImage: "link.badge.plus", detail: "可粘贴上方 task 链接开始监听。") { EmptyView() }
+                EmptyStateView(title: "尚未连接会话", systemImage: "link.badge.plus", detail: "粘贴 Codex 会话链接，让该会话接收本频道消息。") { EmptyView() }
                     .frame(maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(model.selectedSubscriptions) { subscription in
-                            SubscriptionCard(model: model, subscriptionID: subscription.id)
-                        }
-                    }
+                List(model.selectedSubscriptions) { subscription in
+                    SubscriptionCard(model: model, subscriptionID: subscription.id)
+                        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
                 }
+                .listStyle(.plain)
             }
         }
     }
@@ -2886,70 +3491,111 @@ private struct SubscriptionCard: View {
     @ObservedObject var model: AppModel
     let subscriptionID: UUID
     @State private var templateDraft = ""
+    @State private var isExpanded = false
 
     private var subscription: ChannelSubscription? {
         model.state.subscriptions.first { $0.id == subscriptionID }
     }
 
+    private func statusColor(_ status: String) -> Color {
+        if status.contains("已连接") || status.contains("正在接收") { return .green }
+        if status.contains("异常") || status.contains("不可用") || status.contains("失败") { return .red }
+        if status.contains("暂停") { return .secondary }
+        return .orange
+    }
+
     var body: some View {
         if let subscription {
-            GroupBox {
-                VStack(alignment: .leading, spacing: 9) {
-                    HStack {
-                        VStack(alignment: .leading) {
+            let status = model.listenerStatus[subscription.id] ?? (subscription.enabled ? "准备接收" : "已暂停")
+            VStack(alignment: .leading, spacing: 0) {
+                Button {
+                    isExpanded.toggle()
+                } label: {
+                    HStack(spacing: 10) {
+                        Circle().fill(statusColor(status)).frame(width: 8, height: 8)
+                        VStack(alignment: .leading, spacing: 2) {
                             Text(model.taskLabel(subscription.taskID)).font(.headline)
-                            Text(model.listenerStatus[subscription.id] ?? (subscription.enabled ? "等待启动" : "已暂停"))
-                                .font(.caption).foregroundStyle(.secondary)
+                            Text(status).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Toggle("监听", isOn: Binding(
-                            get: { subscription.enabled },
-                            set: { model.setSubscriptionEnabled(subscription.id, enabled: $0) }
-                        ))
-                        .toggleStyle(.switch)
-                        Toggle("默认发送", isOn: Binding(
-                            get: { subscription.defaultSend },
-                            set: { model.setSubscriptionDefault(subscription.id, enabled: $0) }
-                        ))
-                        .toggleStyle(.switch)
+                        if subscription.uncertainMessageID != nil {
+                            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        }
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
                     }
-                    if let messageID = subscription.uncertainMessageID {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("消息 #\(messageID) 的 Host 投递结果未知").font(.subheadline.bold())
-                            if let detail = subscription.uncertainDetail { Text(detail).font(.caption).foregroundStyle(.secondary) }
-                            HStack {
-                                Button("目标 task 未出现，重试") {
-                                    model.resolveUncertainDelivery(subscription.id, retry: true)
-                                }
-                                Button("目标 task 已出现，跳过") {
-                                    model.resolveUncertainDelivery(subscription.id, retry: false)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if isExpanded {
+                    Divider().padding(.vertical, 12)
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 24) {
+                            Toggle("接收消息", isOn: Binding(
+                                get: { subscription.enabled },
+                                set: { model.setSubscriptionEnabled(subscription.id, enabled: $0) }
+                            ))
+                            .toggleStyle(.switch)
+                            .fixedSize()
+                            Toggle("默认回复频道", isOn: Binding(
+                                get: { subscription.defaultSend },
+                                set: { model.setSubscriptionDefault(subscription.id, enabled: $0) }
+                            ))
+                            .toggleStyle(.switch)
+                            .fixedSize()
+                        }
+                        if let messageID = subscription.uncertainMessageID {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("消息 #\(messageID) 的会话转发结果未知").font(.subheadline.bold())
+                                if let detail = subscription.uncertainDetail { Text(detail).font(.caption).foregroundStyle(.secondary) }
+                                HStack {
+                                    Button("目标会话未出现，重试") {
+                                        model.resolveUncertainDelivery(subscription.id, retry: true)
+                                    }
+                                    Button("目标会话已出现，跳过") {
+                                        model.resolveUncertainDelivery(subscription.id, retry: false)
+                                    }
                                 }
                             }
+                            .padding(8)
+                            .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
                         }
-                        .padding(8)
-                        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
-                    }
-                    Picker("同成员消息", selection: Binding(
-                        get: { subscription.selfMessagePolicy },
-                        set: { model.setSubscriptionPolicy(subscription.id, policy: $0) }
-                    )) {
-                        ForEach(SelfMessagePolicy.allCases) { policy in Text(policy.title).tag(policy) }
-                    }
-                    Text("当前 task 自己发送的消息始终不会回投，以避免循环。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Text("消息拼接模板").font(.caption.bold())
-                    TextEditor(text: $templateDraft).font(.system(.body, design: .monospaced)).frame(minHeight: 70)
-                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
-                    HStack {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("同成员消息").font(.caption.bold())
+                            Picker("", selection: Binding(
+                                get: { subscription.selfMessagePolicy },
+                                set: { model.setSubscriptionPolicy(subscription.id, policy: $0) }
+                            )) {
+                                ForEach(SelfMessagePolicy.allCases) { policy in Text(policy.title).tag(policy) }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .fixedSize()
+                            Text("当前会话自己发送的消息始终不会转发回来，以避免循环。")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        Text("消息正文模板").font(.caption.bold())
+                        TextEditor(text: $templateDraft)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(height: 90)
+                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
+                        Text("固定标题和来源栏由 Agent Channels 生成；此处只控制 Markdown 卡片正文。")
+                            .font(.caption2).foregroundStyle(.secondary)
                         Text("变量：{channel_name} {sender_name} {message_text} {message_id}")
                             .font(.caption2).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("恢复默认") { templateDraft = defaultMessageTemplate }
-                        Button("保存模板") { model.setSubscriptionTemplate(subscription.id, template: templateDraft) }
-                        Button("删除订阅", role: .destructive) { model.removeSubscription(subscription.id) }
+                        HStack {
+                            Button("停止转发到此会话", role: .destructive) { model.removeSubscription(subscription.id) }
+                            Spacer()
+                            Button("恢复默认") { templateDraft = defaultMessageTemplate }
+                            Button("保存模板") { model.setSubscriptionTemplate(subscription.id, template: templateDraft) }
+                                .buttonStyle(.borderedProminent)
+                        }
                     }
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .padding(.leading, 18)
+                    .padding(.bottom, 4)
                 }
-                .padding(.vertical, 3)
             }
             .onAppear { templateDraft = subscription.template }
         }
@@ -2978,45 +3624,60 @@ private struct AgentChannelsSettingsView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        Form {
-            Section("身份") {
-                HStack {
-                    TextField("默认 Agent 名称", text: $model.draftCallsign)
-                    Button("保存") { model.saveDefaultCallsign() }
+        VStack(spacing: 0) {
+            HStack {
+                Text("设置").font(.title2.bold())
+                Spacer()
+            }
+            .padding()
+            Divider()
+            Form {
+                Section("身份") {
+                    HStack {
+                        TextField("我的昵称", text: $model.draftNickname)
+                        Button("保存") { Task { await model.saveNickname() } }
+                    }
+                    Text("这个昵称会用于你加入的所有频道和发出的消息。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Section("Codex 集成") {
+                    LabeledContent("状态", value: model.codexIntegrationStatus)
+                    HStack {
+                        Button("启用或修复 Codex 集成") { model.enableCodexIntegration() }
+                        Button("移除 Codex 集成", role: .destructive) { model.removeCodexIntegration() }
+                    }
+                    Text("MCP 提供当前会话的频道动作，Skill 负责识别外部消息和协作规则；频道凭证仍只保存在 App Keychain。配置后需完全重启 ChatGPT。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("App") {
+                    Toggle("登录时启动", isOn: Binding(
+                        get: { model.launchAtLogin },
+                        set: { model.setLaunchAtLogin($0) }
+                    ))
+                    Toggle("自动检查并下载 Beta 更新", isOn: Binding(
+                        get: { model.automaticUpdateChecks },
+                        set: { model.setAutomaticUpdateChecks($0) }
+                    ))
+                    HStack {
+                        Text("版本 \(model.currentVersion)")
+                        Spacer()
+                        Text(model.updateStatus).foregroundStyle(.secondary)
+                        Button("检查并下载 Beta 更新…") { Task { await model.checkBetaUpdate() } }
+                    }
+                }
+                Section("本机数据") {
+                    if model.oldBetaDataDetected {
+                        Text("检测到旧 0.2 数据；0.3 保持隔离且不会迁移或删除。")
+                            .foregroundStyle(.orange)
+                    }
+                    Button("移除全部 0.3 Beta 本机配置…", role: .destructive) { model.removeAllV2Data() }
                 }
             }
-            Section("Codex MCP") {
-                LabeledContent("状态", value: model.sendStatus)
-                HStack {
-                    Button("启用或修复 MCP") { model.enableSending() }
-                    Button("移除 MCP 配置", role: .destructive) { model.removeManagedMCP() }
-                }
-                Text("MCP 只连接本机 App；频道凭证保存在 Keychain，不会写入 Codex 配置。配置后需完全重启 ChatGPT。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("App") {
-                Toggle("登录时启动", isOn: Binding(
-                    get: { model.launchAtLogin },
-                    set: { model.setLaunchAtLogin($0) }
-                ))
-                HStack {
-                    Text("版本 \(model.currentVersion)")
-                    Spacer()
-                    Text(model.updateStatus).foregroundStyle(.secondary)
-                    Button("检查 Beta 更新…") { Task { await model.checkBetaUpdate() } }
-                }
-            }
-            Section("本机数据") {
-                if model.oldBetaDataDetected {
-                    Text("检测到旧 0.2 数据；0.3 保持隔离且不会迁移或删除。")
-                        .foregroundStyle(.orange)
-                }
-                Button("移除全部 0.3 Beta 本机配置…", role: .destructive) { model.removeAllV2Data() }
-            }
+            .formStyle(.grouped)
+            .padding()
         }
-        .formStyle(.grouped)
-        .padding()
-        .frame(width: 600, height: 480)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -3039,10 +3700,6 @@ private struct AgentChannelsV2App: App {
                 .accessibilityLabel("Agent Channels")
         }
         .menuBarExtraStyle(.window)
-
-        Settings {
-            AgentChannelsSettingsView(model: model)
-        }
     }
 }
 #else
@@ -3069,11 +3726,28 @@ private struct AgentChannelsV2SelfTest {
             _ = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"send","source":{"provider":"codex","conversationId":"bad"},"message":"hello"}"#.utf8))
             preconditionFailure("invalid source was accepted")
         } catch {}
-        precondition(ReleaseVersion("0.3.0-beta.1")! < ReleaseVersion("0.3.0-beta.2")!)
+        precondition(ReleaseVersion("0.3.0-beta.7")! < ReleaseVersion("0.3.0-beta.8")!)
         let taskA = compactTaskKey("01900000-0000-7000-8000-000000000001")!
         let taskB = compactTaskKey("01900000-0000-7000-8000-000000000002")!
         precondition(taskA.count == 26 && taskB.count == 26 && taskA != taskB)
         precondition(!taskA.contains("019000") && !taskA.contains("000001"))
+        precondition(receivedDeliveryDecision(nil).rawValue == "recorded")
+        precondition(receivedDeliveryDecision(.received).rawValue == "recorded")
+        precondition(receivedDeliveryDecision(.failed).rawValue == "recorded")
+        precondition(receivedDeliveryDecision(.delivered).rawValue == "already_processed")
+        precondition(receivedDeliveryDecision(.filtered).rawValue == "already_processed")
+        precondition(receivedDeliveryDecision(.skipped).rawValue == "already_processed")
+        precondition(receivedDeliveryDecision(.attempting).rawValue == "unresolved")
+        precondition(receivedDeliveryDecision(.unknown).rawValue == "unresolved")
+        precondition(advancedDeliveryCursor(nil, through: 8) == 8)
+        precondition(advancedDeliveryCursor(10, through: 8) == 10)
+        precondition(advancedDeliveryCursor(10, through: 12) == 12)
+        precondition(bridgeRecoveryClearsError(kind: "connection", state: "connected"))
+        precondition(bridgeRecoveryClearsError(kind: "delivery", state: "delivered"))
+        precondition(!bridgeRecoveryClearsError(kind: "delivery", state: "connected"))
+        precondition(!bridgeRecoveryClearsError(kind: "delivery_outcome_unknown", state: "connected"))
+        precondition(!bridgeErrorShouldReplace(current: "delivery", incoming: "connection"))
+        precondition(bridgeErrorShouldReplace(current: "connection", incoming: "delivery"))
 
         let subscriptionID = UUID()
         let channelID = UUID()
@@ -3083,7 +3757,7 @@ private struct AgentChannelsV2SelfTest {
             channelID: channelID,
             messageID: "7",
             state: .received,
-            detail: "用户确认目标 task 未出现，允许重试",
+            detail: "用户确认目标会话未出现，允许重试",
             updatedAt: 1
         )
         var manuallyStopped = ChannelSubscription(
@@ -3124,10 +3798,124 @@ private struct AgentChannelsV2SelfTest {
         var messageB = messageA
         messageB.direction = .outbound
         precondition(messageA.id == messageB.id)
+        var groupedMessage = messageA
+        groupedMessage.messageID = "9"
+        groupedMessage.at = messageA.at + 60_000
+        precondition(continuesMessageGroup(previous: messageA, current: groupedMessage))
+        groupedMessage.at = messageA.at + 6 * 60 * 1000
+        precondition(!continuesMessageGroup(previous: messageA, current: groupedMessage))
+        precondition(!continuesMessageGroup(previous: messageB, current: messageA))
+        precondition(channelDisplayName("  项目讨论  ", original: "quiet-owl-0001") == "项目讨论")
+        precondition(channelDisplayName("  ", original: "quiet-owl-0001") == "quiet-owl-0001")
 
         let socketDirectory = URL(fileURLWithPath: "/private/tmp/ac-v2-\(getpid())", isDirectory: true)
         try FileManager.default.createDirectory(at: socketDirectory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: socketDirectory) }
+        let configURL = socketDirectory.appendingPathComponent("config.toml")
+        let missingConfig = try CodexConfigEditor.reading(configURL)
+        precondition(missingConfig == nil)
+        try Data([0xFF]).write(to: configURL)
+        do {
+            _ = try CodexConfigEditor.reading(configURL)
+            preconditionFailure("invalid UTF-8 Codex config was treated as empty")
+        } catch {}
+        try FileManager.default.removeItem(at: configURL)
+        let skillSource = socketDirectory.appendingPathComponent("app-skill", isDirectory: true)
+        let skillDestination = socketDirectory.appendingPathComponent("codex-skills/agent-channels", isDirectory: true)
+        try FileManager.default.createDirectory(at: skillSource, withIntermediateDirectories: true)
+        try "---\nname: agent-channels\n---\n".write(
+            to: skillSource.appendingPathComponent("SKILL.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let integrationBlock = CodexConfigEditor.managedBlock(sidecar: "/Applications/Agent Channels.app/sidecar", binding: "/tmp/state.json")
+        try "model = \"gpt-5\"\n".write(to: configURL, atomically: true, encoding: .utf8)
+        try CodexIntegrationInstaller.install(
+            configURL: configURL,
+            block: integrationBlock,
+            skillSource: skillSource,
+            skillDestination: skillDestination
+        )
+        precondition(AgentChannelsSkillInstaller.isInstalled(source: skillSource, destination: skillDestination))
+        let installedConfig = try CodexConfigEditor.reading(configURL)
+        precondition(installedConfig?.contains(managedConfigStart) == true)
+        try CodexIntegrationInstaller.install(
+            configURL: configURL,
+            block: integrationBlock,
+            skillSource: skillSource,
+            skillDestination: skillDestination
+        )
+        try CodexIntegrationInstaller.remove(
+            configURL: configURL,
+            skillSource: skillSource,
+            skillDestination: skillDestination
+        )
+        let removedConfig = try CodexConfigEditor.reading(configURL)
+        precondition(removedConfig == "model = \"gpt-5\"\n")
+        precondition(!AgentChannelsSkillInstaller.isManagedLink(source: skillSource, destination: skillDestination))
+        let linkedConfig = socketDirectory.appendingPathComponent("linked-config.toml")
+        try "model = \"gpt-5\"\n".write(to: linkedConfig, atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: configURL)
+        try FileManager.default.createSymbolicLink(at: configURL, withDestinationURL: linkedConfig)
+        try CodexIntegrationInstaller.install(
+            configURL: configURL,
+            block: integrationBlock,
+            skillSource: skillSource,
+            skillDestination: skillDestination
+        )
+        try CodexIntegrationInstaller.remove(
+            configURL: configURL,
+            skillSource: skillSource,
+            skillDestination: skillDestination
+        )
+        _ = try FileManager.default.destinationOfSymbolicLink(atPath: configURL.path)
+        let linkedConfigAfterRemoval = try CodexConfigEditor.reading(configURL)
+        precondition(linkedConfigAfterRemoval == "model = \"gpt-5\"\n")
+        try FileManager.default.createDirectory(at: skillDestination, withIntermediateDirectories: true)
+        do {
+            try CodexIntegrationInstaller.install(
+                configURL: configURL,
+                block: integrationBlock,
+                skillSource: skillSource,
+                skillDestination: skillDestination
+            )
+            preconditionFailure("existing unmanaged skill was overwritten")
+        } catch {}
+        let configAfterRejectedInstall = try CodexConfigEditor.reading(configURL)
+        precondition(configAfterRejectedInstall == "model = \"gpt-5\"\n")
+        do {
+            try CodexIntegrationInstaller.remove(
+                configURL: configURL,
+                skillSource: skillSource,
+                skillDestination: skillDestination
+            )
+            preconditionFailure("MCP config changed before unmanaged skill validation")
+        } catch {}
+        let configAfterRejectedRemoval = try CodexConfigEditor.reading(configURL)
+        precondition(configAfterRejectedRemoval == "model = \"gpt-5\"\n")
+        try FileManager.default.removeItem(at: skillDestination)
+        let otherSkill = socketDirectory.appendingPathComponent("other-skill", isDirectory: true)
+        try FileManager.default.createDirectory(at: otherSkill, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: skillDestination, withDestinationURL: otherSkill)
+        do {
+            try CodexIntegrationInstaller.install(
+                configURL: configURL,
+                block: integrationBlock,
+                skillSource: skillSource,
+                skillDestination: skillDestination
+            )
+            preconditionFailure("foreign skill link was overwritten")
+        } catch {}
+        do {
+            try CodexIntegrationInstaller.remove(
+                configURL: configURL,
+                skillSource: skillSource,
+                skillDestination: skillDestination
+            )
+            preconditionFailure("foreign skill link was removed")
+        } catch {}
+        let configAfterForeignLink = try CodexConfigEditor.reading(configURL)
+        precondition(configAfterForeignLink == "model = \"gpt-5\"\n")
         let socketURL = socketDirectory.appendingPathComponent("send.sock")
         let firstServer = LocalSendServer(socketURL: socketURL) { _ in .success(LocalOperationResult(message: "ok")) }
         try firstServer.start()

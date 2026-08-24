@@ -65,7 +65,7 @@ options:
   --codex-socket <p>  override the ChatGPT Desktop IPC socket path (diagnostics)
   --message-template <t>
                       render {channel_name}, {sender_name}, {message_text}, and
-                      {message_id} inside the fixed untrusted-input wrapper
+                      {message_id} inside the fixed external-message card
   --self-message-policy <p>
                       include_other_endpoints (default) or exclude_member;
                       the exact current task endpoint is always excluded
@@ -362,6 +362,7 @@ type WireAttachment = {
 type IncomingMessage = {
   id: number;
   from: string;
+  sender_name?: string;
   sender_member_id: string;
   sender_endpoint_id: string;
   to: string;
@@ -520,8 +521,8 @@ async function recordWithApp(
   args: Args,
   operation: "record_received" | "record_outcome",
   event: LocalLedgerRequest["event"],
-): Promise<void> {
-  if (!args.appSocket || !args.subscriptionId || !args.codexThread) return;
+): Promise<"recorded" | "already_processed" | "unresolved"> {
+  if (!args.appSocket || !args.subscriptionId || !args.codexThread) return "recorded";
   const result = await requestViaLocalApp(args.appSocket, {
     version: 2,
     operation,
@@ -531,6 +532,8 @@ async function recordWithApp(
     event,
   }, 5_000);
   if (!result.ok) throw new Error(result.error);
+  const message = result.result.message;
+  return message === "already_processed" || message === "unresolved" ? message : "recorded";
 }
 
 async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDelivery): Promise<void> {
@@ -544,10 +547,12 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
   if (!msg.sender_member_id || !msg.sender_endpoint_id) {
     throw new Error(`message ${msg.id} is missing authenticated sender identity`);
   }
+  const senderName = msg.sender_name?.trim() || msg.from;
   if (msg.kind !== "status") {
-    await recordWithApp(args, "record_received", {
+    const ledgerResult = await recordWithApp(args, "record_received", {
       id: msg.id,
       from: msg.from,
+      sender_name: senderName,
       to: msg.to,
       text: msg.text,
       at: msg.at,
@@ -555,11 +560,15 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
       sender_endpoint_id: msg.sender_endpoint_id,
       state: "received",
     });
+    if (ledgerResult === "already_processed") return;
+    if (ledgerResult === "unresolved") {
+      throw new DeliveryOutcomeUnknownError(`App reported unresolved delivery for message ${msg.id}`);
+    }
     emitStatus(args, "received", {
       message: {
         channel: args.channel,
         id: msg.id,
-        from: msg.from,
+        from: senderName,
         to: msg.to,
         text: msg.text,
         at: msg.at,
@@ -592,7 +601,7 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
       receipt = await hostDelivery({
         channelId: args.channel,
         messageId: msg.id,
-        from: msg.from,
+        from: senderName,
         text: msg.text,
         receivedAt: msg.at,
         untrusted: true,
@@ -791,7 +800,9 @@ async function runOneConnection(
     }
   } catch (err) {
     if (abortSignal.aborted) return { lastId, reason: "aborted" };
-    throw err;
+    console.error(`[listen-here] connection error:`, (err as Error).message);
+    emitStatus(args, "error", { kind: "connection", error: (err as Error).message });
+    return { lastId, reason: "ended" };
   } finally {
     abortSignal.removeEventListener("abort", onAbort);
   }

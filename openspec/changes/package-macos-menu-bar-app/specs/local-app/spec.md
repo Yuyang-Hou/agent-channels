@@ -58,10 +58,28 @@ App MUST 在监听前验证 Desktop IPC 与目标 task owner，且预检 MUST NO
 - **WHEN** App 执行预检
 - **THEN** App 显示打开该 task 一次的操作提示且不开始消费频道消息
 
-### Requirement: 最小发送授权
+### Requirement: 稳定内测代码身份
 
-App MUST 只在用户显式确认后安装固定 STDIO MCP，并且 MCP MUST 只暴露
+内测分发构建 MUST 使用仓库锁定的固定代码签名身份，身份缺失时 MUST 失败，MUST NOT
+自动选择钥匙串中的其他 Developer ID。普通源码构建 MAY 显式或自动回退 ad-hoc。
+
+#### Scenario: 内测分发构建
+
+- **GIVEN** 构建机安装了锁定的 Agent Channels 内测签名身份
+- **WHEN** 连续构建两个相同 Bundle ID 的 Beta 包
+- **THEN** 两个 App 的 designated requirement 相同且嵌入 sidecar 单独由同一身份签名
+
+#### Scenario: 内测身份缺失
+
+- **GIVEN** 构建要求固定签名但锁定身份不可用
+- **WHEN** 执行构建脚本
+- **THEN** 构建在编译和打包前明确失败且不自动改用 Developer ID 或 ad-hoc
+
+### Requirement: 0.2 最小发送授权
+
+0.2 单 Binding App MUST 只在用户显式确认后安装固定 STDIO MCP，并且该 0.2 MCP MUST 只暴露
 `send_to_channel(message)`。发送 MUST 使用当前本机 Binding 向当前频道广播，不依赖入站消息。
+0.3 多 Subscription 工具表由 `build-multi-channel-beta` 修改，不受本 Requirement 限制。
 
 #### Scenario: 首次启用发送
 

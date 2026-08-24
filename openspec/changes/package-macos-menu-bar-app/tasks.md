@@ -22,8 +22,8 @@
 - [x] 明确 callsign 文案并展示邀请中自动取得的频道
 - [x] 经用户确认安装固定发送 MCP 配置并提示首次重启 ChatGPT
 - [x] 增加正式版与 Beta 分通道的 GitHub Release 更新检查
-- [x] 接入 E3 App icon 与单色 SVG 菜单栏 Template Image
-- [x] 内嵌自包含 Bridge，生成 ad-hoc 签名 Apple Silicon App/DMG
+- [x] 接入圆头传信鸽 App icon 与单色 SVG 菜单栏 Template Image
+- [x] 内嵌自包含 Bridge，生成 Apple Silicon App/DMG；内测分发固定签名且缺失身份时失败
 - [x] 把主动发送凭证与网络访问收回 App，MCP 只经同 UID Unix socket 传正文
 - [x] SSE 自动重连成功后清除已恢复的连接错误状态
 
@@ -34,4 +34,4 @@
 - [x] 本机真实频道消息进入后台 task，空闲无 turn
 - [ ] 目标 AI 未收到消息也能主动 `send_to_channel`，模型正文不含 token
 - [ ] 两台 Mac 使用安装包完成双向闭环
-- [ ] 构建包含本机发送 socket 与重连状态修复的新 Beta 验收包
+- [x] 构建包含本机发送 socket、重连状态修复与固定内测签名的新 Beta 验收包

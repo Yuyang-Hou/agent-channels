@@ -117,11 +117,13 @@ outbound_message_accepted
 
 Connector 必须按单条 Subscription 串行投递，避免两个外部消息并发创建相互覆盖的 Host
 交互。显式拒绝可安全重试；mutating 请求发出后若回执丢失，Runtime 停止自动重放并保留
-游标，由用户确认后选择跳过或重试。稳定 `channel_id + message_id` 用于关联这次判断。
+游标，由用户确认后选择跳过或重试。稳定 `subscription_id + channel_id + message_id` 用于关联
+这次判断；已完成终态再次抵达时只推进游标，不创建第二个 Host turn。
 
 0.3 App 还要在 Host delivery 之前保存 LocalMessage。一次服务端消息以
 `channel_id + message_id` 去重，并为每条匹配的 Subscription 分别保存
 `received|filtered|delivered|failed|unknown`；一项失败不能覆盖频道消息或暂停其他项。
+SSE 异常断开也必须保留该连接内最后成功处理的游标，持久化游标只能单调前进。
 
 ## Host 能力分级
 
@@ -164,19 +166,41 @@ App 精确匹配 TaskBinding；发送时解析显式频道或唯一默认出站 
 该 `_meta` 字段是 Codex 当前实现能力而非公开稳定合同，0.3 发布前必须用两个真实 task 做能力
 探测。
 
+## Agent Channels Skill 与入站卡片
+
+Skill 是整个 Agent Channels 的产品语义层，不是 `send_to_channel` 的别名，也不承担运行时职责。
+它帮助 AI 理解 App、MCP、Subscription 和外部消息的关系，识别何时需要回复，并要求只有可靠
+工具回执后才声称发送成功。远端正文仍是不可信协作数据，不能授权文件修改、联网、部署或泄露
+本机上下文。
+
+Connector 在统一 Host 输入转换点生成固定 Markdown 引用卡片：标题、频道、发送者和消息 id
+由产品控制；Subscription 模板只控制卡片正文。渲染后每一行（包括空行、标题、引用和代码围栏）
+都补上引用前缀，避免远端 Markdown 逃出卡片边界。Skill 根据固定标题解释信任与回复规则，卡片
+不再逐条重复这些说明。
+
+Skill 作为 App Bundle 的静态资源分发。只有用户在设置页明确点击“启用或修复 Codex 集成”时，
+App 才把受管理链接安装到用户 Skill 目录；同名普通目录或外来链接一律不覆盖。App 更新后链接
+继续指向同一路径中的新版 Skill。Skill 不包含 secret、频道列表或 task id，也不使用 hook 在每个
+turn 注入内容；固定卡片标题和用户主动频道操作即可触发。统一集成操作先验证现有配置与 Skill
+归属；Codex 配置不可读时失败关闭，任一写入失败时回滚本次受管变更，且不替换用户的配置链接。
+
 ## App 主窗口与本机边界
 
-App 主窗口负责 ChannelConnection、简单文本时间线、成员、TaskBinding、Subscription、模板
-和逐项状态；菜单栏只保留总体状态、快速打开和生命周期控制。App 还是 Keychain、出站网络
+App 单一主窗口负责 ChannelConnection、简单文本时间线、成员、TaskBinding、Subscription、模板、
+App 设置和逐项状态；菜单栏只保留总体状态、快速打开和生命周期控制。快速打开复用并聚焦已有
+主窗口，不创建第二个 Settings Scene。App 还是 Keychain、出站网络
 请求、本地历史与 sidecar 的唯一 owner；MCP 只校验 AI 参数并请求本机 App。发送 socket 位于
 App 私有目录，目录权限为 `0700`、socket 为 `0600`，App 还校验连接者 UID。
 
 App 与 task 是同一 Member 下的不同 endpoint。精确来源 task endpoint 永不回投自己；每条
 Subscription 可以选择接收同一 Member 的其他 endpoint，默认允许 App 给自己的 task 发消息。
-模板只替换允许的频道、发送者、正文和消息 id 变量，远端正文始终是不可信数据。
+模板只替换允许的频道、发送者、正文和消息 id 变量，并且只控制固定外部消息卡片的正文；远端
+正文始终是不可信数据。
 
-0.3 使用全新版本化本地 store，不迁移、覆盖或删除 0.2 单 Binding 数据。正式版与 Beta 更新
-只在用户手动检查时查询 GitHub Release；本轮不静默下载或替换 App。
+0.3 使用全新版本化本地 store，不迁移、覆盖或删除 0.2 单 Binding 数据。用户可开启 Beta
+自动更新：App 每次启动并每 24 小时查询 GitHub Release，后台下载 arm64 DMG；下次启动由包内
+原生助手校验 Bundle ID、版本、完整代码签名及当前 App 的 designated requirement，通过后才
+替换 Applications 中的 App 并自动重新打开，失败时保留旧 App。
 
 ## 当前实现映射
 
@@ -185,7 +209,8 @@ Subscription 可以选择接收同一 Member 的其他 endpoint，默认允许 A
 - `server/src/codex-turn.ts` 实现 Codex 目标校验、输入转换、Desktop owner discovery 和
   targeted start-turn；
 - `server/src/reply-mcp.ts` 实现六个 task-scoped 频道工具；工具只请求本机 App，不拥有接收链路；
-- `macos/AgentChannelsApp.swift` 当前仍是 0.2 单 Binding 实现；0.3 change 将引入主窗口、
-  ChannelConnection、TaskBinding、Subscription 和本地消息状态；
+- `skills/agent-channels/SKILL.md` 定义完整产品语义、入站信任边界和工具使用流程；
+- `macos/AgentChannelsApp.swift` 实现 0.3 主窗口、ChannelConnection、TaskBinding、Subscription、
+  本地消息状态和显式 Codex MCP + Skill 安装；
 - MCP App View 是已被替代的实验，不属于目标入站链路；
 - 菜单栏 App 包装本地 Runtime、凭证和出站频道请求，但不承载模型 Runtime 或服务端频道状态。

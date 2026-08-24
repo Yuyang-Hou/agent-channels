@@ -15,6 +15,7 @@ Agent Channels.app
   -> one user-only app.sock for MCP and supervised sidecar -> App requests
 
 Codex task
+  <-> Agent Channels Skill -> product semantics + trust + reply policy
   -> send_to_channel / list_channels
   -> subscribe_to_channel / unsubscribe_from_channel
   -> get_channel_settings / update_channel_settings
@@ -24,7 +25,7 @@ Codex task
 
 App 是本机配置、凭证、消息状态、频道监听、Host 投递和 sidecar 生命周期的唯一 owner。
 Channel Service 不理解 TaskBinding；MCP 不读取 Keychain、不直接请求服务端，也不接收频道
-消息；sidecar 不决定 UI 中的频道选择。
+消息；Skill 不持有动态状态；sidecar 不决定 UI 中的频道选择。
 
 ## Service Data Model
 
@@ -43,7 +44,7 @@ Endpoint
   id, member_id, kind(app|task), label, status
 
 Message
-  id, channel_id, sender_endpoint_id, text, created_at
+  id, channel_id, sender_member_id, sender_endpoint_id, sender_name, text, created_at
 
 OnlineSession
   id, member_id, endpoint_id, cursor, expires_at
@@ -60,6 +61,10 @@ OnlineSession
 
 Endpoint 只用于来源和自消息判断。task Endpoint 的 id 是不透明随机值；服务端不得保存
 provider、Codex thread id、工作目录或本机路径。
+
+`sender_name` 由服务端根据凭证对应的 Member 生成，UI 与 Host 卡片使用它展示；`from` callsign
+继续承担端点路由兼容职责，不作为用户昵称。ChannelConnection 的 `display_name` 是本机频道昵称，
+`channel_id` 是不可变原始名称和唯一网络路由键。
 
 ## Local Data Model
 
@@ -88,6 +93,9 @@ LocalMessage
 SubscriptionDelivery
   subscription_id, channel_id, message_id,
   state(received|filtered|delivered|failed|unknown), detail, updated_at
+
+AppIdentity
+  nickname
 ```
 
 本地 secret 只存 Keychain；store 只保留 Keychain locator。`TaskBinding.conversation_id` 只在本机
@@ -99,8 +107,26 @@ SubscriptionDelivery。
 
 ## Main Window
 
-主窗口采用三块最小布局：频道侧栏、当前频道时间线与发送框、成员和 task 订阅详情。菜单栏
-继续展示总体状态并快速打开主窗口，但不再承担完整配置流程。
+主窗口采用三块最小布局：频道侧栏、当前频道时间线与发送框、成员和会话转发详情；App 设置
+作为同一侧栏的固定底部目的地呈现，与可增长的频道列表分隔，不创建独立 Settings Scene。
+菜单栏继续展示总体状态并快速打开主窗口，但不再承担完整配置流程。快速打开必须先请求单实例
+窗口，再于下一主循环激活、反最小化并置前，避免 `LSUIElement` 只把菜单浮窗变成 key window。
+
+### 频道工作区交互方案
+
+频道详情收敛为三层：窗口工具栏承载频道身份和全局动作；正文顶部使用轻量下划线导航在“消息 / 成员 /
+转发到会话”间切换，不使用带内容边框的默认 Tab View；当前 Tab 只展示自身内容和操作。消息页取消额外
+卡片容器与重复标题，时间线占满剩余空间，发送框固定在底部。消息按发送者与相邻时间聚合，正文优先，时间和投递状态降为次要信息；仅
+`failed`、`unknown` 等需要处理的状态使用强调色，普通 `received` 不逐条显示英文状态。
+
+添加频道弹窗先让用户在“创建频道 / 加入频道”之间二选一：创建路径只填写服务端频道名称，加入路径
+只填写邀请口令。用户昵称在设置中全局维护，并同步为每个 ChannelConnection 对应 Member 的
+`display_name`；endpoint callsign 只作为隐藏技术标识。唯一主按钮放在底部并随路径切换。
+
+成员页和转发到会话页复用一致的“说明 + 列表 + 就地操作”节奏；用户界面使用“会话”和消息转发方向
+表达结果，不暴露 `TaskBinding`、`Subscription` 等内部模型名。危险操作进入行尾菜单或确认流程，
+不与高频主操作并排。第一阶段只调整信息层级、间距和本地化，不增加搜索、筛选、表情、附件或消息
+线程；出现真实规模问题后再补相应能力。
 
 App 为每个已加入频道维护消息 feed。普通消息到达时，必须先 upsert `LocalMessage` 为
 `received`，随后才允许 Host delivery。这样即使 task 不可用、模板过滤或投递结果未知，用户
@@ -108,10 +134,17 @@ App 为每个已加入频道维护消息 feed。普通消息到达时，必须�
 
 该顺序不能依赖异步 stderr 状态。0.3 的单一本机 App IPC 除 MCP 发送外，还提供 sidecar 使用的
 `record_received` 与 `record_outcome` 请求：Subscription sidecar 在调用 Connector 前提交标准
-消息信封，App 用一个本地事务 upsert LocalMessage 和 `received` SubscriptionDelivery 并返回
-ack；只有拿到 ack 才能继续 Host delivery。投递结束后 sidecar 再记录 filtered、delivered、
-failed 或 unknown。App 无法持久化或 IPC 不可用时，sidecar 不调用 Host、不推进游标。频道 feed
-与多个 Subscription 重复看到同一消息时仍由本地唯一键合并。
+消息信封，App 先持久化 LocalMessage 和 `received` SubscriptionDelivery，全部成功后才返回 ack；
+任一步失败都不允许调用 Host。JSONL 允许失败重试产生重复物理记录，读取时必须按唯一键合并。
+
+`record_received` 还必须按 `subscription_id + channel_id + message_id` 检查最新投递状态：已有
+`delivered|filtered|skipped` 时返回 `already_processed`，sidecar 不调用 Host并只推进游标；已有
+`attempting|unknown` 时返回 `unresolved` 并停止该 Subscription；`received|failed` 可以安全重试。
+投递结束后 sidecar 再记录 filtered、delivered、failed 或 unknown。所有终态游标只能单调前进。
+
+SSE 正常结束或异常断开都必须把本连接内最后一个成功处理的 message id 带回重连循环；不能因
+body stream 异常退回连接开始前的游标。频道 feed 与多个 Subscription 重复看到同一消息时仍由
+本地唯一键合并。
 
 App 手工发送使用当前选中的 ChannelConnection 和 app endpoint。发送状态区分
 `pending`、`accepted`、`failed` 与 `unknown`；只有可靠服务端回执才能标记 `accepted`。本地
@@ -169,6 +202,20 @@ Service，不回退到最近活跃 task、当前 UI 频道或全局 active chann
 能力探测必须覆盖两个同时打开的真实 Codex task，并记录 A/B `tools/call` 的 `_meta.threadId`
 是否分别等于各自 UUID。源码观察只算设计依据，不能代替该实机门槛。
 
+## Product Skill
+
+Agent Channels Skill 面向整个产品，而不是包装某一个 MCP 工具。它定义产品模型、App/MCP/Skill
+边界、入站卡片识别、外部输入信任、是否回复、可靠发送回执和最小上下文披露规则；六项工具仍
+只执行当前 task 的显式动作。
+
+Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设置页的“启用或修复 Codex 集成”
+在用户明确操作后同时写入受管理 MCP block，并在 `~/.codex/skills/agent-channels` 创建指向 Bundle
+资源的受管理链接。更新 App 即更新 Skill；同名普通目录或指向其他内容的链接必须失败关闭，移除
+集成也只能删除本 App 的链接。启用和移除必须先读取并校验完整 Codex 配置与 Skill 归属；读取
+失败不得当作空配置，组合操作中途失败必须回滚本次受管变更，并保留用户已有配置 symlink。
+固定卡片标题触发 Skill 即可，不增加每 turn hook。可见卡片只保留标题、来源栏和正文；外部内容
+的信任边界与是否回复由 Skill 统一解释，不在每条消息中重复展示说明文案。
+
 ## Templates And Self-Message Policy
 
 每条 Subscription 选择一个本地 DeliveryTemplate。模板只支持以下变量：
@@ -178,8 +225,10 @@ Service，不回退到最近活跃 task、当前 UI 频道或全局 active chann
 - `{message_text}`
 - `{message_id}`
 
-保存时拒绝未知变量、空模板和超过本地上限的结果。远端正文只作为 `{message_text}` 数据插入，
-仍明确标记为不可信外部输入，不能成为模板指令或选择目标 Binding。
+保存时拒绝未知变量、空模板和超过本地上限的结果。模板只控制固定 Markdown 外部消息卡片的
+正文，默认仅为 `{message_text}`；标题、频道、发送者和消息 id 由 Connector 生成。模板展开后
+按换行逐行添加 blockquote 前缀，包含空行、标题、原始引用和代码围栏，避免远端 Markdown 逃出
+卡片。远端正文只作为 `{message_text}` 数据插入，不能成为模板指令或选择目标 Binding。
 
 精确 `sender_endpoint_id == subscription.task_endpoint_id` 的消息永远过滤，避免 task 自回声循环。
 每条 Subscription 另有 `same_member_policy`：
@@ -205,3 +254,11 @@ Subscription。0.3 不提供“回投精确来源 endpoint”、脚本规则或�
 预上线构建和公开分发只使用 Beta prerelease，允许用它完成跨设备验收；只有完成两台设备、
 两个频道、两个真实 Codex task 的路由与撤权验收后，才允许发布稳定版或声明生产就绪。源码、
 API 200 或单机 UI 演示都不算完成验收。
+
+## In-App Beta Update
+
+- 自动检查默认关闭；用户开启后在启动时及每 24 小时查询 GitHub prerelease。
+- 发现更高 Beta 后把 arm64 DMG 下载到权限受限的 Application Support 更新目录，不自动退出。
+- 下次启动由包内原生更新助手等待旧进程退出，挂载 DMG，并校验 Bundle ID、Release 版本、
+  完整代码签名和当前 App designated requirement；全部通过后才原子替换 Applications 中的 App。
+- 成功或失败都会重新打开 App；失败时删除待安装标记、保留旧 App 并展示错误，避免重启循环。

@@ -5,6 +5,7 @@
 
 import { serve, type ServerType } from "@hono/node-server";
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { createServer as createHttpServer } from "node:http";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -556,6 +557,231 @@ describe("rogerthat listen-here", () => {
     expect(result.code).toBe(1);
   });
 
+  it("reconnects from the latest delivered message after the SSE body fails", async () => {
+    const messageId = 1_787_600_000_001;
+    const requests: string[] = [];
+    const streamServer = createHttpServer((request, response) => {
+      requests.push(request.url ?? "");
+      if (requests.length === 1) {
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        response.write(`event: message\ndata: ${JSON.stringify({
+          id: messageId,
+          from: "beta",
+          to: "alpha",
+          text: "cursor-survives",
+          at: messageId,
+          sender_member_id: "member-beta",
+          sender_endpoint_id: "endpoint-beta",
+        })}\n\n`);
+        setTimeout(() => response.destroy(), 25);
+        return;
+      }
+      response.writeHead(401).end();
+    });
+    await new Promise<void>((resolve) => streamServer.listen(0, "127.0.0.1", resolve));
+    const address = streamServer.address();
+    if (!address || typeof address === "string") throw new Error("test server did not bind a TCP port");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const result = await runListener(
+      [
+        "--channel", "cursor-test",
+        "--token", "test-token",
+        "--session", "test-session",
+        "--origin", `http://127.0.0.1:${address.port}`,
+        "--quiet",
+      ],
+      3500,
+    );
+
+    expect(result.code).toBe(1);
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toBe(`/api/channels/cursor-test/stream?since=${messageId}`);
+    expect(errors.mock.calls.flat().join("\n")).toContain("connection error");
+    errors.mockRestore();
+    await new Promise<void>((resolve) => streamServer.close(() => resolve()));
+  });
+
+  it("does not call the Host again when record_received reports already_processed", async () => {
+    const socketPath = join(ctx.tmp, "codex-dedup.sock");
+    const appSocketPath = join(ctx.tmp, "app-dedup.sock");
+    const rpcServer = createServer();
+    const appServer = createServer();
+    let hostAttempts = 0;
+    let receivedRecords = 0;
+    const sequence: string[] = [];
+    appServer.on("connection", (socket) => {
+      let raw = "";
+      socket.on("data", (chunk) => {
+        raw += chunk.toString("utf8");
+        const newline = raw.indexOf("\n");
+        if (newline < 0) return;
+        const request = JSON.parse(raw.slice(0, newline)) as {
+          operation: string;
+          event: { state: string };
+        };
+        sequence.push(`${request.operation}:${request.event.state}`);
+        if (request.operation === "record_received") receivedRecords += 1;
+        const message = request.operation === "record_received" && receivedRecords > 1
+          ? "already_processed"
+          : "recorded";
+        socket.end(`${JSON.stringify({ version: 2, ok: true, result: { message } })}\n`);
+      });
+    });
+    await new Promise<void>((resolve) => appServer.listen(appSocketPath, resolve));
+    chmodSync(appSocketPath, 0o600);
+    rpcServer.on("connection", (socket) => {
+      readIpcFrames(socket, (message) => {
+        if (message.type !== "request" || typeof message.method !== "string") return;
+        const requestId = String(message.requestId);
+        if (message.method === "initialize") {
+          socket.write(ipcFrame({
+            type: "response",
+            requestId,
+            resultType: "success",
+            method: "initialize",
+            result: { clientId: "bridge-client" },
+          }));
+        } else if (message.method === "thread-owner-discovery") {
+          socket.write(ipcFrame({
+            type: "response",
+            requestId,
+            resultType: "success",
+            method: "thread-owner-discovery",
+            handledByClientId: "desktop-owner",
+            result: {},
+          }));
+        } else if (message.method === "thread-follower-steer-turn") {
+          socket.write(ipcFrame({
+            type: "response",
+            requestId,
+            resultType: "error",
+            error: "no active turn",
+          }));
+        } else if (message.method === "thread-follower-start-turn") {
+          hostAttempts += 1;
+          socket.write(ipcFrame({
+            type: "response",
+            requestId,
+            resultType: "success",
+            method: "thread-follower-start-turn",
+            handledByClientId: "desktop-owner",
+            result: { result: { turn: { id: "turn-ok" } } },
+          }));
+        }
+      });
+    });
+    await new Promise<void>((resolve) => rpcServer.listen(socketPath, resolve));
+
+    const listenerArgs = [
+      "--channel", ctx.channelId,
+      "--token", ctx.channelToken,
+      "--session", ctx.alphaSession,
+      "--origin", ctx.origin,
+      "--codex-thread", "01900000-0000-7000-8000-000000000001",
+      "--codex-socket", socketPath,
+      "--app-socket", appSocketPath,
+      "--subscription-id", "01900000-0000-7000-8000-000000000099",
+      "--quiet",
+    ];
+    const first = runListener(listenerArgs, 2500);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await sendFromBeta(ctx, "deliver-once");
+    await waitFor(() => sequence.includes("record_outcome:delivered"));
+    process.emit("SIGINT");
+    await first;
+
+    const replay = runListener([...listenerArgs, "--since", "0"], 2500);
+    await waitFor(() => receivedRecords === 2);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    process.emit("SIGINT");
+    const replayResult = await replay;
+
+    expect(hostAttempts).toBe(1);
+    expect(replayResult.code).toBe(0);
+    expect(sequence).toEqual([
+      "record_received:received",
+      "record_outcome:attempting",
+      "record_outcome:delivered",
+      "record_received:received",
+    ]);
+    await new Promise<void>((resolve) => rpcServer.close(() => resolve()));
+    await new Promise<void>((resolve) => appServer.close(() => resolve()));
+  });
+
+  it("stops without Host delivery when record_received reports unresolved", async () => {
+    const appSocketPath = join(ctx.tmp, "app-unresolved.sock");
+    const socketPath = join(ctx.tmp, "codex-unresolved.sock");
+    const appServer = createServer((socket) => {
+      socket.once("data", () => {
+        socket.end(`${JSON.stringify({
+          version: 2,
+          ok: true,
+          result: { message: "unresolved" },
+        })}\n`);
+      });
+    });
+    await new Promise<void>((resolve) => appServer.listen(appSocketPath, resolve));
+    chmodSync(appSocketPath, 0o600);
+    let hostRequests = 0;
+    const rpcServer = createServer((socket) => {
+      readIpcFrames(socket, (message) => {
+        if (message.type !== "request" || typeof message.method !== "string") return;
+        const requestId = String(message.requestId);
+        if (message.method === "initialize") {
+          socket.write(ipcFrame({
+            type: "response",
+            requestId,
+            resultType: "success",
+            method: "initialize",
+            result: { clientId: "bridge-client" },
+          }));
+        } else if (message.method === "thread-owner-discovery") {
+          socket.write(ipcFrame({
+            type: "response",
+            requestId,
+            resultType: "success",
+            method: "thread-owner-discovery",
+            handledByClientId: "desktop-owner",
+            result: {},
+          }));
+        } else {
+          hostRequests += 1;
+        }
+      });
+    });
+    await new Promise<void>((resolve) => rpcServer.listen(socketPath, resolve));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const listener = runListener(
+      [
+        "--channel", ctx.channelId,
+        "--token", ctx.channelToken,
+        "--session", ctx.alphaSession,
+        "--origin", ctx.origin,
+        "--codex-thread", "01900000-0000-7000-8000-000000000001",
+        "--codex-socket", socketPath,
+        "--app-socket", appSocketPath,
+        "--subscription-id", "01900000-0000-7000-8000-000000000099",
+        "--quiet",
+      ],
+      2500,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await sendFromBeta(ctx, "wait-for-resolution");
+    const result = await listener;
+
+    expect(result.code).toBe(1);
+    expect(hostRequests).toBe(0);
+    expect(errors.mock.calls.flat().join("\n")).toContain("App reported unresolved delivery");
+    errors.mockRestore();
+    await new Promise<void>((resolve) => rpcServer.close(() => resolve()));
+    await new Promise<void>((resolve) => appServer.close(() => resolve()));
+  });
+
   it("retries a message after an explicit Codex rejection", async () => {
     const socketPath = join(ctx.tmp, "codex.sock");
     const appSocketPath = join(ctx.tmp, "app.sock");
@@ -656,7 +882,7 @@ describe("rogerthat listen-here", () => {
     process.emit("SIGINT");
     await listener;
     expect(received).toHaveLength(2);
-    expect(received[0]).toContain('"text":"retry-me"');
+    expect(received[0]).toContain("> retry-me");
     expect(received[1]).toBe(received[0]);
     expect(sequence).toEqual([
       "app:record_received:received",

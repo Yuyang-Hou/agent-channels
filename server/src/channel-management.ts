@@ -154,7 +154,7 @@ function view(member: MemberRecord): MemberView {
   };
 }
 
-export function registerOwner(channelId: string, credential: string): MemberView {
+export function registerOwner(channelId: string, credential: string, name = "Owner"): MemberView {
   ensureLoaded();
   const existing = state.members.find((member) => member.channelId === channelId && member.role === "owner");
   if (existing) return view(existing);
@@ -164,7 +164,7 @@ export function registerOwner(channelId: string, credential: string): MemberView
     channelId,
     role: "owner",
     status: "active",
-    name: "Owner",
+    name,
     callsigns: [],
     credentialHash: digest(credential),
     createdAt: now,
@@ -173,6 +173,18 @@ export function registerOwner(channelId: string, credential: string): MemberView
   state.members.push(owner);
   persist();
   return view(owner);
+}
+
+export function updateMemberName(channelId: string, memberId: string, name: string): MemberView | undefined {
+  ensureLoaded();
+  const member = state.members.find(
+    (candidate) => candidate.channelId === channelId && candidate.memberId === memberId && candidate.status === "active",
+  );
+  if (!member) return undefined;
+  member.name = name;
+  member.updatedAt = Date.now();
+  persist();
+  return view(member);
 }
 
 export function authenticateMember(channelId: string, credential: string): MemberView | undefined {

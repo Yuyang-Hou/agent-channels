@@ -109,11 +109,12 @@ Codex Connector MUST 只为一次输入建立短连接，不得为了 start-turn
 - When Desktop 在返回可验证回执前断开或返回不完整成功响应
 - Then Runtime 停止监听且不推进游标，也不自动重放该消息
 
-### Requirement: 出站发送不依赖 Connector
+### Requirement: 0.2 出站发送不依赖 Connector
 
 目标 AI MUST 通过频道 MCP 或 REST 权限主动发送消息，Host Connector 不代理模型输出。
-当前本机 MCP MUST 只暴露 `send_to_channel(message)` 并向当前频道广播；发送 MUST NOT
+0.2 单 Binding 本机 MCP MUST 只暴露 `send_to_channel(message)` 并向当前频道广播；发送 MUST NOT
 依赖入站消息 id 或原发送者。
+0.3 多 Subscription 工具表由 `build-multi-channel-beta` 修改；“出站不依赖 Connector”的边界保持。
 
 #### Scenario: AI 主动发送频道消息
 

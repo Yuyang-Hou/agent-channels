@@ -23,6 +23,12 @@ Binding 上叠加入口会让多频道、成员撤权和 task 路由互相污染
   精确路由；缺失、类型错误或未绑定时失败关闭，不按最近活跃 task 猜测。
 - MCP 提供发送、频道列表、订阅/取消订阅和订阅设置六个 task-scoped 工具；频道监听、消息接收、
   本地历史和 Host 投递仍由 App 持有，AI 主动发送不依赖先收到消息。
+- App 将每条入站消息渲染为固定 Markdown 外部消息卡片；用户模板只控制正文，固定标题和来源栏
+  不可定制或被远端 Markdown 逃逸，信任与回复规则由产品 Skill 解释。
+- App 显式安装面向完整产品的 Agent Channels Skill，使 AI 理解收发、订阅、信任和回执语义；
+  Skill 不是单一工具说明，也不使用每 turn hook。
+- 用户可开启 Beta 自动更新；App 后台下载 GitHub Release 的 arm64 DMG，下次启动校验签名并
+  原地替换后自动重新打开，无需用户手动下载或拖拽 App。
 - P0 Runtime 继续为每条启用的 task-channel Subscription 管理一个现有 `listen-here`
   sidecar；不在本轮建设 multiplex daemon。
 
@@ -45,10 +51,13 @@ Binding 上叠加入口会让多频道、成员撤权和 task 路由互相污染
 - MCP 的 `list_channels`、`subscribe_to_channel`、`unsubscribe_from_channel`、
   `get_channel_settings` 和 `update_channel_settings` 只管理当前来源 task 的本机配置，不承担
   SSE 监听、入站消息消费、本地历史或 Host Connector 调用。
+- Skill 是静态产品语义层；App 更新时随包更新，不包含频道凭证、动态状态或 task id。安装与移除
+  只发生在用户明确操作 Codex 集成时，同名非受管 Skill 不得覆盖。
 - 模板只允许固定变量替换；规则只包含本轮定义的枚举策略，不执行脚本、正则代码、LLM
   判断或自动回复。
 - 本地历史用于恢复和可见性，不是永久服务端聊天档案；服务端仍只承担有限恢复窗口。
 - 0.3 Beta 继续只支持 Codex Connector。
+- 自动更新只接受与当前 App designated requirement 相同的 Beta 包；签名不一致时保留旧 App。
 
 ## Non-goals
 

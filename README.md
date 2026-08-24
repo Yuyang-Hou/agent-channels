@@ -30,22 +30,23 @@
 
 ## macOS 0.3 Beta 验收包
 
-当前候选版本为 `0.3.0-beta.2`，它内嵌自包含 Bridge，不要求用户安装 Node、npm 或 Codex CLI。
-已发布 [v0.3.0-beta.2 GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.2)；也可从源码构建：
+已发布版本为 `0.3.0-beta.2`，当前本地候选为 `0.3.0-beta.8`；安装包内嵌自包含 Bridge，
+不要求用户安装 Node、npm 或 Codex CLI。[v0.3.0-beta.2 GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.2)；也可从源码构建：
 
 ```bash
 ./macos/build-app.sh
-open "macos/build/Agent-Channels-0.3.0-beta.2-arm64.dmg"
+open "macos/build/Agent-Channels-0.3.0-beta.8-arm64.dmg"
 ```
 
 0.3 不迁移 0.2 数据。把 App 拖入 Applications 后，在主窗口新建或用 `ac2:` 邀请加入频道，
 再添加 Codex task、创建 task-channel Subscription，并为来源 task 指定唯一默认发送目标。
 首次启用 AI 发送后完全重启 ChatGPT；App 和 AI 随后都可主动发送消息，接收消息不要求自动回复。
 
-App 使用 E3 品牌图标和单色菜单栏图标。更新检查由用户手动触发，正式版与 Beta 分开
-检查；当前版本不会静默下载、替换或重启 App。
+App 使用 E3 品牌图标和单色菜单栏图标。用户可在设置中开启 Beta 自动更新；App 启动时及
+每 24 小时自动检查并下载 arm64 DMG，下次启动完成签名校验、替换并自动重新打开。也可手动
+点击“检查并下载 Beta 更新”。
 
-本地候选包仍是 ad-hoc 签名且未公证，不是生产分发版本。完整构建、双机验收与数据路径见
+本地候选包使用固定内测签名，但仍未使用 Developer ID 或公证，不是生产分发版本。完整构建、双机验收与数据路径见
 [`macos/README.md`](./macos/README.md)。
 
 ## 本地验证

@@ -9,6 +9,7 @@ export type TrustMode = "untrusted" | "trusted";
 
 export type ChannelRecord = {
   id: string;
+  name: string;
   tokenHash: string;
   createdAt: number;
   retention: Retention;
@@ -55,6 +56,7 @@ function ensureLoaded() {
           r.id,
           {
             id: r.id,
+            name: typeof r.name === "string" && r.name.trim() ? r.name : r.id,
             tokenHash: r.tokenHash,
             createdAt: r.createdAt,
             retention: isRetention(r.retention) ? r.retention : "none",
@@ -84,6 +86,7 @@ export function ensureBands(): void {
     if (!channels.has(b.name)) {
       channels.set(b.name, {
         id: b.name,
+        name: b.name,
         tokenHash: hashToken("public"),
         createdAt: Date.now(),
         retention: "none",
@@ -126,12 +129,14 @@ function persist() {
 }
 
 export function createChannel(opts: {
+  channel_name?: string;
   retention?: Retention;
   trust_mode?: TrustMode;
   session_ttl_seconds?: number;
   owner_password?: string;
 } = {}): {
   id: string;
+  name: string;
   token: string;
   retention: Retention;
   trust_mode: TrustMode;
@@ -171,6 +176,7 @@ export function createChannel(opts: {
   const ownerPasswordHash = ownerPassword ? hashToken(ownerPassword) : undefined;
   channels.set(id, {
     id,
+    name: opts.channel_name?.trim() || id,
     tokenHash: hashToken(token),
     createdAt: Date.now(),
     retention,
@@ -184,6 +190,7 @@ export function createChannel(opts: {
   transcriptRecordChannelCreated(id, retention);
   return {
     id,
+    name: opts.channel_name?.trim() || id,
     token,
     retention,
     trust_mode: trustMode,
@@ -212,6 +219,11 @@ export function getChannelRecord(id: string): ChannelRecord | undefined {
 export function getChannelRetention(id: string): Retention {
   ensureLoaded();
   return channels.get(id)?.retention ?? "none";
+}
+
+export function getChannelName(id: string): string {
+  ensureLoaded();
+  return channels.get(id)?.name ?? id;
 }
 
 export function getChannelTrustMode(id: string): TrustMode {

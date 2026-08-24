@@ -7,7 +7,8 @@
 2. [`changes/package-macos-menu-bar-app`](./changes/package-macos-menu-bar-app/)：把已验证链路包装为
    首个 Apple Silicon 菜单栏验收包；
 3. [`changes/build-multi-channel-beta`](./changes/build-multi-channel-beta/)：以全新 0.3 Beta 数据
-   模型建设主窗口、多频道、独立成员凭证、本地消息和 task-channel Subscription。
+   模型建设主窗口、多频道、独立成员凭证、本地消息和 task-channel Subscription，并交付
+   产品级 Agent Channels Skill 与固定 Markdown 外部消息卡片。
 
 该 change 把已验证的 Codex 投递链路定义为第一个 Host Connector，确保频道服务、
 订阅恢复与消息语义不依赖 Codex。方案、运行时代码边界和无需 daemon/env 的 Desktop
@@ -25,3 +26,7 @@ IPC Connector 已完成。0.2 的发送凭证与断线状态修复继续作为�
 当前只执行上述三个相关 change；不建设通用插件框架、其他 Host Connector、独立模型
 Runtime 或完整聊天客户端。已完成的 Codex 验证记录保留在
 [`changes/archive/2026-08-19-add-codex-thread-bridge`](./changes/archive/2026-08-19-add-codex-thread-bridge/)。
+
+`package-macos-menu-bar-app` 与 `define-host-connector-boundary` 中“单 Binding、仅发送工具”的描述
+记录 0.2 基线；当前 0.3 的多 Subscription、六工具、产品 Skill 和 Markdown 卡片决策以
+`build-multi-channel-beta` 为准。

@@ -55,6 +55,8 @@ export type MessageKind = "message" | "status";
 export type Message = {
   id: number;
   from: string;
+  /** Human-facing member nickname resolved from the authenticated member. */
+  sender_name?: string;
   /** Authenticated channel member resolved from the credential-bound session. */
   sender_member_id: string;
   /** Stable server-derived endpoint for this member + callsign. Never client supplied. */
@@ -81,6 +83,7 @@ export type Message = {
 export type AuthenticatedSource = {
   memberId: string;
   endpointId: string;
+  memberName?: string;
 };
 
 export const MAX_SUGGESTED_REPLIES = 4;
@@ -525,6 +528,7 @@ export class Channel {
     const msg: Message = {
       id: this.nextMsgId,
       from,
+      sender_name: source.memberName || from,
       sender_member_id: source.memberId,
       sender_endpoint_id: source.endpointId,
       to: dest,
