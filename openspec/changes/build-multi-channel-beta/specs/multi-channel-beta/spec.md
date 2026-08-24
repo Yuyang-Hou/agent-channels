@@ -239,6 +239,12 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** App 重启
 - **THEN** App 恢复每条 Subscription 的 sidecar 和游标，空闲期间不创建 Host turn
 
+#### Scenario: 退出时停止监听器
+
+- **GIVEN** App 正在监管 enabled Subscription 的 sidecar
+- **WHEN** App 正常退出或交给更新助手重启
+- **THEN** App 在终止前停止所有受管 sidecar，重新打开后每条 Subscription 只有一个监听器
+
 ### Requirement: Codex MCP 提供六个 task-scoped 频道工具
 
 Codex MCP MUST 暴露 `send_to_channel`、`list_channels`、`subscribe_to_channel`、

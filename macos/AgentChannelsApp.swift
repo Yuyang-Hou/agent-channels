@@ -2869,9 +2869,16 @@ extension AppModel {
     }
 
     func quit() {
+        shutdown()
+        NSApplication.shared.terminate(nil)
+    }
+
+    func shutdown() {
         for id in Set(listeners.keys).union(startingListeners) { stopListener(id) }
         for task in feedTasks.values { task.cancel() }
-        NSApplication.shared.terminate(nil)
+        feedTasks.removeAll()
+        localSendServer?.stop()
+        localSendServer = nil
     }
 
     fileprivate func fail(_ error: Error) {
@@ -3706,8 +3713,16 @@ private struct AgentChannelsSettingsView: View {
 }
 
 #if !SELF_TEST
+@MainActor
+private final class AgentChannelsAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ notification: Notification) {
+        AppModel.shared.shutdown()
+    }
+}
+
 @main
 private struct AgentChannelsV2App: App {
+    @NSApplicationDelegateAdaptor(AgentChannelsAppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel.shared
 
     var body: some Scene {

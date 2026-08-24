@@ -99,6 +99,10 @@ publication remain pending.
 - No production test channel was created because channels have no deletion endpoint. A new message through an
   existing channel remains the required visible acceptance for the rendered sender nickname.
 - All 11 server test files / 92 tests, TypeScript typecheck/build, strict OpenSpec validation and diff checks pass.
+- Live message `1787569685428` proved the deployed service now renders sender nickname `侯老师`. Its channel id
+  came from an orphan pre-update listener while the installed listener already carried `--channel-name 产品协助`.
+- The stale listener was stopped; the enabled Subscription automatically recovered with exactly one App-owned
+  listener and cursor `1787569685428`. Normal App termination and update handoff now stop all supervised sidecars.
 
 ## Live Service Gate
 
