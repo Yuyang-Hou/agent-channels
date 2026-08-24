@@ -1,8 +1,8 @@
 # Verification
 
-Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.8 local candidate adds the product Skill, compact
+Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.9 local candidate adds the product Skill, editable
 Markdown external-message card, replay recovery, unified main-window interaction and a fixed internal signing
-identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.8
+identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.9
 publication remain pending.
 
 ## Post-candidate Working Tree

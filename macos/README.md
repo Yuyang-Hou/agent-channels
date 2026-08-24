@@ -9,7 +9,7 @@ task-channel Subscription 和本地消息历史；菜单栏保留运行状态与
 
 ```bash
 ./macos/build-app.sh
-open "macos/build/Agent-Channels-0.3.0-beta.8-arm64.dmg"
+open "macos/build/Agent-Channels-0.3.0-beta.9-arm64.dmg"
 ```
 
 构建脚本默认使用 `xcrun --sdk macosx` 返回的 SDK。需要指定 SDK 时，可传绝对路径或
@@ -63,7 +63,7 @@ Bundle ID、版本、完整代码签名和当前 App 的 designated requirement�
 
 App 图标使用 E3 品牌稿；菜单栏使用同一识别特征的单色 SVG，并由 macOS 作为模板图标渲染。
 
-`v0.3.0-beta.2` 已作为公开 GitHub prerelease 发布；`0.3.0-beta.8` 当前只有本地验收包。预上线
+`v0.3.0-beta.2` 已作为公开 GitHub prerelease 发布；`0.3.0-beta.9` 当前只有本地验收包。预上线
 分发只使用 Beta 标签；当前产物采用固定内测签名，尚未 Developer ID 签名或公证。首次从旧
 ad-hoc 包升级时可能需要授权一次钥匙串访问；同一固定身份的后续 Beta 不应重复询问。双机真实
 Host 与安全检查通过前，不发布稳定版，也不声明生产就绪。

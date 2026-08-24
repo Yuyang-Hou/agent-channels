@@ -213,7 +213,8 @@ Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设
 资源的受管理链接。更新 App 即更新 Skill；同名普通目录或指向其他内容的链接必须失败关闭，移除
 集成也只能删除本 App 的链接。启用和移除必须先读取并校验完整 Codex 配置与 Skill 归属；读取
 失败不得当作空配置，组合操作中途失败必须回滚本次受管变更，并保留用户已有配置 symlink。
-默认卡片保留 Agent Channels 标题以触发 Skill，不增加每 turn hook。整段可见 Markdown 均属于本地
+默认卡片保留 Agent Channels 标题以触发 Skill；自定义标题包含“频道消息”或“Agent Channels”
+任一项同样触发，不增加每 turn hook。整段可见 Markdown 均属于本地
 用户模板；外部内容的信任边界与是否回复由 Skill 统一解释，不在每条消息中重复展示说明文案。
 
 ## Templates And Self-Message Policy
