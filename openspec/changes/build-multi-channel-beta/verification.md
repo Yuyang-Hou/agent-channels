@@ -106,6 +106,19 @@ publication remain pending.
 - The beta.10 product Skill recognizes editable inbound titles containing either `频道消息` or `Agent Channels`.
 - Each Subscription row exposes an `打开会话` button that opens its exact `codex://threads/<id>` binding through macOS.
 
+## 2026-08-24 Configurable Invitations
+
+- Owner invitation creation accepts an optional 64-character label, 1–100 uses and 1–720 hours in the App;
+  the service accepts 60 seconds through 30 days and persists use count plus derived active, exhausted, expired
+  or revoked state without storing the raw token.
+- The owner-only invitation list never returns raw tokens. Revoke is idempotent and preserves the record; it
+  blocks later redemptions without changing Members already created from the invitation.
+- A concurrent three-request redemption test for a two-use invitation produces exactly two Members and one
+  rejection. Expiry, validation, independent credentials, owner-only list/create and replay are covered.
+- All 11 server test files / 93 tests, TypeScript typecheck/build, Swift typecheck and focused macOS self-test,
+  strict OpenSpec validation and diff checks pass. The rebuilt App was not installed or exercised through the
+  real UI in this source-only change.
+
 ## Live Service Gate
 
 - Railway production deployment `2531a50f-116b-4d8c-9f30-e01af302137d` is `SUCCESS`; `/healthz` passed before cutover.

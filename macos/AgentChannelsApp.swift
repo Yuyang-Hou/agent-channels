@@ -223,6 +223,26 @@ struct ChannelMember: Codable, Equatable, Identifiable {
     }
 }
 
+struct ChannelInvite: Codable, Equatable, Identifiable {
+    let inviteID: String
+    let label: String
+    let maxUses: Int
+    let useCount: Int
+    let expiresAt: Int64
+    let status: String
+
+    var id: String { inviteID }
+
+    enum CodingKeys: String, CodingKey {
+        case inviteID = "invite_id"
+        case label
+        case maxUses = "max_uses"
+        case useCount = "use_count"
+        case expiresAt = "expires_at"
+        case status
+    }
+}
+
 struct ChannelInvitation: Codable, Equatable {
     let version: Int
     let origin: String
@@ -1211,12 +1231,26 @@ extension AppModel {
         }
     }
 
-    func copyInvitation() async {
-        guard !busy, let profile = selectedChannel else { return }
+    func createInvitation(label: String, maxUses: Int, validHours: Int) async -> Bool {
+        guard !busy, let profile = selectedChannel, profile.role == "owner" else { return false }
+        let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedLabel.utf16.count <= 64, (1...100).contains(maxUses), (1...720).contains(validHours) else {
+            fail(AppFailure("邀请备注最多 64 个字符，可加入人数为 1–100，有效期为 1–720 小时"))
+            return false
+        }
         busy = true
         defer { busy = false }
         do {
-            let json = try await authorizedJSON(profile, suffix: "invites", method: "POST", body: [:])
+            let json = try await authorizedJSON(
+                profile,
+                suffix: "invites",
+                method: "POST",
+                body: [
+                    "label": normalizedLabel,
+                    "max_uses": maxUses,
+                    "expires_in_seconds": validHours * 60 * 60,
+                ]
+            )
             guard let token = json["invite_token"] as? String else {
                 throw AppFailure("服务端未返回邀请凭证")
             }
@@ -1228,7 +1262,48 @@ extension AppModel {
             ))
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(code, forType: .string)
-            showNotice(title: "邀请已复制", message: "对方粘贴 ac2: 邀请口令即可加入；口令不会包含你的成员凭证。")
+            await refreshInvitations()
+            showNotice(title: "邀请已创建并复制", message: "对方粘贴 ac2: 邀请口令即可加入；服务端不会保存或再次展示明文口令。")
+            return true
+        } catch {
+            fail(error)
+            return false
+        }
+    }
+
+    func refreshInvitations() async {
+        guard let profile = selectedChannel, profile.role == "owner" else {
+            invitations = []
+            return
+        }
+        do {
+            let json = try await authorizedJSON(profile, suffix: "invites", method: "GET")
+            guard selectedChannelID == profile.id else { return }
+            guard let raw = json["invitations"], JSONSerialization.isValidJSONObject(raw) else {
+                invitations = []
+                return
+            }
+            invitations = try JSONDecoder().decode(
+                [ChannelInvite].self,
+                from: JSONSerialization.data(withJSONObject: raw)
+            )
+        } catch {
+            guard selectedChannelID == profile.id else { return }
+            lastError = "刷新邀请失败：\(error.localizedDescription)"
+        }
+    }
+
+    func revokeInvitation(_ invitation: ChannelInvite) async {
+        guard let profile = selectedChannel, profile.role == "owner", invitation.status == "active" else { return }
+        let alert = NSAlert()
+        alert.messageText = "撤销邀请？"
+        alert.informativeText = "撤销只阻止后续加入，已经通过此邀请加入的成员不会被移除。"
+        alert.addButton(withTitle: "撤销")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            _ = try await authorizedJSON(profile, suffix: "invites/\(invitation.inviteID)", method: "DELETE")
+            await refreshInvitations()
         } catch {
             fail(error)
         }
@@ -1582,6 +1657,13 @@ private extension DateFormatter {
         formatter.dateFormat = "MM-dd HH:mm:ss"
         return formatter
     }()
+
+    static let invitation: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
 }
 
 struct StatusRow: View {
@@ -1723,6 +1805,7 @@ final class AppModel: ObservableObject {
     @Published var selectedChannelID: UUID?
     @Published var messages: [ChannelMessageRecord] = []
     @Published var members: [ChannelMember] = []
+    @Published var invitations: [ChannelInvite] = []
     @Published var listenerStatus: [UUID: String] = [:]
     @Published var channelStatus: [UUID: String] = [:]
     @Published var lastError = ""
@@ -1824,10 +1907,12 @@ final class AppModel: ObservableObject {
         messages = selectedChannelID.map(MessageLedger.load) ?? []
         markSelectedChannelRead()
         members = []
+        invitations = []
         if selectedChannelID != nil {
             Task {
                 await refreshHistory()
                 await refreshMembers()
+                await refreshInvitations()
             }
         }
     }
@@ -2881,6 +2966,7 @@ extension AppModel {
         selectedChannelID = nil
         messages = []
         members = []
+        invitations = []
         listenerStatus = [:]
         channelStatus = [:]
         try? FileManager.default.removeItem(at: AppPaths.state)
@@ -3247,6 +3333,58 @@ private struct AddChannelSheet: View {
     }
 }
 
+private struct CreateInvitationSheet: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var label = ""
+    @State private var maxUses = 1
+    @State private var validHours = 24
+
+    private var invalid: Bool {
+        model.busy || label.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count > 64
+            || !(1...100).contains(maxUses) || !(1...720).contains(validHours)
+    }
+
+    private func submit() {
+        guard !invalid else { return }
+        Task {
+            if await model.createInvitation(label: label, maxUses: maxUses, validHours: validHours) {
+                dismiss()
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("创建邀请").font(.title2.bold())
+                Text("配置创建时固定；需要变更时撤销旧邀请并重新创建。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            Form {
+                TextField("备注（可选）", text: $label)
+                TextField("可加入人数", value: $maxUses, format: .number)
+                TextField("有效小时数", value: $validHours, format: .number)
+            }
+            .formStyle(.grouped)
+            Text("范围：1–100 人、1–720 小时。口令只会显示并复制一次。")
+                .font(.caption).foregroundStyle(.secondary)
+            Divider()
+            HStack {
+                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                if model.busy { ProgressView().controlSize(.small) }
+                Button("创建并复制", action: submit)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(invalid)
+            }
+        }
+        .padding(24)
+        .frame(width: 460)
+    }
+}
+
 private enum ChannelDetailTab: Hashable {
     case messages
     case members
@@ -3257,6 +3395,7 @@ private struct ChannelDetailView: View {
     @ObservedObject var model: AppModel
     let channel: ChannelProfile
     @State private var selectedTab = ChannelDetailTab.messages
+    @State private var showCreateInvitation = false
 
     @ViewBuilder
     private func tabButton(_ title: String, tab: ChannelDetailTab) -> some View {
@@ -3291,7 +3430,7 @@ private struct ChannelDetailView: View {
                 }
                 Spacer()
                 if channel.role == "owner" {
-                    Button("复制邀请") { Task { await model.copyInvitation() } }
+                    Button("创建邀请…") { showCreateInvitation = true }
                 }
                 if model.channelStatus[channel.id]?.contains("权限已撤销") == true {
                     Button("重新连接") { model.reconnectChannel(channel.id) }
@@ -3302,6 +3441,7 @@ private struct ChannelDetailView: View {
                         Task {
                             await model.refreshHistory()
                             await model.refreshMembers()
+                            await model.refreshInvitations()
                         }
                     }
                     if selectedTab == .messages {
@@ -3335,6 +3475,9 @@ private struct ChannelDetailView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .sheet(isPresented: $showCreateInvitation) {
+            CreateInvitationSheet(model: model)
         }
     }
 }
@@ -3468,39 +3611,89 @@ private struct ChannelMembersView: View {
         return "\(role) · \(status) · \(member.memberID.prefix(8))…"
     }
 
+    private func invitationSummary(_ invitation: ChannelInvite) -> String {
+        let state: String
+        switch invitation.status {
+        case "active": state = "可用"
+        case "exhausted": state = "已用尽"
+        case "expired": state = "已过期"
+        case "revoked": state = "已撤销"
+        default: state = invitation.status
+        }
+        let expiry = DateFormatter.invitation.string(
+            from: Date(timeIntervalSince1970: Double(invitation.expiresAt) / 1000)
+        )
+        return "\(state) · 已用 \(invitation.useCount)/\(invitation.maxUses) · \(expiry) 到期"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("封禁只撤销当前成员身份；没有账号体系时，仍可通过新邀请加入。")
+            Text("撤销邀请只阻止后续加入；移除或封禁成员会撤销其当前成员凭证。没有账号体系时，同一自然人仍可持新邀请加入。")
                 .font(.caption).foregroundStyle(.secondary)
                 .padding(12)
             Divider()
-            List(model.members) { member in
-                HStack(spacing: 10) {
-                    Circle().fill(member.online == true ? .green : .secondary.opacity(0.35)).frame(width: 8, height: 8)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(member.name.isEmpty ? member.memberID : member.name)
-                        Text(memberSummary(member))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if channel.role == "owner", member.memberID != channel.memberID {
-                        Menu {
-                            if member.status == "banned" {
-                                Button("解除封禁") { Task { await model.unbanMember(member) } }
-                            } else if member.status == "active" {
-                                Button("移除成员", role: .destructive) { Task { await model.removeMember(member, ban: false) } }
-                                Button("封禁成员", role: .destructive) { Task { await model.removeMember(member, ban: true) } }
+            List {
+                if channel.role == "owner" {
+                    Section("邀请") {
+                        if model.invitations.isEmpty {
+                            Text("暂无邀请；从窗口右上角创建。").foregroundStyle(.secondary)
+                        } else {
+                            ForEach(model.invitations) { invitation in
+                                HStack(spacing: 10) {
+                                    Image(systemName: invitation.status == "active" ? "envelope.open" : "envelope")
+                                        .foregroundStyle(invitation.status == "active" ? Color.green : Color.secondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(invitation.label.isEmpty ? "未命名邀请" : invitation.label)
+                                        Text(invitationSummary(invitation))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    if invitation.status == "active" {
+                                        Button("撤销", role: .destructive) {
+                                            Task { await model.revokeInvitation(invitation) }
+                                        }
+                                        .buttonStyle(.borderless)
+                                    }
+                                }
+                                .padding(.vertical, 4)
                             }
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
                         }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
                     }
                 }
-                .padding(.vertical, 4)
+                Section("成员") {
+                    ForEach(model.members) { member in
+                        HStack(spacing: 10) {
+                            Circle().fill(member.online == true ? .green : .secondary.opacity(0.35)).frame(width: 8, height: 8)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(member.name.isEmpty ? member.memberID : member.name)
+                                Text(memberSummary(member))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if channel.role == "owner", member.memberID != channel.memberID {
+                                Menu {
+                                    if member.status == "banned" {
+                                        Button("解除封禁") { Task { await model.unbanMember(member) } }
+                                    } else if member.status == "active" {
+                                        Button("移除成员", role: .destructive) { Task { await model.removeMember(member, ban: false) } }
+                                        Button("封禁成员", role: .destructive) { Task { await model.removeMember(member, ban: true) } }
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis.circle")
+                                }
+                                .menuStyle(.borderlessButton)
+                                .fixedSize()
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
             }
             .listStyle(.plain)
+        }
+        .task(id: channel.id) {
+            await model.refreshMembers()
+            await model.refreshInvitations()
         }
     }
 }
@@ -3815,6 +4008,8 @@ private struct AgentChannelsV2SelfTest {
         let encodedInvitation = try InvitationCodec.encode(invitation)
         let decodedInvitation = try InvitationCodec.decode(encodedInvitation)
         precondition(decodedInvitation == invitation)
+        let managedInvite = try JSONDecoder().decode(ChannelInvite.self, from: Data(#"{"invite_id":"invite-1","label":"Backend","max_uses":3,"use_count":1,"created_at":1,"expires_at":2,"status":"active"}"#.utf8))
+        precondition(managedInvite.label == "Backend" && managedInvite.maxUses == 3 && managedInvite.useCount == 1)
         let joinedChannel = ChannelProfile(
             id: UUID(),
             origin: invitation.origin,

@@ -34,11 +34,11 @@ Channel
   id, name, owner_member_id, created_at
 
 Invite
-  id, channel_id, created_by_member_id, token_hash, expires_at, max_uses, revoked_at
+  id, channel_id, token_hash, label, max_uses, use_count, created_at, expires_at, revoked_at
 
 Member
   id, channel_id, display_name, role(owner|member), status(active|removed|banned),
-  credential_hash, created_at, revoked_at
+  credential_hash, invite_id, created_at, revoked_at
 
 Endpoint
   id, member_id, kind(app|task), label, status
@@ -53,6 +53,12 @@ OnlineSession
 邀请 token 是短期加入能力。加入成功后，服务端创建 Member，并只返回该 Member 自己的长期
 凭证；owner 和每个加入者使用不同凭证。任何频道 API 都从 member credential 解析
 `channel_id + member_id`，不得再接受共享频道 token 代表所有成员。
+
+邀请在创建时设置备注、1–100 次使用上限和最长 30 天有效期，创建后不可修改；需要改变配置时
+撤销旧邀请并新建。服务端仅保存 token hash，列表不返回明文。邀请状态由 `revoked_at`、
+`expires_at` 和 `use_count / max_uses` 推导为 active、revoked、expired 或 exhausted。撤销邀请
+只阻止后续兑换，不撤销已经创建的 Member；成员撤权继续使用成员管理。兑换检查、次数增加和
+Member 创建必须作为一次持久化提交，单实例内并发请求不得超过 `max_uses`。
 
 `removed` 与 `banned` 都撤销当前凭证、终止在线 session 并关闭现有 stream。`removed` 的成员
 可以由 owner 通过新邀请重新加入；`banned` 的同一 Member 不能恢复或重新激活。0.3 Beta 没有
@@ -122,6 +128,10 @@ SubscriptionDelivery。
 添加频道弹窗先让用户在“创建频道 / 加入频道”之间二选一：创建路径只填写服务端频道名称，加入路径
 只填写邀请口令。用户昵称在设置中全局维护，并同步为每个 ChannelConnection 对应 Member 的
 `display_name`；endpoint callsign 只作为隐藏技术标识。唯一主按钮放在底部并随路径切换。
+
+owner 从频道工具栏创建邀请，在原生成员页查看邀请状态、备注、已用次数和过期时间并撤销活跃
+邀请。创建时只配置备注、有效小时数和可加入人数；成功后立即复制 `ac2:` 口令。App 不持久化邀请
+明文，服务端也不能再次展示；需要重新分享时创建新邀请。撤销确认必须明确不影响已加入成员。
 
 成员页和转发到会话页复用一致的“说明 + 列表 + 就地操作”节奏；用户界面使用“会话”和消息转发方向
 表达结果，不暴露 `TaskBinding`、`Subscription` 等内部模型名。危险操作进入行尾菜单或确认流程，

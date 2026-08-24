@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 
 const ORIGIN = "http://test.local";
@@ -198,33 +198,52 @@ describe("managed channel members", () => {
     expect(await redeemed.json()).toMatchObject({ channel_name: "产品协作", name: "小李" });
   });
 
-  it("issues one-time invitations and independent member credentials", async () => {
+  it("configures, lists, exhausts and revokes invitations", async () => {
     const instance = app();
     const channel = await createChannel(instance);
     const invitationResponse = await instance.request(`/api/channels/${channel.id}/invites`, {
       method: "POST",
-      headers: { authorization: `Bearer ${channel.ownerCredential}` },
+      headers: {
+        authorization: `Bearer ${channel.ownerCredential}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ label: "Backend team", max_uses: 2, expires_in_seconds: 3600 }),
     });
     const invitation = (await invitationResponse.json()) as {
       invite_id: string;
       invite_token: string;
       expires_at: number;
       max_uses: number;
+      use_count: number;
+      status: string;
     };
     expect(invitation.expires_at).toBeGreaterThan(Date.now());
-    expect(invitation.max_uses).toBe(1);
+    expect(invitation).toMatchObject({ label: "Backend team", max_uses: 2, use_count: 0, status: "active" });
     const redeem = () =>
       instance.request(`/api/channels/${channel.id}/invites/redeem`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ invite_token: invitation.invite_token, name: "Backend" }),
       });
-    const first = await redeem();
-    expect(first.status).toBe(200);
+    const redemptions = await Promise.all([redeem(), redeem(), redeem()]);
+    expect(redemptions.map((response) => response.status).sort()).toEqual([200, 200, 401]);
+    const first = redemptions.find((response) => response.status === 200)!;
     const member = (await first.json()) as { member_id: string; member_credential: string; role: string };
     expect(member.role).toBe("member");
     expect(member.member_credential).not.toBe(channel.ownerCredential);
-    expect((await redeem()).status).toBe(401);
+
+    const invitations = await instance.request(`/api/channels/${channel.id}/invites`, {
+      headers: { authorization: `Bearer ${channel.ownerCredential}` },
+    });
+    const invitationsBody = (await invitations.json()) as { invitations: Array<Record<string, unknown>> };
+    expect(invitationsBody.invitations[0]).toMatchObject({
+      invite_id: invitation.invite_id,
+      label: "Backend team",
+      max_uses: 2,
+      use_count: 2,
+      status: "exhausted",
+    });
+    expect(invitationsBody.invitations[0]).not.toHaveProperty("invite_token");
 
     const memberSession = await join(instance, channel.id, member.member_credential, "backend");
     expect((await send(instance, channel.id, member.member_credential, memberSession, "ready")).status).toBe(200);
@@ -238,7 +257,6 @@ describe("managed channel members", () => {
     expect(
       (
         await instance.request(`/api/channels/${channel.id}/invites`, {
-          method: "POST",
           headers: { authorization: `Bearer ${member.member_credential}` },
         })
       ).status,
@@ -248,14 +266,32 @@ describe("managed channel members", () => {
       headers: { authorization: `Bearer ${channel.ownerCredential}` },
     });
     const body = (await listed.json()) as { members: Array<{ member_id: string; callsigns: string[] }> };
-    expect(body.members.map((entry) => entry.member_id)).toEqual([channel.ownerId, member.member_id]);
-    expect(body.members[1].callsigns).toEqual(["backend"]);
+    expect(body.members).toHaveLength(3);
+    expect(body.members[0].member_id).toBe(channel.ownerId);
+    expect(body.members.find((entry) => entry.member_id === member.member_id)?.callsigns).toEqual(["backend"]);
 
     const revocableResponse = await instance.request(`/api/channels/${channel.id}/invites`, {
       method: "POST",
-      headers: { authorization: `Bearer ${channel.ownerCredential}` },
+      headers: { authorization: `Bearer ${channel.ownerCredential}`, "content-type": "application/json" },
+      body: JSON.stringify({ max_uses: 2 }),
     });
     const revocable = (await revocableResponse.json()) as { invite_id: string; invite_token: string };
+    const retainedResponse = await instance.request(`/api/channels/${channel.id}/invites/redeem`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ invite_token: revocable.invite_token, name: "Retained" }),
+    });
+    expect(retainedResponse.status).toBe(200);
+    const retained = (await retainedResponse.json()) as { member_credential: string };
+    expect(
+      (
+        await instance.request(`/api/channels/${channel.id}/invites/${revocable.invite_id}`, {
+          method: "DELETE",
+          headers: { authorization: `Bearer ${channel.ownerCredential}` },
+        })
+      ).status,
+    ).toBe(200);
+    expect((await join(instance, channel.id, retained.member_credential, "retained")).length).toBeGreaterThan(0);
     expect(
       (
         await instance.request(`/api/channels/${channel.id}/invites/${revocable.invite_id}`, {
@@ -273,6 +309,44 @@ describe("managed channel members", () => {
         })
       ).status,
     ).toBe(401);
+    const afterRevoke = await instance.request(`/api/channels/${channel.id}/invites`, {
+      headers: { authorization: `Bearer ${channel.ownerCredential}` },
+    });
+    expect(
+      ((await afterRevoke.json()) as { invitations: Array<{ invite_id: string; status: string }> }).invitations
+        .find((entry) => entry.invite_id === revocable.invite_id)?.status,
+    ).toBe("revoked");
+  });
+
+  it("validates and expires invitation configuration", async () => {
+    const instance = app();
+    const channel = await createChannel(instance);
+    const invalid = await instance.request(`/api/channels/${channel.id}/invites`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${channel.ownerCredential}`, "content-type": "application/json" },
+      body: JSON.stringify({ max_uses: 101, expires_in_seconds: 59 }),
+    });
+    expect(invalid.status).toBe(400);
+
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-08-24T00:00:00Z"));
+      const created = await instance.request(`/api/channels/${channel.id}/invites`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${channel.ownerCredential}`, "content-type": "application/json" },
+        body: JSON.stringify({ expires_in_seconds: 60 }),
+      });
+      const invitation = (await created.json()) as { invite_token: string };
+      vi.advanceTimersByTime(60_001);
+      const expired = await instance.request(`/api/channels/${channel.id}/invites/redeem`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ invite_token: invitation.invite_token }),
+      });
+      expect(expired.status).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("removes a member and invalidates its credential and existing session", async () => {

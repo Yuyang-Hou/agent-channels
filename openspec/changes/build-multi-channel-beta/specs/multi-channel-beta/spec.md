@@ -57,6 +57,18 @@ App MUST 以主窗口展示多个 ChannelConnection，并为当前频道提供�
 - **WHEN** 另一用户通过邀请加入
 - **THEN** 服务端返回该频道名称，双方看到相同名称，网络路由继续使用不可变频道 ID
 
+#### Scenario: 创建和管理邀请
+
+- **GIVEN** 当前成员是频道 owner
+- **WHEN** owner 配置备注、有效期和可加入人数并创建邀请
+- **THEN** App 复制一次 `ac2:` 口令，并在成员页展示状态、已用次数、上限与过期时间
+
+#### Scenario: 撤销邀请
+
+- **GIVEN** owner 查看一份活跃邀请
+- **WHEN** owner 确认撤销
+- **THEN** App 明确撤销只阻止后续加入，服务端保留撤销记录，已经加入的成员不受影响
+
 #### Scenario: 设置本机频道昵称
 
 - **GIVEN** ChannelConnection 保留服务端原始频道名

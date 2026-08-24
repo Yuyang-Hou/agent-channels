@@ -26,6 +26,25 @@ MUST NOT 作为多人共享的长期频道凭证。
 - **WHEN** 新成员接受邀请
 - **THEN** 服务创建独立 Member，只返回该 Member credential，并按邀请限制记录使用
 
+#### Scenario: 创建可配置邀请
+
+- **GIVEN** owner 创建邀请并配置不超过 64 字的备注、1–100 次使用上限和 60 秒至 30 天有效期
+- **WHEN** 服务接受该配置
+- **THEN** 服务只返回一次明文 token，持久化其 hash、配置和零次使用状态
+
+#### Scenario: 并发兑换达到上限
+
+- **GIVEN** 一份有效邀请只剩一个可用次数
+- **WHEN** 两个兑换请求并发到达
+- **THEN** 最多一个请求创建 Member，次数增加与 Member 创建在同一次提交内完成
+
+#### Scenario: 查看和撤销邀请
+
+- **GIVEN** owner 已创建活跃、用尽、过期或撤销的邀请
+- **WHEN** owner 查看邀请列表或撤销一份邀请
+- **THEN** 列表返回状态和使用计数但不返回 token，撤销幂等保留记录并阻止后续兑换
+- **AND** 已经通过该邀请创建的 Member 保持 active，除非 owner 另行移除或封禁成员
+
 #### Scenario: 成员撤权
 
 - **GIVEN** Member 正在使用自己的 credential 和在线 session

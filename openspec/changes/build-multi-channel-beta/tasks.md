@@ -11,6 +11,7 @@
 
 - [x] 创建频道时生成 owner Member 独立凭证，而不是共享频道 token
 - [x] 使用短期邀请创建独立 Member 凭证，并覆盖过期、次数、撤销和重放
+- [x] 邀请支持备注、有效期、使用次数、状态列表和保留记录的幂等撤销
 - [x] 所有 join、send、stream、history 和 roster 操作按 Member 授权
 - [x] 实现成员列表、移除、封禁与解除封禁；撤权同步失效 session 和现有 stream
 - [x] 消息保存 sender member/endpoint，且服务端数据不含 Host/task 私有字段
@@ -25,6 +26,7 @@
 - [x] 消息到达先写 LocalMessage `received`，再更新每条 SubscriptionDelivery
 - [x] 本地历史在重启后保留、可清空，并以 `channel_id + message_id` 去重
 - [x] 实现 owner 成员列表、移除、封禁和解除封禁 UI，并展示 0.3 ban 的身份边界
+- [x] owner 可配置创建邀请，并在成员页查看状态、次数、过期时间和撤销活跃邀请
 - [x] 菜单栏收敛为总状态、快速打开、启动/退出，不复制主窗口配置流程
 - [x] 将 App 设置并入主窗口侧栏，删除独立 Settings Scene，并确保快速打开置前聚焦单实例窗口
 - [x] 将侧栏“设置”固定到底部，并与频道列表分隔

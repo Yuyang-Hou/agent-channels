@@ -23,6 +23,7 @@ import {
   claimMemberCallsign,
   createMemberInvite,
   listChannelMembers,
+  listMemberInvites,
   publicBandMemberId,
   redeemMemberInvite,
   registerOwner,
@@ -486,11 +487,46 @@ export function createApp(opts: AppOptions): Hono {
     });
   });
 
-  app.post("/api/channels/:id/invites", (c) => {
+  app.get("/api/channels/:id/invites", (c) => {
     const channelId = c.req.param("id");
     const owner = requireOwner(c, channelId);
     if (owner instanceof Response) return owner;
-    return c.json({ channel_id: channelId, ...createMemberInvite(channelId) });
+    return c.json({ channel_id: channelId, invitations: listMemberInvites(channelId) });
+  });
+
+  app.post("/api/channels/:id/invites", async (c) => {
+    const channelId = c.req.param("id");
+    const owner = requireOwner(c, channelId);
+    if (owner instanceof Response) return owner;
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.json();
+      if (raw && typeof raw === "object") body = raw as Record<string, unknown>;
+    } catch {
+      /* defaults apply */
+    }
+    const label = typeof body.label === "string" ? body.label.trim() : "";
+    const maxUses = body.max_uses === undefined ? 1 : body.max_uses;
+    const expiresInSeconds = body.expires_in_seconds === undefined ? 24 * 60 * 60 : body.expires_in_seconds;
+    if (label.length > 64) return c.json({ error: "label must be at most 64 characters" }, 400);
+    if (typeof maxUses !== "number" || !Number.isInteger(maxUses) || maxUses < 1 || maxUses > 100) {
+      return c.json({ error: "max_uses must be an integer from 1 to 100" }, 400);
+    }
+    if (
+      typeof expiresInSeconds !== "number" ||
+      !Number.isInteger(expiresInSeconds) ||
+      expiresInSeconds < 60 ||
+      expiresInSeconds > 30 * 24 * 60 * 60
+    ) {
+      return c.json({ error: "expires_in_seconds must be an integer from 60 to 2592000" }, 400);
+    }
+    return c.json(
+      createMemberInvite(channelId, {
+        label,
+        maxUses,
+        expiresInSeconds,
+      }),
+    );
   });
 
   app.post("/api/channels/:id/invites/redeem", async (c) => {
@@ -509,7 +545,7 @@ export function createApp(opts: AppOptions): Hono {
     const name = typeof body.name === "string" ? body.name.trim() : "Member";
     if (!name || name.length > 64) return c.json({ error: "name must be 1-64 characters" }, 400);
     const redeemed = redeemMemberInvite(channelId, inviteToken, name);
-    if (!redeemed) return c.json({ error: "invalid or already redeemed invitation" }, 401);
+    if (!redeemed) return c.json({ error: "invitation is invalid or unavailable" }, 401);
     return c.json({
       channel_id: channelId,
       channel_name: getChannelName(channelId),
@@ -524,10 +560,11 @@ export function createApp(opts: AppOptions): Hono {
     const channelId = c.req.param("id");
     const owner = requireOwner(c, channelId);
     if (owner instanceof Response) return owner;
-    if (!revokeMemberInvite(channelId, c.req.param("inviteId"))) {
+    const invitation = revokeMemberInvite(channelId, c.req.param("inviteId"));
+    if (!invitation) {
       return c.json({ error: "invitation not found" }, 404);
     }
-    return c.json({ ok: true });
+    return c.json({ ok: true, invitation });
   });
 
   app.get("/api/channels/:id/members", (c) => {

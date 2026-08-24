@@ -16,18 +16,23 @@ type MemberRecord = {
   credentialHash: string;
   createdAt: number;
   updatedAt: number;
+  inviteId?: string;
 };
 
 type InviteRecord = {
   inviteId: string;
   channelId: string;
   tokenHash: string;
+  label: string;
+  maxUses: number;
+  useCount: number;
   createdAt: number;
   expiresAt: number;
+  revokedAt?: number;
 };
 
 type State = {
-  version: 1;
+  version: 2;
   members: MemberRecord[];
   invites: InviteRecord[];
 };
@@ -41,12 +46,27 @@ export type MemberView = {
   callsigns: string[];
   created_at: number;
   updated_at: number;
+  invite_id?: string;
+};
+
+export type InviteStatus = "active" | "exhausted" | "expired" | "revoked";
+
+export type InviteView = {
+  invite_id: string;
+  channel_id: string;
+  label: string;
+  max_uses: number;
+  use_count: number;
+  created_at: number;
+  expires_at: number;
+  revoked_at?: number;
+  status: InviteStatus;
 };
 
 const DB_PATH =
   process.env.ROGERRAT_MEMBERS_DB ?? `${process.env.ROGERRAT_DB ?? "./data/channels.json"}.members`;
-const INVITE_TTL_MS = 24 * 60 * 60 * 1000;
-let state: State = { version: 1, members: [], invites: [] };
+const DEFAULT_INVITE_TTL_SECONDS = 24 * 60 * 60;
+let state: State = { version: 2, members: [], invites: [] };
 let loaded = false;
 
 function digest(value: string): string {
@@ -93,7 +113,8 @@ function isMemberRecord(value: unknown): value is MemberRecord {
     typeof record.credentialHash === "string" &&
     /^[a-f0-9]{64}$/.test(record.credentialHash) &&
     typeof record.createdAt === "number" &&
-    typeof record.updatedAt === "number"
+    typeof record.updatedAt === "number" &&
+    (record.inviteId === undefined || typeof record.inviteId === "string")
   );
 }
 
@@ -105,8 +126,16 @@ function isInviteRecord(value: unknown): value is InviteRecord {
     typeof record.channelId === "string" &&
     typeof record.tokenHash === "string" &&
     /^[a-f0-9]{64}$/.test(record.tokenHash) &&
+    typeof record.label === "string" &&
+    typeof record.maxUses === "number" &&
+    Number.isInteger(record.maxUses) &&
+    record.maxUses > 0 &&
+    typeof record.useCount === "number" &&
+    Number.isInteger(record.useCount) &&
+    record.useCount >= 0 &&
     typeof record.createdAt === "number" &&
-    typeof record.expiresAt === "number"
+    typeof record.expiresAt === "number" &&
+    (record.revokedAt === undefined || typeof record.revokedAt === "number")
   );
 }
 
@@ -117,14 +146,14 @@ function ensureLoaded(): void {
     if (!existsSync(DB_PATH)) return;
     const parsed = JSON.parse(readFileSync(DB_PATH, "utf8")) as Partial<State>;
     if (
-      parsed.version !== 1 ||
+      parsed.version !== 2 ||
       !Array.isArray(parsed.members) ||
       !parsed.members.every(isMemberRecord) ||
       !Array.isArray(parsed.invites) ||
       !parsed.invites.every(isInviteRecord)
     ) return;
     state = {
-      version: 1,
+      version: 2,
       members: parsed.members,
       invites: parsed.invites,
     };
@@ -151,6 +180,28 @@ function view(member: MemberRecord): MemberView {
     callsigns: [...member.callsigns],
     created_at: member.createdAt,
     updated_at: member.updatedAt,
+    ...(member.inviteId ? { invite_id: member.inviteId } : {}),
+  };
+}
+
+function inviteStatus(invite: InviteRecord, now = Date.now()): InviteStatus {
+  if (invite.revokedAt !== undefined) return "revoked";
+  if (invite.expiresAt <= now) return "expired";
+  if (invite.useCount >= invite.maxUses) return "exhausted";
+  return "active";
+}
+
+function inviteView(invite: InviteRecord): InviteView {
+  return {
+    invite_id: invite.inviteId,
+    channel_id: invite.channelId,
+    label: invite.label,
+    max_uses: invite.maxUses,
+    use_count: invite.useCount,
+    created_at: invite.createdAt,
+    expires_at: invite.expiresAt,
+    ...(invite.revokedAt !== undefined ? { revoked_at: invite.revokedAt } : {}),
+    status: inviteStatus(invite),
   };
 }
 
@@ -202,7 +253,8 @@ export function authenticateMember(channelId: string, credential: string): Membe
 
 export function createMemberInvite(
   channelId: string,
-): { invite_id: string; invite_token: string; expires_at: number; max_uses: 1 } {
+  options: { label?: string; maxUses?: number; expiresInSeconds?: number } = {},
+): InviteView & { invite_token: string } {
   ensureLoaded();
   const inviteToken = generateToken();
   const now = Date.now();
@@ -210,24 +262,36 @@ export function createMemberInvite(
     inviteId: randomUUID(),
     channelId,
     tokenHash: digest(inviteToken),
+    label: options.label ?? "",
+    maxUses: options.maxUses ?? 1,
+    useCount: 0,
     createdAt: now,
-    expiresAt: now + INVITE_TTL_MS,
+    expiresAt: now + (options.expiresInSeconds ?? DEFAULT_INVITE_TTL_SECONDS) * 1000,
   };
-  state.invites = state.invites.filter((candidate) => candidate.expiresAt > now);
   state.invites.push(invite);
   persist();
-  return { invite_id: invite.inviteId, invite_token: inviteToken, expires_at: invite.expiresAt, max_uses: 1 };
+  return { ...inviteView(invite), invite_token: inviteToken };
 }
 
-export function revokeMemberInvite(channelId: string, inviteId: string): boolean {
+export function listMemberInvites(channelId: string): InviteView[] {
   ensureLoaded();
-  const index = state.invites.findIndex(
+  return state.invites
+    .filter((invite) => invite.channelId === channelId)
+    .map(inviteView)
+    .sort((a, b) => b.created_at - a.created_at);
+}
+
+export function revokeMemberInvite(channelId: string, inviteId: string): InviteView | undefined {
+  ensureLoaded();
+  const invite = state.invites.find(
     (candidate) => candidate.channelId === channelId && candidate.inviteId === inviteId,
   );
-  if (index < 0) return false;
-  state.invites.splice(index, 1);
-  persist();
-  return true;
+  if (!invite) return undefined;
+  if (invite.revokedAt === undefined) {
+    invite.revokedAt = Date.now();
+    persist();
+  }
+  return inviteView(invite);
 }
 
 export function redeemMemberInvite(
@@ -240,10 +304,11 @@ export function redeemMemberInvite(
   const inviteIndex = state.invites.findIndex(
     (candidate) =>
       candidate.channelId === channelId &&
-      candidate.expiresAt > Date.now() &&
+      inviteStatus(candidate) === "active" &&
       sameDigest(candidate.tokenHash, tokenHash),
   );
   if (inviteIndex < 0) return undefined;
+  const invite = state.invites[inviteIndex];
   const now = Date.now();
   const credential = generateToken();
   const member: MemberRecord = {
@@ -256,8 +321,9 @@ export function redeemMemberInvite(
     credentialHash: digest(credential),
     createdAt: now,
     updatedAt: now,
+    inviteId: invite.inviteId,
   };
-  state.invites.splice(inviteIndex, 1);
+  invite.useCount += 1;
   state.members.push(member);
   persist();
   return { member: view(member), member_credential: credential };
