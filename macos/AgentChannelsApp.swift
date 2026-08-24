@@ -2545,8 +2545,13 @@ private struct V2MenuPanel: View {
                 } else if !model.state.subscriptions.isEmpty {
                     Button("恢复全部监听") { model.setAllListening(true) }
                 }
-                Button("设置…") {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                if #available(macOS 14.0, *) {
+                    SettingsLink { Text("设置…") }
+                } else {
+                    Button("设置…") {
+                        NSApp.activate(ignoringOtherApps: true)
+                        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                    }
                 }
                 Spacer()
                 Button("退出") { model.quit() }

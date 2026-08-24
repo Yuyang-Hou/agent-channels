@@ -6,7 +6,7 @@ real-Host, security inspection and public release gates remain pending.
 ## Current Beta Candidate
 
 - Artifact: `macos/build/Agent-Channels-0.3.0-beta.2-arm64.dmg`
-- SHA-256: `b58bc2cb608f36a517406f0ac4a57038533e98ab5d363f0d056877e15270a55d`
+- SHA-256: `45dddf6d410e718b5e3d8353f543f59d79a6918b11c8b57bd5c3552d9232ef3b`
 - Signing: ad-hoc local acceptance signature; not Developer ID signed or notarized.
 - Local package checks: `hdiutil verify` and `codesign --verify --deep --strict` pass; the embedded MCP lists
   the six task-scoped tools.
@@ -18,6 +18,8 @@ real-Host, security inspection and public release gates remain pending.
 - The macOS candidate build completes its focused Swift self-test before compiling and packaging the App.
 - The legacy 0.2 detection banner has a persistent dismiss control; dismissing it does not alter legacy data or
   hide the detection status in Settings.
+- The menu-bar Settings entry uses native `SettingsLink` on macOS 14+ and activates the AppKit settings window
+  on macOS 13.
 - `openspec validate --strict --all`: 4 items pass.
 - Service tests prove member credentials are channel-scoped, owner-only mutations are enforced, and remove or
   ban invalidates existing sessions and streams, clears queued SSE messages and stops further delivery.
