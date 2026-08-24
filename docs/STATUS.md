@@ -3,9 +3,9 @@
 ## 当前阶段
 
 当前处于 **0.3 Beta 安装包验收**：多频道 App、Host 无关边界和 Codex 公网入站链路已经完成；
-产品级 Skill、可编辑 Markdown 外部消息模板、重放幂等、最新界面优化与固定内测签名已打入本地 `0.3.0-beta.9` Apple Silicon 验收包。
+产品级 Skill、可编辑 Markdown 外部消息模板、重放幂等、最新界面优化与固定内测签名已打入本地 `0.3.0-beta.10` Apple Silicon 验收包。
 
-公开 GitHub prerelease 仍是 beta.2；本轮 beta.9 是固定内测签名的本地验收包，不是 Developer ID 已公证的生产分发版本。
+公开 GitHub prerelease 仍是 beta.2；本轮 beta.10 是固定内测签名的本地验收包，不是 Developer ID 已公证的生产分发版本。
 
 ## 已完成
 

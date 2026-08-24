@@ -263,6 +263,13 @@ enum InvitationCodec {
     }
 }
 
+private func alreadyJoinedChannel(
+    _ channels: [ChannelProfile],
+    invitation: ChannelInvitation
+) -> Bool {
+    channels.contains { $0.origin == invitation.origin && $0.channel == invitation.channel }
+}
+
 enum CodexConfigEditor {
     static func reading(_ url: URL) throws -> String? {
         var info = stat()
@@ -1162,6 +1169,9 @@ extension AppModel {
         do {
             let nickname = try normalizedDisplayName(state.defaultCallsign, label: "昵称")
             let invitation = try InvitationCodec.decode(invitationInput)
+            guard !alreadyJoinedChannel(state.channels, invitation: invitation) else {
+                throw AppFailure("本机已加入该频道，不能重复加入")
+            }
             guard let encoded = invitation.channel.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
                   let url = URL(string: "\(invitation.origin)/api/channels/\(encoded)/invites/redeem") else {
                 throw AppFailure("邀请地址无效")
@@ -3532,6 +3542,7 @@ private struct SubscriptionCard: View {
     let subscriptionID: UUID
     @State private var templateDraft = ""
     @State private var isExpanded = false
+    @State private var isPreviewingTemplate = false
 
     private var subscription: ChannelSubscription? {
         model.state.subscriptions.first { $0.id == subscriptionID }
@@ -3542,6 +3553,13 @@ private struct SubscriptionCard: View {
         if status.contains("异常") || status.contains("不可用") || status.contains("失败") { return .red }
         if status.contains("暂停") { return .secondary }
         return .orange
+    }
+
+    private var templatePreview: AttributedString {
+        (try? AttributedString(
+            markdown: templateDraft,
+            options: .init(interpretedSyntax: .full)
+        )) ?? AttributedString(templateDraft)
     }
 
     var body: some View {
@@ -3628,11 +3646,32 @@ private struct SubscriptionCard: View {
                             Text("当前会话自己发送的消息始终不会转发回来，以避免循环。")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
-                        Text("会话消息模板").font(.caption.bold())
-                        TextEditor(text: $templateDraft)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(height: 130)
-                            .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
+                        HStack {
+                            Text("会话消息模板").font(.caption.bold())
+                            Spacer()
+                            Picker("模板显示模式", selection: $isPreviewingTemplate) {
+                                Text("编辑").tag(false)
+                                Text("预览").tag(true)
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .fixedSize()
+                        }
+                        Group {
+                            if isPreviewingTemplate {
+                                ScrollView {
+                                    Text(templatePreview)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(8)
+                                        .textSelection(.enabled)
+                                }
+                            } else {
+                                TextEditor(text: $templateDraft)
+                                    .font(.system(.body, design: .monospaced))
+                            }
+                        }
+                        .frame(height: 130)
+                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
                         Text("整段 Markdown 均可编辑；当前内容只是默认模板。")
                             .font(.caption2).foregroundStyle(.secondary)
                         Text("变量：{channel_name} {sender_name} {message_text} {message_id}")
@@ -3776,6 +3815,19 @@ private struct AgentChannelsV2SelfTest {
         let encodedInvitation = try InvitationCodec.encode(invitation)
         let decodedInvitation = try InvitationCodec.decode(encodedInvitation)
         precondition(decodedInvitation == invitation)
+        let joinedChannel = ChannelProfile(
+            id: UUID(),
+            origin: invitation.origin,
+            channel: invitation.channel,
+            displayName: invitation.channel,
+            callsign: "member-test",
+            memberID: "member-test",
+            role: "member",
+            credentialAccount: "test",
+            lastViewedMessageID: nil
+        )
+        precondition(alreadyJoinedChannel([joinedChannel], invitation: invitation))
+        precondition(!alreadyJoinedChannel([], invitation: invitation))
         let block = CodexConfigEditor.managedBlock(sidecar: "/Applications/Agent Channels.app/Contents/MacOS/rogerthat-sidecar", binding: "/tmp/state-v2.json")
         let installed = try CodexConfigEditor.installing(block: block, into: "model = \"gpt-5\"\n")
         precondition(installed.contains(managedConfigStart))

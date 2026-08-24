@@ -38,6 +38,12 @@ App MUST 以主窗口展示多个 ChannelConnection，并为当前频道提供�
 - **THEN** 创建路径只填写频道名称，加入路径只粘贴 `ac2:` 邀请口令，并以单一底部主按钮提交
 - **AND** 两个路径都使用设置中保存的全局用户昵称，不在频道弹窗重复填写
 
+#### Scenario: 拒绝重复加入频道
+
+- **GIVEN** 本机已有同一服务地址和频道 ID 的 ChannelConnection
+- **WHEN** 用户再次提交该频道的邀请口令
+- **THEN** App 在兑换邀请前拒绝操作，不创建重复 ChannelConnection 或新 Member
+
 #### Scenario: 修改我的昵称
 
 - **GIVEN** 用户已经加入多个频道
@@ -353,6 +359,7 @@ Subscription MUST 使用本地模板生成完整 Host 输入，模板只允许 `
 `sender_name`、`message_text` 和 `message_id` 四个变量。默认模板 MUST 生成当前的
 Agent Channels Markdown 引用卡片；标题、来源栏、正文和引用样式 MUST 全部属于模板，
 Connector 不得在用户模板外再添加固定可见内容。
+模板设置 MUST 允许用户在不保存的情况下预览当前草稿的 Markdown 效果。
 
 `channel_name` MUST 展开为 App 中保存的频道展示名称，`sender_name` MUST 展开为服务端按
 成员身份解析的发送者昵称；只有对应名称不可用时才可回退为内部标识。
@@ -366,6 +373,12 @@ Connector 不得在用户模板外再添加固定可见内容。
 - **GIVEN** 用户编辑 Subscription 完整消息模板
 - **WHEN** 模板为空、超过上限或包含未知变量
 - **THEN** 空模板恢复产品默认完整卡片；超过上限或含未知变量时 App 拒绝保存并保留上一份有效模板
+
+#### Scenario: 预览未保存的模板
+
+- **GIVEN** 用户正在编辑 Subscription 消息模板
+- **WHEN** 用户切换到预览
+- **THEN** App 在本地以 Markdown 渲染当前草稿，不保存模板或更改变量占位符
 
 #### Scenario: 渲染不可信正文
 

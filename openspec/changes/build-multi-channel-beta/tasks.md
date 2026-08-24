@@ -34,6 +34,7 @@
 - [x] 复用 ChannelConnection displayName 支持本机频道昵称，并持续展示原始频道名
 - [x] 双击频道详情标题复用现有频道改名流程
 - [x] 将添加频道弹窗收敛为创建时只填频道名称、加入时只填邀请口令和单一主操作
+- [x] 加入频道前按服务地址和频道 ID 拒绝本机重复 ChannelConnection
 - [x] 将用户昵称提升为全局设置，同步各频道 Member 名称，并隐藏 endpoint callsign
 - [x] 在服务端持久化频道名称，并在创建、查询和邀请加入结果中返回
 
@@ -63,6 +64,7 @@
 ## Templates And Policies
 
 - [x] 实现每 Subscription 的完整消息模板、固定变量校验和默认 Markdown 卡片模板
+- [x] 模板编辑区使用 macOS 原生 Markdown 渲染提供未保存草稿预览
 - [x] Connector 仅展开用户模板，多行正文继承占位符的 blockquote 前缀，不再额外包裹固定卡片
 - [x] 实现精确来源 endpoint 永不回投的安全不变量
 - [x] 实现 `include_other_endpoints` 与 `exclude_member` 两种 same-member 策略
