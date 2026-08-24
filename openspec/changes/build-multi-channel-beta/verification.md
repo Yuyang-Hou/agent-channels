@@ -93,8 +93,11 @@ publication remain pending.
 ## 2026-08-24 Template Name Resolution
 
 - `{channel_name}` is now supplied from the App's saved channel display name; the internal channel id remains the fallback.
-- `{sender_name}` already uses the service-owned member nickname, but Railway production is still the 2026-08-21
-  `0.3.0-beta.1` deployment and must be updated before live messages expose that field.
+- `{sender_name}` uses the service-owned member nickname. Railway production deployment
+  `f6119103-4270-4e88-9d6b-7d95add10c8a` built commit `00b7f87`, passed its healthcheck and reached `SUCCESS`;
+  the public `/healthz` endpoint returned `ok` after cutover.
+- No production test channel was created because channels have no deletion endpoint. A new message through an
+  existing channel remains the required visible acceptance for the rendered sender nickname.
 - All 11 server test files / 92 tests, TypeScript typecheck/build, strict OpenSpec validation and diff checks pass.
 
 ## Live Service Gate
