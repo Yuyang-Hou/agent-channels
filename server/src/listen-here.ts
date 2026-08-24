@@ -55,18 +55,18 @@ options:
                        RR_REPLIES = tab-separated suggested replies, empty if none;
                        RR_ATTACHMENTS = tab-separated paths to inline attachment
                        files saved by listen-here, empty if none)
-  --codex-thread <id> inject each real message into this Codex task; accepts a
-                      task id or codex://threads/<id>. Open the task once in
-                      ChatGPT Desktop to bind it; no Codex CLI or daemon needed.
-  --codex-source-thread <id>
-                      render ChatGPT's native "sent from another task" source
-                      hint using this trusted local task as the source. Only
-                      valid together with --codex-thread.
+  --host-provider <p> Host Connector provider (currently: codex)
+  --host-conversation <id>
+                      inject each real message into this Host conversation.
+                      Codex accepts a task id or codex://threads/<id> URL.
+  --host-source-conversation <id>
+                      trusted local source conversation used by Host-native
+                      provenance UI; requires --host-conversation.
   --codex-socket <p>  override the ChatGPT Desktop IPC socket path (diagnostics)
   --channel-name <n>  display name used for {channel_name}; defaults to channel id
   --message-template <t>
-                      render {channel_name}, {sender_name}, {message_text}, and
-                      {message_id} as the complete Codex task input
+                      render {channel_name}, {sender_name}, {message_source},
+                      {message_text}, and {message_id} as the complete Host input
   --self-message-policy <p>
                       include_other_endpoints (default) or exclude_member;
                       the exact current task endpoint is always excluded
@@ -160,8 +160,9 @@ type Args = {
   origin: string;
   since?: number;
   onMessage?: string;
-  codexThread?: string;
-  codexSourceThread?: string;
+  hostProvider?: string;
+  hostConversation?: string;
+  hostSourceConversation?: string;
   codexSocket?: string;
   channelName?: string;
   messageTemplate?: string;
@@ -201,8 +202,9 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
         origin: { type: "string" },
         since: { type: "string" },
         "on-message": { type: "string" },
-        "codex-thread": { type: "string" },
-        "codex-source-thread": { type: "string" },
+        "host-provider": { type: "string" },
+        "host-conversation": { type: "string" },
+        "host-source-conversation": { type: "string" },
         "codex-socket": { type: "string" },
         "channel-name": { type: "string" },
         "message-template": { type: "string" },
@@ -285,8 +287,13 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
   if (subscriptionId && !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(subscriptionId)) {
     return { error: "--subscription-id must be a UUID" };
   }
-  if (appSocket && !parsed.values["codex-thread"]) {
-    return { error: "--app-socket requires --codex-thread" };
+  const hostProvider = parsed.values["host-provider"];
+  const hostConversation = parsed.values["host-conversation"];
+  if (Boolean(hostProvider) !== Boolean(hostConversation)) {
+    return { error: "--host-provider and --host-conversation must be provided together" };
+  }
+  if (appSocket && !hostConversation) {
+    return { error: "--app-socket requires --host-conversation" };
   }
   return {
     channel,
@@ -298,8 +305,9 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
     origin: parsed.values.origin ?? "https://rogerthat.chat",
     since,
     onMessage: parsed.values["on-message"],
-    codexThread: parsed.values["codex-thread"],
-    codexSourceThread: parsed.values["codex-source-thread"],
+    hostProvider,
+    hostConversation,
+    hostSourceConversation: parsed.values["host-source-conversation"],
     codexSocket: parsed.values["codex-socket"],
     channelName: parsed.values["channel-name"],
     messageTemplate: parsed.values["message-template"],
@@ -367,6 +375,11 @@ type IncomingMessage = {
   id: number;
   from: string;
   sender_name?: string;
+  source?: {
+    provider: string;
+    conversation_id?: string;
+    label?: string;
+  };
   sender_member_id: string;
   sender_endpoint_id: string;
   to: string;
@@ -526,11 +539,16 @@ async function recordWithApp(
   operation: "record_received" | "record_outcome",
   event: LocalLedgerRequest["event"],
 ): Promise<"recorded" | "already_processed" | "unresolved"> {
-  if (!args.appSocket || !args.subscriptionId || !args.codexThread) return "recorded";
+  if (!args.appSocket || !args.subscriptionId || !args.hostProvider || !args.hostConversation) return "recorded";
   const result = await requestViaLocalApp(args.appSocket, {
     version: 2,
     operation,
-    source: { provider: "codex", conversationId: parseCodexThreadId(args.codexThread) },
+    source: {
+      provider: args.hostProvider,
+      conversationId: args.hostProvider === "codex"
+        ? parseCodexThreadId(args.hostConversation)
+        : args.hostConversation,
+    },
     channel: args.channel,
     subscription_id: args.subscriptionId,
     event,
@@ -557,6 +575,7 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
       id: msg.id,
       from: msg.from,
       sender_name: senderName,
+      source: msg.source,
       to: msg.to,
       text: msg.text,
       at: msg.at,
@@ -606,6 +625,11 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
         channelId: args.channel,
         messageId: msg.id,
         from: senderName,
+        source: msg.source ? {
+          provider: msg.source.provider,
+          conversationId: msg.source.conversation_id,
+          label: msg.source.label,
+        } : undefined,
         text: msg.text,
         receivedAt: msg.at,
         untrusted: true,
@@ -889,16 +913,19 @@ export async function runListenHere(
       return 2;
     }
   }
-  if (args.codexSourceThread && !args.codexThread) {
-    console.error("error: --codex-source-thread requires --codex-thread");
+  if (args.hostSourceConversation && !args.hostConversation) {
+    console.error("error: --host-source-conversation requires --host-conversation");
     return 2;
   }
   let hostDelivery: HostDelivery | undefined;
-  if (args.codexThread) {
+  if (args.hostProvider && args.hostConversation) {
     try {
+      if (args.hostProvider !== "codex") {
+        throw new Error(`Unsupported Host provider: ${args.hostProvider}`);
+      }
       hostDelivery = createCodexDelivery({
-        threadId: args.codexThread,
-        sourceThreadId: args.codexSourceThread,
+        threadId: args.hostConversation,
+        sourceThreadId: args.hostSourceConversation,
         socketPath: args.codexSocket,
         channelName: args.channelName,
         messageTemplate: args.messageTemplate,

@@ -6,6 +6,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   DeliveryOutcomeUnknownError,
+  formatChannelMessage,
   serializeHostDelivery,
   type HostDelivery,
 } from "./host-connector.js";
@@ -30,14 +31,6 @@ const MUTATING_OUTCOME_UNKNOWN_ERRORS = new Set([
 ]);
 
 const THREAD_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-const DEFAULT_CHANNEL_MESSAGE_TEMPLATE = [
-  "> **↗ Agent Channels · 外部频道消息**",
-  ">",
-  "> **频道** `{channel_name}` · **来自** `{sender_name}` · `#{message_id}`",
-  ">",
-  "> {message_text}",
-].join("\n");
-
 export function parseCodexThreadId(value: string): string {
   const raw = value.trim();
   const id = raw.startsWith("codex://")
@@ -47,67 +40,57 @@ export function parseCodexThreadId(value: string): string {
         return url.pathname.replace(/^\//, "");
       })()
     : raw;
-  if (!THREAD_ID.test(id)) throw new Error("--codex-thread must be a task id or codex://threads/<id> URL");
+  if (!THREAD_ID.test(id)) throw new Error("Codex conversation must be a task id or codex://threads/<id> URL");
   return id;
 }
 
-export function parseCodexThreadTitleOutput(output: string): string | undefined {
+export type CodexConversationSummary = {
+  id: string;
+  title: string;
+  updatedAt: number;
+};
+
+export function parseCodexConversationListOutput(output: string): CodexConversationSummary[] {
   try {
     const rows = JSON.parse(output) as unknown;
-    if (!Array.isArray(rows) || !isRecord(rows[0]) || typeof rows[0].title !== "string") return;
-    const title = rows[0].title.trim().replace(/\s+/g, " ");
-    return title ? title.slice(0, 200) : undefined;
-  } catch {
-    return;
-  }
-}
-
-export async function readCodexThreadTitle(options: {
-  threadId: string;
-  codexHome?: string;
-}): Promise<string | undefined> {
-  const threadId = parseCodexThreadId(options.threadId);
-  const database = join(options.codexHome ?? CODEX_HOME, "state_5.sqlite");
-  const sql = `SELECT COALESCE(NULLIF(TRIM(name), ''), NULLIF(TRIM(title), '')) AS title FROM threads WHERE id = '${threadId}' LIMIT 1`;
-  try {
-    const output = await new Promise<string>((resolve, reject) => {
-      execFile(
-        "/usr/bin/sqlite3",
-        ["-readonly", "-json", database, sql],
-        { encoding: "utf8", maxBuffer: 64 * 1024 },
-        (error, stdout) => error ? reject(error) : resolve(stdout),
-      );
+    if (!Array.isArray(rows)) return [];
+    return rows.flatMap((row) => {
+      if (!isRecord(row) || typeof row.id !== "string" || !THREAD_ID.test(row.id)) return [];
+      const title = typeof row.title === "string"
+        ? row.title.trim().replace(/\s+/g, " ").slice(0, 200)
+        : "";
+      return [{
+        id: row.id.toLowerCase(),
+        title: title || row.id,
+        updatedAt: typeof row.updated_at === "number" ? row.updated_at : 0,
+      }];
     });
-    return parseCodexThreadTitleOutput(output);
   } catch {
-    return;
+    return [];
   }
 }
 
-export function formatCodexChannelMessage(message: {
-  channel: string;
-  id: number;
-  from: string;
-  text: string;
-  receivedAt?: number;
-}, template?: string): string {
-  const safeInlineValue = (value: string) => value.replace(/[\r\n]+/g, " ").replaceAll("`", "ˋ");
-  const values: Record<string, string> = {
-    "{channel_name}": safeInlineValue(message.channel),
-    "{message_id}": String(message.id),
-    "{sender_name}": safeInlineValue(message.from),
-    "{message_text}": message.text.replace(/\r\n?/g, "\n"),
-  };
-  const source = (template || DEFAULT_CHANNEL_MESSAGE_TEMPLATE).replace(/\r\n?/g, "\n");
-  return source.replace(
-    /\{(?:channel_name|message_id|sender_name|message_text)\}/g,
-    (key, offset: number) => {
-      const value = values[key];
-      const linePrefix = source.slice(source.lastIndexOf("\n", offset - 1) + 1, offset);
-      const continuationPrefix = /^(?:[ \t]*>[ \t]?)+$/.test(linePrefix) ? linePrefix : "";
-      return value.replaceAll("\n", `\n${continuationPrefix}`);
-    },
-  );
+export async function listCodexConversations(options: {
+  query?: string;
+  limit?: number;
+  codexHome?: string;
+} = {}): Promise<CodexConversationSummary[]> {
+  const database = join(options.codexHome ?? CODEX_HOME, "state_5.sqlite");
+  const query = options.query?.trim().replaceAll("'", "''") ?? "";
+  const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 30)));
+  const filter = query
+    ? ` AND (LOWER(id) LIKE '%' || LOWER('${query}') || '%' OR LOWER(COALESCE(NULLIF(TRIM(name), ''), NULLIF(TRIM(title), ''), id)) LIKE '%' || LOWER('${query}') || '%')`
+    : "";
+  const sql = `SELECT id, COALESCE(NULLIF(TRIM(name), ''), NULLIF(TRIM(title), ''), id) AS title, COALESCE(updated_at_ms, updated_at * 1000) AS updated_at FROM threads WHERE archived = 0 AND (thread_source IS NULL OR thread_source = 'user') AND agent_role IS NULL${filter} ORDER BY recency_at_ms DESC, id DESC LIMIT ${limit}`;
+  const output = await new Promise<string>((resolve, reject) => {
+    execFile(
+      "/usr/bin/sqlite3",
+      ["-readonly", "-json", database, sql],
+      { encoding: "utf8", maxBuffer: 512 * 1024 },
+      (error, stdout) => error ? reject(error) : resolve(stdout),
+    );
+  });
+  return parseCodexConversationListOutput(output);
 }
 
 export function formatCodexDelegationMessage(sourceThreadId: string, input: string): string {
@@ -135,12 +118,12 @@ export function createCodexDelivery(options: {
   requireCodexSocket(options.socketPath);
 
   return serializeHostDelivery(async (message) => {
-    const text = formatCodexChannelMessage({
+    const text = formatChannelMessage({
       channel: options.channelName || message.channelId,
       id: message.messageId,
       from: message.from,
+      sourceLabel: message.source?.label,
       text: message.text,
-      receivedAt: message.receivedAt,
     }, options.messageTemplate);
     const turnId = await startCodexTurn({
       threadId,

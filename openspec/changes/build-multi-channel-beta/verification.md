@@ -73,7 +73,7 @@ publication remain pending.
   a paused receive Subscription remains eligible for explicit or unique-default outbound sending.
 - MCP boundary tests prove it never opens a channel stream, consumes inbound messages, persists history or
   invokes a Host Connector; those receive-side effects remain App-owned.
-- Template tests cover the editable full-message template, all four allowed variables, single-pass substitution,
+- Template tests cover the editable full-message template, all five allowed variables, single-pass substitution,
   default Markdown blockquote continuation, invalid variables and size limits.
 - Self-message tests cover exact endpoint suppression and both same-member policies.
 
@@ -103,9 +103,16 @@ publication remain pending.
   came from an orphan pre-update listener while the installed listener already carried `--channel-name 产品协助`.
 - The stale listener was stopped; the enabled Subscription automatically recovered with exactly one App-owned
   listener and cursor `1787569685428`. Normal App termination and update handoff now stop all supervised sidecars.
+
+## 2026-08-24 Message Source Variable
+
+- Messages carry `source(provider, conversation_id, label)`; `{message_source}` displays only label, while the
+  local timeline stores the full reference and exposes source conversation-id copy from the message context menu.
+- `npm run build`, all 11 server test files / 94 tests, Swift typecheck, strict OpenSpec validation and diff checks pass.
+- No App package, server deployment or real cross-device message was changed during this source verification.
 - The beta.10 product Skill recognizes editable inbound titles containing either `频道消息` or `Agent Channels`.
 - Each Subscription row exposes an `打开会话` button that opens its exact `codex://threads/<id>` binding through macOS.
-- The packaged sidecar returned a non-empty `thread_title` for a real current Codex task; the native App build passed and updates the Subscription label when adding or restoring that task, with the shortened id retained as fallback.
+- The working-tree sidecar can search the live Codex index by title or id while excluding internal subagent/reviewer sessions. Titles remain transient search data; TaskBinding persists only provider and conversation id, and Subscription rows use the shortened id.
 
 ## Live Service Gate
 
@@ -143,8 +150,8 @@ tasks. Do not reuse or import 0.2 data.
 ## Data And Security Inspection
 
 - Keychain contains independent member credentials; local store contains only credential references.
-- Server records contain member and opaque endpoint ids but no Codex thread id, Host path, workspace or task
-  snapshot.
+- Server messages may contain sender-declared source provider/conversation id/label for traceability, but no
+  target TaskBinding, Host path, workspace, task snapshot or credential; source metadata never selects a target.
 - MCP App requests contain only protocol version, operation-specific arguments and local source context;
   channel credentials, inbound payloads and local history do not appear in model content, argv, environment
   or MCP process memory.

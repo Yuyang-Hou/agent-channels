@@ -86,7 +86,30 @@ struct TaskBinding: Codable, Equatable, Identifiable {
     let id: UUID
     var provider: String
     var conversationID: String
-    var label: String
+}
+
+struct HostConversationSummary: Codable, Equatable, Identifiable {
+    var provider: String
+    var conversationID: String
+    var title: String
+    var updatedAt: Double
+
+    var id: String { "\(provider):\(conversationID)" }
+
+    enum CodingKeys: String, CodingKey {
+        case provider, title
+        case conversationID = "conversation_id"
+        case updatedAt = "updated_at"
+    }
+}
+
+private struct HostConversationSearchResponse: Decodable {
+    let ok: Bool
+    let conversations: [HostConversationSummary]
+}
+
+private func hostDisplayName(_ provider: String) -> String {
+    provider == "codex" ? "ChatGPT Codex" : provider
 }
 
 struct ChannelSubscription: Codable, Equatable, Identifiable {
@@ -117,6 +140,17 @@ enum MessageDeliveryState: String, Codable {
     case pending, received, attempting, filtered, delivered, skipped, accepted, failed, unknown
 }
 
+struct MessageSourceReference: Codable, Equatable {
+    var provider: String
+    var conversationID: String? = nil
+    var label: String? = nil
+
+    enum CodingKeys: String, CodingKey {
+        case provider, label
+        case conversationID = "conversation_id"
+    }
+}
+
 struct ChannelMessageRecord: Codable, Equatable, Identifiable {
     var channelID: UUID
     var messageID: String
@@ -128,6 +162,7 @@ struct ChannelMessageRecord: Codable, Equatable, Identifiable {
     var state: MessageDeliveryState
     var senderMemberID: String? = nil
     var senderEndpointID: String? = nil
+    var source: MessageSourceReference? = nil
 
     var id: String { "\(channelID.uuidString):\(messageID)" }
 }
@@ -561,9 +596,10 @@ private struct LocalSidecarEvent: Codable {
     let senderMemberID: String?
     let senderEndpointID: String?
     let senderName: String?
+    let source: MessageSourceReference?
 
     enum CodingKeys: String, CodingKey {
-        case id, from, to, text, at, state, error
+        case id, from, to, text, at, state, error, source
         case senderMemberID = "sender_member_id"
         case senderEndpointID = "sender_endpoint_id"
         case senderName = "sender_name"
@@ -592,7 +628,7 @@ private struct LocalSendRequest: Decodable {
         }
         guard request.source.provider == "codex",
               UUID(uuidString: request.source.conversationId) != nil else {
-            throw AppFailure("当前 Codex 会话上下文无效")
+            throw AppFailure("当前 AI 会话上下文无效或尚未支持")
         }
         let operations = [
             "list_channels", "send", "subscribe", "unsubscribe", "get_settings", "update_settings",
@@ -1362,13 +1398,19 @@ extension AppModel {
             to: "all",
             text: text,
             at: Date().timeIntervalSince1970 * 1000,
-            state: .pending
+            state: .pending,
+            source: MessageSourceReference(provider: "agent-channels", label: "Agent Channels App")
         )
         upsertMessage(pending, persist: false)
         busy = true
         defer { busy = false }
         do {
-            let result = try await sendChannelMessage(text, profile: profile, endpoint: endpointCallsign(profile, kind: "app"))
+            let result = try await sendChannelMessage(
+                text,
+                profile: profile,
+                endpoint: endpointCallsign(profile, kind: "app"),
+                source: MessageSourceReference(provider: "agent-channels", label: "Agent Channels App")
+            )
             composerText = ""
             messages.removeAll { $0.id == pending.id }
             upsertMessage(ChannelMessageRecord(
@@ -1381,7 +1423,8 @@ extension AppModel {
                 at: Date().timeIntervalSince1970 * 1000,
                 state: .accepted,
                 senderMemberID: result.memberID,
-                senderEndpointID: result.endpointID
+                senderEndpointID: result.endpointID,
+                source: MessageSourceReference(provider: "agent-channels", label: "Agent Channels App")
             ))
         } catch {
             var final = pending
@@ -1395,7 +1438,8 @@ extension AppModel {
     private func sendChannelMessage(
         _ message: String,
         profile: ChannelProfile,
-        endpoint: String
+        endpoint: String,
+        source: MessageSourceReference
     ) async throws -> (id: String, callsign: String, memberID: String, endpointID: String) {
         guard !message.isEmpty, message.utf16.count <= maxChannelMessageLength else {
             throw ChannelSendFailure.definitive("消息须为 1–\(maxChannelMessageLength) 个字符")
@@ -1427,12 +1471,15 @@ extension AppModel {
             throw ChannelSendFailure.definitive("频道加入响应缺少 session/member/endpoint")
         }
         do {
+            var sourceJSON: [String: Any] = ["provider": source.provider]
+            if let conversationID = source.conversationID { sourceJSON["conversation_id"] = conversationID }
+            if let label = source.label { sourceJSON["label"] = label }
             let json = try await requestJSON(
                 url: base.appendingPathComponent("send"),
                 method: "POST",
                 bearer: credential,
                 headers: ["X-Session-Id": session],
-                body: ["to": "all", "message": message]
+                body: ["to": "all", "message": message, "source": sourceJSON]
             )
             guard json["ok"] as? Bool == true else {
                 throw ChannelSendFailure.unknown("频道发送结果未知：服务端未返回有效回执")
@@ -1542,6 +1589,14 @@ extension AppModel {
         let at: Double
         if let value = json["at"] as? NSNumber { at = value.doubleValue }
         else { at = Date().timeIntervalSince1970 * 1000 }
+        let source = (json["source"] as? [String: Any]).flatMap { value -> MessageSourceReference? in
+            guard let provider = value["provider"] as? String else { return nil }
+            return MessageSourceReference(
+                provider: provider,
+                conversationID: value["conversation_id"] as? String,
+                label: value["label"] as? String
+            )
+        }
         return ChannelMessageRecord(
             channelID: channelID,
             messageID: id,
@@ -1552,7 +1607,8 @@ extension AppModel {
             at: at,
             state: state,
             senderMemberID: json["sender_member_id"] as? String,
-            senderEndpointID: json["sender_endpoint_id"] as? String
+            senderEndpointID: json["sender_endpoint_id"] as? String,
+            source: source
         )
     }
 
@@ -1735,6 +1791,8 @@ final class AppModel: ObservableObject {
     @Published var draftChannelName = ""
     @Published var invitationInput = ""
     @Published var draftTask = ""
+    @Published var conversationSearchResults: [HostConversationSummary] = []
+    @Published var conversationSearchStatus = ""
     @Published var composerText = ""
     @Published var showAddChannel = false
     @Published var oldBetaDataDetected = FileManager.default.fileExists(atPath: AppPaths.legacyBinding.path)
@@ -1904,7 +1962,16 @@ extension AppModel {
                 let (task, subscription, profile) = try outboundRoute(source: request.source, channel: request.channel)
                 let endpoint = endpointCallsign(profile, conversationID: task.conversationID, kind: "t")
                 do {
-                    let receipt = try await sendChannelMessage(message, profile: profile, endpoint: endpoint)
+                    let receipt = try await sendChannelMessage(
+                        message,
+                        profile: profile,
+                        endpoint: endpoint,
+                        source: MessageSourceReference(
+                            provider: task.provider,
+                            conversationID: task.conversationID,
+                            label: taskLabel(task.id)
+                        )
+                    )
                     upsertMessage(ChannelMessageRecord(
                         channelID: profile.id,
                         messageID: receipt.id,
@@ -1915,7 +1982,12 @@ extension AppModel {
                         at: Date().timeIntervalSince1970 * 1000,
                         state: .accepted,
                         senderMemberID: receipt.memberID,
-                        senderEndpointID: receipt.endpointID
+                        senderEndpointID: receipt.endpointID,
+                        source: MessageSourceReference(
+                            provider: task.provider,
+                            conversationID: task.conversationID,
+                            label: taskLabel(task.id)
+                        )
                     ))
                     return .success(.send(id: receipt.id, callsign: receipt.callsign, channel: profile.channel))
                 } catch let error as ChannelSendFailure {
@@ -1969,29 +2041,65 @@ extension AppModel {
         }
     }
 
+    func searchHostConversations() async {
+        busy = true
+        defer { busy = false }
+        do {
+            let query = draftTask.trimmingCharacters(in: .whitespacesAndNewlines)
+            var arguments = ["host-conversations", "--host-provider", "codex", "--limit", "30"]
+            if !query.isEmpty { arguments.append(contentsOf: ["--query", query]) }
+            let result = try await Sidecar.run(arguments)
+            guard result.status == 0,
+                  let data = result.stdout.data(using: .utf8),
+                  let response = try? JSONDecoder().decode(HostConversationSearchResponse.self, from: data),
+                  response.ok else {
+                let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                throw AppFailure(detail.isEmpty ? "无法读取 AI 会话列表" : detail)
+            }
+            conversationSearchResults = response.conversations
+            conversationSearchStatus = response.conversations.isEmpty ? "没有匹配的会话" : ""
+            lastError = ""
+        } catch {
+            conversationSearchResults = []
+            conversationSearchStatus = "搜索失败"
+            fail(error)
+        }
+    }
+
+    func bindHostConversation(_ conversation: HostConversationSummary) async {
+        draftTask = conversation.conversationID
+        await addTaskSubscription()
+    }
+
     func addTaskSubscription() async {
         guard let profile = selectedChannel else { return }
         busy = true
         defer { busy = false }
         do {
             let raw = draftTask.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !raw.isEmpty else { throw AppFailure("请粘贴 Codex 会话链接") }
-            let result = try await Sidecar.run(["codex-preflight", "--codex-thread", raw])
+            guard !raw.isEmpty else { throw AppFailure("请输入 AI 会话 ID 或链接") }
+            let result = try await Sidecar.run([
+                "host-preflight",
+                "--host-provider", "codex",
+                "--host-conversation", raw,
+            ])
             guard result.status == 0,
                   let data = result.stdout.data(using: .utf8),
                   let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   json["ok"] as? Bool == true,
-                  let threadID = json["thread_id"] as? String,
-                  UUID(uuidString: threadID) != nil else {
+                  let provider = json["provider"] as? String,
+                  let conversationID = json["conversation_id"] as? String,
+                  UUID(uuidString: conversationID) != nil else {
                 let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-                throw AppFailure(detail.isEmpty ? "Codex 会话检测失败" : detail)
+                throw AppFailure(detail.isEmpty ? "AI 会话检测失败" : detail)
             }
             _ = try await subscribe(
-                source: LocalSource(provider: "codex", conversationId: threadID.lowercased()),
-                profile: profile,
-                label: json["thread_title"] as? String
+                source: LocalSource(provider: provider, conversationId: conversationID.lowercased()),
+                profile: profile
             )
             draftTask = ""
+            conversationSearchResults = []
+            conversationSearchStatus = ""
             lastError = ""
         } catch {
             fail(error)
@@ -2051,14 +2159,18 @@ extension AppModel {
 
     func taskLabel(_ taskID: UUID) -> String {
         guard let task = state.tasks.first(where: { $0.id == taskID }) else { return "未知会话" }
-        return "Codex · \(task.label.isEmpty ? "\(task.conversationID.prefix(8))…" : task.label)"
+        return "\(hostDisplayName(task.provider)) · \(task.conversationID.prefix(8))…"
     }
 
     func openTask(_ taskID: UUID) {
-        guard let task = state.tasks.first(where: { $0.id == taskID }),
+        guard let task = state.tasks.first(where: { $0.id == taskID }) else {
+            fail(AppFailure("AI 会话不存在"))
+            return
+        }
+        guard task.provider == "codex",
               let url = URL(string: "codex://threads/\(task.conversationID)"),
               NSWorkspace.shared.open(url) else {
-            fail(AppFailure("无法打开 ChatGPT 会话，请确认 ChatGPT 已安装且该会话仍存在"))
+            fail(AppFailure("无法打开 \(hostDisplayName(task.provider)) 会话，请确认对应 AI 应用已安装且会话仍存在"))
             return
         }
     }
@@ -2130,22 +2242,18 @@ extension AppModel {
     @discardableResult
     private func subscribe(
         source: LocalSource,
-        profile: ChannelProfile,
-        label: String? = nil
+        profile: ChannelProfile
     ) async throws -> ChannelSubscription {
         let task: TaskBinding
         if let index = state.tasks.firstIndex(where: {
             $0.provider == source.provider && $0.conversationID.lowercased() == source.conversationId.lowercased()
         }) {
-            if let label, !label.isEmpty { state.tasks[index].label = label }
             task = state.tasks[index]
         } else {
-            let taskLabel = label.flatMap { $0.isEmpty ? nil : $0 } ?? "\(source.conversationId.prefix(8))…"
             task = TaskBinding(
                 id: UUID(),
                 provider: source.provider,
-                conversationID: source.conversationId.lowercased(),
-                label: taskLabel
+                conversationID: source.conversationId.lowercased()
             )
             state.tasks.append(task)
         }
@@ -2234,12 +2342,12 @@ extension AppModel {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if value.isEmpty { return defaultMessageTemplate }
         guard value.count <= 2_000 else { throw AppFailure("消息模板不能超过 2000 字符") }
-        let allowed = Set(["{channel_name}", "{sender_name}", "{message_text}", "{message_id}"])
+        let allowed = Set(["{channel_name}", "{sender_name}", "{message_source}", "{message_text}", "{message_id}"])
         let expression = try NSRegularExpression(pattern: #"\{[^{}]+\}"#)
         let range = NSRange(value.startIndex..., in: value)
         for match in expression.matches(in: value, range: range) {
             guard let tokenRange = Range(match.range, in: value), allowed.contains(String(value[tokenRange])) else {
-                throw AppFailure("模板只支持 {channel_name}、{sender_name}、{message_text}、{message_id}")
+                throw AppFailure("模板只支持 {channel_name}、{sender_name}、{message_source}、{message_text}、{message_id}")
             }
         }
         return value
@@ -2266,21 +2374,17 @@ extension AppModel {
                 Task { await startListener(id) }
             }
         }
-        listenerStatus[id] = "正在检查 ChatGPT…"
+        listenerStatus[id] = "正在检查 \(hostDisplayName(task.provider))…"
         do {
-            let preflight = try await Sidecar.run(["codex-preflight", "--codex-thread", task.conversationID])
+            let preflight = try await Sidecar.run([
+                "host-preflight",
+                "--host-provider", task.provider,
+                "--host-conversation", task.conversationID,
+            ])
             guard listenerCanStart(id, generation: generation) else { return }
             guard preflight.status == 0 else {
                 let detail = preflight.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-                throw AppFailure(detail.isEmpty ? "ChatGPT task 当前不可用" : detail)
-            }
-            if let data = preflight.stdout.data(using: .utf8),
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let title = json["thread_title"] as? String, !title.isEmpty,
-               let index = state.tasks.firstIndex(where: { $0.id == task.id }),
-               state.tasks[index].label != title {
-                state.tasks[index].label = title
-                persistState()
+                throw AppFailure(detail.isEmpty ? "AI 会话当前不可用" : detail)
             }
             guard let credential = try KeychainStore.get(service: keychainService, account: profile.credentialAccount),
                   !credential.isEmpty else { throw AppFailure("Keychain 中没有频道成员凭证") }
@@ -2307,7 +2411,8 @@ extension AppModel {
                 "--origin", profile.origin,
                 "--channel", profile.channel,
                 "--identity-key", endpointCallsign(profile, conversationID: task.conversationID, kind: "r"),
-                "--codex-thread", task.conversationID,
+                "--host-provider", task.provider,
+                "--host-conversation", task.conversationID,
                 "--secrets-stdin",
                 "--status-json",
                 "--quiet",
@@ -2560,7 +2665,8 @@ extension AppModel {
             at: at,
             state: .received,
             senderMemberID: senderMemberID,
-            senderEndpointID: senderEndpointID
+            senderEndpointID: senderEndpointID,
+            source: event.source
         )
         try MessageLedger.append(record)
         upsertMessage(record, persist: false)
@@ -3438,10 +3544,15 @@ private struct MessageRow: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 if !continuation {
-                    HStack(spacing: 8) {
-                        Text(message.from).font(.subheadline.bold())
-                        Text(DateFormatter.delivery.string(from: Date(timeIntervalSince1970: message.at / 1000)))
-                            .font(.caption2).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 8) {
+                            Text(message.from).font(.subheadline.bold())
+                            Text(DateFormatter.delivery.string(from: Date(timeIntervalSince1970: message.at / 1000)))
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        if let label = message.source?.label, !label.isEmpty {
+                            Text(label).font(.caption2).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 Text(message.text)
@@ -3466,6 +3577,15 @@ private struct MessageRow: View {
             }
             guard !Task.isCancelled else { return }
             showPendingStatus = true
+        }
+        .contextMenu {
+            if let source = message.source, let conversationID = source.conversationID {
+                Text("\(source.provider) · \(conversationID)")
+                Button("复制来源会话 ID") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(conversationID, forType: .string)
+                }
+            }
         }
     }
 }
@@ -3529,19 +3649,54 @@ private struct ChannelSubscriptionsView: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    TextField("粘贴 Codex 会话链接", text: $model.draftTask)
+                    TextField("搜索标题，或输入会话 ID / 链接", text: $model.draftTask)
                         .textFieldStyle(.roundedBorder)
-                    Button("添加会话") { Task { await model.addTaskSubscription() } }
+                        .onSubmit { Task { await model.searchHostConversations() } }
+                    Button("搜索") { Task { await model.searchHostConversations() } }
+                        .disabled(model.busy)
+                    Button("按 ID 绑定") { Task { await model.addTaskSubscription() } }
                         .buttonStyle(.borderedProminent)
                         .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                Text("本频道的新消息会作为新输入发送到这些 AI 会话。没有新消息时，不会创建新的对话轮次。")
+                if !model.conversationSearchResults.isEmpty {
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(model.conversationSearchResults) { conversation in
+                                HStack(spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(conversation.title).lineLimit(1)
+                                        Text("\(hostDisplayName(conversation.provider)) · \(conversation.conversationID)")
+                                            .font(.caption2).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Button("绑定") {
+                                        Task { await model.bindHostConversation(conversation) }
+                                    }
+                                    .disabled(model.busy)
+                                }
+                                .padding(.vertical, 7)
+                                if conversation.id != model.conversationSearchResults.last?.id { Divider() }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 210)
+                    .padding(.horizontal, 10)
+                    .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 7))
+                } else if !model.conversationSearchStatus.isEmpty {
+                    Text(model.conversationSearchStatus).font(.caption).foregroundStyle(.secondary)
+                }
+                Text("当前支持 ChatGPT Codex。可按本地会话标题搜索，也可直接粘贴 ID；绑定时会再次验证会话是否可投递。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(16)
+            .task {
+                if model.conversationSearchResults.isEmpty && model.conversationSearchStatus.isEmpty {
+                    await model.searchHostConversations()
+                }
+            }
             Divider()
             if model.selectedSubscriptions.isEmpty {
-                EmptyStateView(title: "尚未连接会话", systemImage: "link.badge.plus", detail: "粘贴 Codex 会话链接，让该会话接收本频道消息。") { EmptyView() }
+                EmptyStateView(title: "尚未连接会话", systemImage: "link.badge.plus", detail: "搜索或输入 AI 会话，让该会话接收本频道消息。") { EmptyView() }
                     .frame(maxHeight: .infinity)
             } else {
                 List(model.selectedSubscriptions) { subscription in
@@ -3691,7 +3846,7 @@ private struct SubscriptionCard: View {
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
                         Text("整段 Markdown 均可编辑；当前内容只是默认模板。")
                             .font(.caption2).foregroundStyle(.secondary)
-                        Text("变量：{channel_name} {sender_name} {message_text} {message_id}")
+                        Text("变量：{channel_name} {sender_name} {message_source} {message_text} {message_id}")
                             .font(.caption2).foregroundStyle(.secondary)
                         HStack {
                             Button("停止转发到此会话", role: .destructive) { model.removeSubscription(subscription.id) }
@@ -3750,8 +3905,8 @@ private struct AgentChannelsSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Section("Codex 集成") {
-                    LabeledContent("状态", value: model.codexIntegrationStatus)
+                Section("AI 集成") {
+                    LabeledContent("ChatGPT Codex", value: model.codexIntegrationStatus)
                     HStack {
                         Button("启用或修复 Codex 集成") { model.enableCodexIntegration() }
                         Button("移除 Codex 集成", role: .destructive) { model.removeCodexIntegration() }
@@ -3923,8 +4078,15 @@ private struct AgentChannelsV2SelfTest {
             to: "all",
             text: "hello",
             at: 1,
-            state: .received
+            state: .received,
+            source: MessageSourceReference(
+                provider: "codex",
+                conversationID: "01900000-0000-7000-8000-000000000001",
+                label: "API review"
+            )
         )
+        precondition(messageA.source?.provider == "codex")
+        precondition(messageA.source?.conversationID == "01900000-0000-7000-8000-000000000001")
         var messageB = messageA
         messageB.direction = .outbound
         precondition(messageA.id == messageB.id)

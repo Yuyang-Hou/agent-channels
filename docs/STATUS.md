@@ -17,7 +17,8 @@
 | 凭证隔离 | 已完成 | 频道 token 和 session credential 未进入注入正文 |
 | 原生来源提示实验 | 已结束 | 能显示来源，但需要额外代理任务，产品不采用 |
 | Host 无关架构设计 | 已完成 | 产品、架构和 OpenSpec 已定义 Connector 边界 |
-| Host-neutral 投递边界 | 已完成 | 标准信封、串行投递与 Codex Connector 已实现，92 项测试通过 |
+| Host-neutral 投递边界 | 已完成 | 标准信封、串行投递与 Codex Connector 已实现，94 项测试通过 |
+| Host 会话发现 | 本地代码已完成，待打包实机 | 可按 Codex 标题/id 搜索用户主会话或直接输入 id；标题不落盘，绑定仍需 preflight |
 | CLI 失败状态 | 已完成 | 未支持 Host 参数、Host 不可用和错误凭证均明确失败 |
 | Codex Desktop IPC | 已完成 | 无 daemon/env，空闲 start 与忙时 steer 已实机通过；不确定回执停机有自动化覆盖 |
 | 两设备公网双向入站 | 已完成 | A、B 两台 Mac 均完成频道消息 → Desktop IPC → 目标 task 真实 turn；正文按不可信输入处理 |
@@ -40,6 +41,7 @@
 | 工作 | 完成条件 |
 |---|---|
 | 0.3 Beta 真实 Host 闭环 | 两台 Mac 安装新包，验证 Skill、Markdown 卡片、六项工具与多 Subscription 不串台 |
+| 可追溯消息来源 | `source(provider, conversation_id, label)` 源码与自动化已通过；待服务部署、新 App 构建及跨设备消息验收 |
 
 ## 尚未开始
 

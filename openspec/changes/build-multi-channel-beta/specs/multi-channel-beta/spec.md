@@ -245,11 +245,17 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** 用户点击“打开会话”
 - **THEN** App 启动 ChatGPT 并通过该 TaskBinding 的 `codex://threads/<id>` 打开目标会话
 
-#### Scenario: 显示目标会话名称
+#### Scenario: 已绑定会话不缓存标题
 
-- **GIVEN** Codex 本机元数据包含目标会话名称
+- **GIVEN** Codex 本机元数据包含可能被用户修改的目标会话名称
 - **WHEN** App 添加会话或恢复该会话的监听
-- **THEN** Subscription 展示 Codex 会话名称；名称不可用时回退到缩短的会话 ID，且不读取会话正文或 snapshot
+- **THEN** Subscription 只展示 Host 名称与缩短的会话 ID，不持久化或展示缓存标题
+
+#### Scenario: 搜索或直接输入会话
+
+- **GIVEN** 用户进入“转发到会话”且当前 Host 支持会话发现
+- **WHEN** 用户按标题或 id 搜索，或直接输入会话 id/链接
+- **THEN** App 允许从最小会话索引点选或直接发起绑定，并在创建 Subscription 前执行 Host preflight；搜索标题不写入 Binding
 
 #### Scenario: 重启恢复
 
@@ -362,13 +368,18 @@ designated requirement；任一校验或替换失败时 MUST 保留旧 App 并�
 ### Requirement: 每条 Subscription 使用可编辑的完整消息模板
 
 Subscription MUST 使用本地模板生成完整 Host 输入，模板只允许 `channel_name`、
-`sender_name`、`message_text` 和 `message_id` 四个变量。默认模板 MUST 生成当前的
+`sender_name`、`message_source`、`message_text` 和 `message_id` 五个变量。默认模板 MUST 生成当前的
 Agent Channels Markdown 引用卡片；标题、来源栏、正文和引用样式 MUST 全部属于模板，
 Connector 不得在用户模板外再添加固定可见内容。
 模板设置 MUST 允许用户在不保存的情况下预览当前草稿的 Markdown 效果。
 
 `channel_name` MUST 展开为 App 中保存的频道展示名称，`sender_name` MUST 展开为服务端按
 成员身份解析的发送者昵称；只有对应名称不可用时才可回退为内部标识。
+`message_source` MUST 对 task 消息展开为 Host 名称与缩短的会话 id，对 App 消息展开为
+`Agent Channels App`；旧客户端未提供来源时 MUST 回退为发送者昵称。
+每条由 Host 会话发送的消息 MUST 同时携带可扩展来源引用 `provider + conversation_id + label`。
+App MUST 将完整引用写入本地消息记录并允许用户复制来源会话 id；默认模板只展示 label。
+来源引用 MUST NOT 被服务端或接收端作为路由、授权或可信目标。
 
 #### Scenario: 保存模板
 

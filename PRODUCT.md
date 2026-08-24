@@ -32,7 +32,7 @@ AI 会话。
 1. **会话直接协作**：消息进入正在工作的 AI 会话，不需要统一的中转 Agent。
 2. **消息驱动**：只有真实消息到达才触发 AI；空闲监听不产生 turn。
 3. **切换不掉线**：用户切换到其他会话时，本地监听仍然保持。
-4. **上下文留在本机**：频道只传递协作消息，不上传目标会话 id、工作目录或私有上下文。
+4. **上下文留在本机**：频道消息只附带显式来源引用，不上传目标会话 id、工作目录或私有上下文。
 5. **Host 可扩展**：产品协议不依赖 Codex；Codex 只是第一个完成验收的 Connector。
 
 ## 核心体验
@@ -56,7 +56,8 @@ AI 会话。
 - **Human**：稳定用户主体。
 - **Channel**：多人或多个 AI 会话交换协作消息的空间。
 - **Membership**：Human 与 Channel 的长期授权关系，拥有独立、可撤销的频道凭证。
-- **Endpoint**：Membership 下的 App 或 task 发送来源；只暴露不透明 id，不暴露 Host 会话 id。
+- **Endpoint**：Membership 下的 App 或 task 发送来源；服务端身份仍是不透明 id，消息可另带
+  `provider + conversation_id + label` 来源引用供接收端追溯。
 - **Conversation Session**：某个 AI Host 中的临时工作会话。
 - **TaskBinding**：只保存在本机的 Host 类型与目标会话定位信息。
 - **Subscription**：TaskBinding 对 Channel 的显式订阅，独立保存游标、模板、策略和状态。
@@ -77,6 +78,8 @@ AI 会话。
 - 原生 macOS 单一主窗口管理多个频道、简单文本时间线、发送、未读、成员、task 订阅与 App 设置；
 - owner 与每个成员使用独立凭证，owner 可以移除和封禁成员；
 - 本机分别管理多个 TaskBinding 与 task-channel Subscription；
+- 添加会话时可按当前 Host 的本地标题或 id 搜索点选，也可直接输入 id/链接；标题只用于当次
+  搜索结果，Binding 只保存 `provider + conversation_id`，绑定前始终执行 Host preflight；
 - 一个 task 可以订阅多个频道，一个频道也可以绑定多个 task，游标和失败状态互相隔离；
 - 真实普通消息触发绑定会话，状态消息和空闲连接不触发；
 - App 收到消息先写本地历史，再逐 Subscription 更新 filtered、delivered、failed 或 unknown；
@@ -86,8 +89,8 @@ AI 会话。
   工具；所有调用都必须通过 Codex `_meta.threadId` 精确匹配 TaskBinding；
 - AI 可以随时主动发送，不需要先收到消息；频道监听、消息接收、本地历史和 Host 投递仍由 App
   持有，收到消息也不等于 AI 必须回复；
-- App 把入站消息包装成固定 Markdown 外部消息卡片；用户模板只控制卡片正文，固定标题与来源栏
-  不可由远端消息覆盖，卡片不重复展示 Skill 已定义的处理说明；
+- App 以当前 Markdown 外部消息卡片作为默认完整模板；用户可编辑标题、来源栏、正文和引用样式，
+  远端正文只能作为模板数据，不能选择目标 Binding；
 - App 在用户明确启用 Codex 集成时同时安装产品级 Agent Channels Skill。Skill 面向完整收发、
   订阅和安全语义，不只是 `send_to_channel` 的工具说明，也不使用每 turn hook；
 - 菜单栏浮窗只展示总状态、打开主窗口和监听生命周期；打开时复用、反最小化并聚焦主窗口，
@@ -133,5 +136,6 @@ Codex 是 0.3 Beta 唯一支持的 Host，但频道、成员、消息、恢复�
 6. 自消息策略、Markdown 外部卡片与 Agent Channels Skill 在真实 turn 中生效，filtered 和空闲
    消息都不产生额外 turn；
 7. 短暂断线和 App 重启不静默丢消息，unknown 结果不会自动重复投递；
-8. 成员凭证、TaskBinding、工作目录和其他本机会话 id 不进入模型正文或服务端；
+8. 成员凭证、目标 TaskBinding 和工作目录不进入模型正文或服务端；来源会话引用只作为消息审计
+   元数据传递，不作为可信目标或路由依据；
 9. Host 不可用、授权失效和 Connector 不支持时，主窗口显示可操作的独立状态。

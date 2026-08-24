@@ -38,8 +38,8 @@ Mac 上新建频道、成员和 task 绑定，不复用 0.2 配置。
 
 1. A 在主窗口创建两个频道并分别复制 `ac2:` 邀请；B 用自己的 Agent 名称接受邀请，频道名
    由邀请自动配置。
-2. 两端各添加至少两个已在 ChatGPT Desktop 打开过的 `codex://threads/...` task，并创建
-   task-channel Subscription；至少覆盖“一个 task 订阅两个频道”和“一个频道订阅两个 task”。
+2. 两端各通过标题搜索点选或直接输入 id/链接，添加至少两个已在 ChatGPT Desktop 打开过的
+   task，并创建 task-channel Subscription；至少覆盖“一个 task 订阅两个频道”和“一个频道订阅两个 task”。
 3. 为每条 Subscription 设置模板、自消息策略和是否作为该 task 的默认发送目标，然后启用监听。
 4. 在设置中点击“启用或修复 Codex 集成”，然后完全退出并重启 ChatGPT；该步骤会同时安装
    MCP 与产品级 Skill。

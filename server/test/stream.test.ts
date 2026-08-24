@@ -46,6 +46,7 @@ async function send(
   sessionId: string,
   to: string,
   text: string,
+  sourceLabel?: string,
 ): Promise<void> {
   const res = await app.fetch(
     new Request(`${ORIGIN}/api/channels/${ch.id}/send`, {
@@ -55,7 +56,17 @@ async function send(
         authorization: `Bearer ${ch.token}`,
         "x-session-id": sessionId,
       },
-      body: JSON.stringify({ to, text }),
+      body: JSON.stringify({
+        to,
+        text,
+        ...(sourceLabel ? {
+          source: {
+            provider: "codex",
+            conversation_id: "01900000-0000-7000-8000-000000000042",
+            label: sourceLabel,
+          },
+        } : {}),
+      }),
     }),
   );
   expect(res.status).toBe(200);
@@ -73,6 +84,7 @@ async function readMessages(
     from: string;
     sender_member_id: string;
     sender_endpoint_id: string;
+    source?: { provider: string; conversation_id?: string; label?: string };
     text: string;
   }>
 > {
@@ -84,6 +96,7 @@ async function readMessages(
     from: string;
     sender_member_id: string;
     sender_endpoint_id: string;
+    source?: { provider: string; conversation_id?: string; label?: string };
     text: string;
   }> = [];
   const deadline = Date.now() + timeoutMs;
@@ -122,7 +135,7 @@ describe("GET /api/channels/:id/stream (SSE)", () => {
     );
     expect(streamRes.status).toBe(200);
     expect(streamRes.headers.get("content-type")).toContain("text/event-stream");
-    await send(app, ch, beta.session_id, "alpha", "ping");
+    await send(app, ch, beta.session_id, "alpha", "ping", "Backend API task");
     const msgs = await readMessages(streamRes, 1);
     expect(msgs).toHaveLength(1);
     expect(msgs[0].from).toBe("beta");
@@ -130,6 +143,11 @@ describe("GET /api/channels/:id/stream (SSE)", () => {
     expect(msgs[0]).toMatchObject({
       sender_member_id: beta.member_id,
       sender_endpoint_id: beta.endpoint_id,
+      source: {
+        provider: "codex",
+        conversation_id: "01900000-0000-7000-8000-000000000042",
+        label: "Backend API task",
+      },
     });
   });
 
@@ -156,6 +174,28 @@ describe("GET /api/channels/:id/stream (SSE)", () => {
     const res = await app.fetch(
       new Request(`${ORIGIN}/api/channels/${ch.id}/stream`, {
         headers: { authorization: `Bearer ${ch.token}` },
+      }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects malformed source trace metadata", async () => {
+    const app = makeApp();
+    const ch = await createChannel(app);
+    const alpha = await join(app, ch, "alpha");
+    const res = await app.fetch(
+      new Request(`${ORIGIN}/api/channels/${ch.id}/send`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${ch.token}`,
+          "x-session-id": alpha.session_id,
+        },
+        body: JSON.stringify({
+          to: "all",
+          text: "bad source",
+          source: { provider: "codex\nbad", conversation_id: "task" },
+        }),
       }),
     );
     expect(res.status).toBe(400);

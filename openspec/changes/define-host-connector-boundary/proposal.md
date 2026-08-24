@@ -12,6 +12,12 @@
 - Channel Service 保持 Host 无关，不保存任何目标会话信息。
 - 本地接收链路拆成 Subscription Runtime 与 Host Connector 两个职责边界。
 - Codex 是第一个且当前唯一 Connector，不把“架构允许”表述成“产品已支持”。
+- App 与 Subscription Runtime 统一使用 `provider + conversation_id`，Host 名称只出现在
+  对应 Connector、集成设置和能力说明中。
+- Host 可以只读列出可绑定会话；Codex 首个实现支持按本地标题或 id 搜索，并在绑定时另做
+  可投递 preflight。
+- 会话标题只用于当次发现结果，不进入 Binding；持久化只保存 `provider + conversation_id`，避免
+  Host 端改名后显示陈旧标题。
 - Host Binding 只保存在本机，目标会话 id 和 Runtime 路径不进入服务端或模型正文。
 - Connector 只保证 Host 接受一次输入；AI 完成、用户已读和另一条消息发送是不同状态。
 - 出站发送继续走 MCP/REST，不经过 Host Connector；当前本机 MCP 只暴露
@@ -24,7 +30,7 @@
 ## 非目标
 
 - 不实现 Claude、Cursor 或其他 Host。
-- 不建设动态插件加载、注册中心、SDK、菜单栏 UI 或进程守护。
+- 不建设动态插件加载、插件市场、SDK 或进程守护。
 - 不重写已经工作的 SSE、游标和重连代码。
 - 不实现菜单栏 UI、自动选择当前 task 或读取 task 完整历史。
 - 不承诺 Host 关闭、Bridge 停止或设备离线后仍能唤醒 AI。

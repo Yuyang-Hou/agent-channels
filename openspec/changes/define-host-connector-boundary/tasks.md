@@ -6,6 +6,7 @@
 - [x] 定义本地 Host Binding、标准入站信封和接受回执
 - [x] 明确能力分级、投递语义、恢复与信任边界
 - [x] 将 Codex 定位为首个实现而非产品协议
+- [x] 将 App 与 Runtime Binding 入口改为 `provider + conversation_id`
 
 ## 实施与验收
 
@@ -17,6 +18,7 @@
 - [x] 覆盖 IPC 拆帧、client discovery 拒绝、busy steer、接受回执与不确定结果停机测试
 - [x] 在真实 ChatGPT Desktop 上验证切换 task 后仍可投递且空闲零 turn
 - [x] 完成两台独立设备的公网双向 Host 入站验收
+- [x] 增加 Codex 本机会话标题/id 搜索，标题不落盘，并在点选绑定时保留 owner preflight
 - [ ] 完成两个独立用户且双方 AI 通过 `send_to_channel(message)` 主动发信的双向闭环
 
-只有决定实现第二个 Host 时，才评估通用配置格式或 Connector registry。
+只有决定实现第二个 Host 时，才评估动态 Connector registry 或 SDK。

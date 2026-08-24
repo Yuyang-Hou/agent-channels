@@ -19,6 +19,36 @@ Channel Service 和 Subscription Runtime MUST 使用 Host 无关的消息与投�
 - When 用户尝试启动监听
 - Then 本地 Runtime 明确拒绝启动且不消费频道消息
 
+### Requirement: Host 会话可发现且绑定需复验
+
+支持会话发现的 Connector MUST 只返回本机可绑定会话的最小索引字段；列表命中 MUST NOT 代替
+绑定 preflight。产品 MUST 同时允许按标题搜索点选与直接输入 conversation id。标题 MUST NOT
+写入 Binding；绑定的稳定身份只能使用 `provider + conversation_id`。
+
+#### Scenario: 按标题搜索 Codex 会话
+
+- Given 本机存在多个 Codex 用户主会话和内部 subagent/reviewer 会话
+- When 用户输入标题关键词搜索
+- Then App 只展示匹配的未归档用户主会话及其 id，不返回正文或内部会话
+
+#### Scenario: Host 端修改标题
+
+- Given 用户已绑定一个会话，随后在 Host 端修改其标题
+- When App 恢复 Subscription 或展示已绑定会话
+- Then App 不展示本机缓存的旧标题，Binding 仍由 provider 与 conversation id 唯一定位
+
+#### Scenario: 直接输入 id
+
+- Given 用户已知道目标 conversation id 或 Host 链接
+- When 用户直接发起绑定
+- Then App 不要求列表中先出现该会话，并通过对应 Connector 校验后保存 Binding
+
+#### Scenario: 列表存在但当前不可投递
+
+- Given 会话索引中存在目标 Codex 会话但 Desktop owner 尚未恢复
+- When 用户选择该会话绑定
+- Then preflight 明确失败并提示重新打开会话，不创建 Subscription
+
 ### Requirement: Binding 保持本地
 
 Host 类型、目标会话 id、Runtime 路径和本机凭证 MUST 只保存在接收设备。

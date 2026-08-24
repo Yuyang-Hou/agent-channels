@@ -28,8 +28,8 @@ type JsonRpcResponse = {
 
 type InputStream = NodeJS.ReadableStream & AsyncIterable<string | Buffer>;
 
-export type CodexTaskSource = {
-  provider: "codex";
+export type ConversationSource = {
+  provider: string;
   conversationId: string;
 };
 
@@ -40,15 +40,15 @@ export type ChannelSettingsPatch = {
 };
 
 export type LocalAppRequest =
-  | { version: 2; operation: "list_channels"; source: CodexTaskSource }
-  | { version: 2; operation: "send"; source: CodexTaskSource; message: string; channel?: string }
-  | { version: 2; operation: "subscribe"; source: CodexTaskSource; channel: string }
-  | { version: 2; operation: "unsubscribe"; source: CodexTaskSource; channel: string }
-  | { version: 2; operation: "get_settings"; source: CodexTaskSource; channel: string }
+  | { version: 2; operation: "list_channels"; source: ConversationSource }
+  | { version: 2; operation: "send"; source: ConversationSource; message: string; channel?: string }
+  | { version: 2; operation: "subscribe"; source: ConversationSource; channel: string }
+  | { version: 2; operation: "unsubscribe"; source: ConversationSource; channel: string }
+  | { version: 2; operation: "get_settings"; source: ConversationSource; channel: string }
   | {
     version: 2;
     operation: "update_settings";
-    source: CodexTaskSource;
+    source: ConversationSource;
     channel: string;
     settings: ChannelSettingsPatch;
   };
@@ -56,13 +56,18 @@ export type LocalAppRequest =
 export type LocalLedgerRequest = {
   version: 2;
   operation: "record_received" | "record_outcome";
-  source: CodexTaskSource;
+  source: ConversationSource;
   channel: string;
   subscription_id: string;
   event: {
     id: number;
     from?: string;
     sender_name?: string;
+    source?: {
+      provider: string;
+      conversation_id?: string;
+      label?: string;
+    };
     to?: string;
     text?: string;
     at?: number;
@@ -320,7 +325,7 @@ export function requestViaLocalApp(
   });
 }
 
-function codexSource(call: Record<string, unknown>): CodexTaskSource {
+function codexSource(call: Record<string, unknown>): ConversationSource {
   const meta = call._meta;
   if (!isRecord(meta) || typeof meta.threadId !== "string" || !CODEX_THREAD_ID.test(meta.threadId)) {
     throw new ExplicitToolError(
@@ -350,7 +355,7 @@ function channelArgument(args: Record<string, unknown>, required: boolean): stri
 function buildLocalRequest(
   tool: string,
   args: Record<string, unknown>,
-  source: CodexTaskSource,
+  source: ConversationSource,
 ): LocalAppRequest {
   switch (tool) {
     case "list_channels":

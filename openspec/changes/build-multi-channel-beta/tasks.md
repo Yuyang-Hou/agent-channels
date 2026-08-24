@@ -41,6 +41,7 @@
 ## Task Bindings And Runtime
 
 - [x] 实现 TaskBinding 的显式创建、兼容性状态和删除保护
+- [x] 支持按 Host 会话标题/id 搜索点选绑定，标题不落盘，同时保留 id/链接直绑与最终 preflight
 - [x] 实现 TaskBinding × ChannelConnection Subscription 管理及唯一默认出站约束
 - [x] 为每条 enabled Subscription 监管独立 listen-here sidecar、游标和错误状态
 - [x] 扩展本机 App IPC：sidecar 在 Host delivery 前 `record_received` 并等待持久化 ack，结束后记录 outcome
@@ -65,6 +66,8 @@
 ## Templates And Policies
 
 - [x] 实现每 Subscription 的完整消息模板、固定变量校验和默认 Markdown 卡片模板
+- [x] 增加 `{message_source}`，task 使用 Host 名称与缩短 id、App 使用产品名并兼容旧客户端回退
+- [x] 消息保留可扩展 `provider + conversation_id + label` 来源引用并提供来源会话 id 复制入口
 - [x] 模板编辑区使用 macOS 原生 Markdown 渲染提供未保存草稿预览
 - [x] Connector 仅展开用户模板，多行正文继承占位符的 blockquote 前缀，不再额外包裹固定卡片
 - [x] 实现精确来源 endpoint 永不回投的安全不变量

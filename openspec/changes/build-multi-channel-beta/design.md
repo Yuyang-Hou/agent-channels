@@ -44,7 +44,8 @@ Endpoint
   id, member_id, kind(app|task), label, status
 
 Message
-  id, channel_id, sender_member_id, sender_endpoint_id, sender_name, text, created_at
+  id, channel_id, sender_member_id, sender_endpoint_id, sender_name,
+  source(provider, conversation_id, label), text, created_at
 
 OnlineSession
   id, member_id, endpoint_id, cursor, expires_at
@@ -59,8 +60,10 @@ OnlineSession
 账户或设备证明，因此不能承诺阻止同一个自然人在拿到另一份新邀请后创建全新 Member；UI 和
 文档必须明确这个边界。
 
-Endpoint 只用于来源和自消息判断。task Endpoint 的 id 是不透明随机值；服务端不得保存
-provider、Codex thread id、工作目录或本机路径。
+Endpoint 只用于来源和自消息判断。task Endpoint 的 id 是不透明随机值；服务端不得保存目标
+TaskBinding、工作目录或本机路径。发送端可为单条 Message 提供
+`source(provider, conversation_id, label)` 供接收端追溯；它是不可信审计元数据，不参与路由、授权
+或自消息判断。
 
 `sender_name` 由服务端根据凭证对应的 Member 生成，UI 与 Host 卡片使用它展示；`from` callsign
 继续承担端点路由兼容职责，不作为用户昵称。ChannelConnection 的 `display_name` 是本机频道昵称，
@@ -88,7 +91,7 @@ DeliveryTemplate
 
 LocalMessage
   channel_id, message_id, sender_member_id, sender_endpoint_id, sender_label,
-  direction, text, server_created_at, local_received_at, outbound_state
+  source(provider, conversation_id, label), direction, text, server_created_at, local_received_at, outbound_state
 
 SubscriptionDelivery
   subscription_id, channel_id, message_id,
@@ -154,8 +157,11 @@ App 手工发送使用当前选中的 ChannelConnection 和 app endpoint。发�
 
 TaskBinding 只描述一个本机 Host 会话；Subscription 才表达“这个 task 接收这个频道”。删除
 TaskBinding 必须先停掉相关 Subscription，删除 ChannelConnection 也必须停止其全部运行态。
-TaskBinding 的展示名称只从 Codex 本机 `state_5.sqlite` 的 `name/title` 元数据读取，不读取正文或
-task snapshot；元数据缺失或格式不兼容时继续使用缩短的 conversation id。
+TaskBinding 只持久化 `provider + conversation_id`，绑定后的稳定展示使用 Host 名称与缩短 id。
+标题仅在会话搜索结果中通过对应 Host Connector 的只读发现能力即时获取，不写入 Binding。Codex 首个实现只从本机
+`state_5.sqlite` 读取用户主会话的 `id/name/title/updated_at` 索引，排除 subagent/reviewer，且不读取
+正文或 snapshot；用户可按标题或 id 搜索点选，也可直接输入 id/链接。创建 Subscription 前仍执行
+Host preflight。
 
 P0 每条启用的 Subscription 监管一个现有 `listen-here` sidecar，保持独立 session、游标、
 错误和不确定投递状态。一个 Subscription 失败不得暂停其他 Subscription。App 可以为频道
@@ -225,6 +231,7 @@ Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设
 
 - `{channel_name}`
 - `{sender_name}`
+- `{message_source}`
 - `{message_text}`
 - `{message_id}`
 
@@ -232,6 +239,9 @@ Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设
 默认值包含 Agent Channels 标题、频道、发送者、消息 id、正文和 blockquote 样式。Connector 只展开
 变量，并让多行 `{message_text}` 继承该占位符所在的 blockquote 前缀，不在模板外增加可见外壳。
 远端正文只作为 `{message_text}` 数据插入，不能成为模板指令或选择目标 Binding。
+`{message_source}` 对 task 消息使用 Host 名称与缩短的会话 id，对 App 消息使用
+`Agent Channels App`；旧客户端未提供来源时回退为发送者昵称。完整来源引用随消息写入本地记录，
+其中 provider 与 conversation_id 用于追溯但不进入默认模板。
 
 精确 `sender_endpoint_id == subscription.task_endpoint_id` 的消息永远过滤，避免 task 自回声循环。
 每条 Subscription 另有 `same_member_policy`：
