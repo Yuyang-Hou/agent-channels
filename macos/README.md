@@ -53,8 +53,9 @@ Mac 上新建频道、成员和 task 绑定，不复用 0.2 配置。
 
 App 图标使用 E3 品牌稿；菜单栏使用同一识别特征的单色 SVG，并由 macOS 作为模板图标渲染。
 
-本地构建产物采用 ad-hoc 签名，尚未 Developer ID 签名或公证。只有自动化、双机真实 Host
-与安全检查全部通过后，才发布 `v0.3.0-beta.2` GitHub prerelease。
+`v0.3.0-beta.2` 已作为公开 GitHub prerelease 发布。预上线分发只使用 Beta 标签；当前产物采用
+ad-hoc 签名，尚未 Developer ID 签名或公证。双机真实 Host 与安全检查通过前，不发布稳定版，
+也不声明生产就绪。
 
 ## 本机数据
 

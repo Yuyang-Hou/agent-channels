@@ -1,7 +1,7 @@
 # Verification
 
-Status: 0.3.0-beta.2 local acceptance candidate built; automated gates pass. Clean-install, two-machine,
-real-Host, security inspection and public release gates remain pending.
+Status: 0.3.0-beta.2 prerelease published; automated gates pass. Clean-install, two-machine, real-Host,
+security inspection and stable-release gates remain pending.
 
 ## Current Beta Candidate
 
@@ -80,7 +80,7 @@ tasks. Do not reuse or import 0.2 data.
 
 ## Release Gate
 
-Only after all automated, real-Host and security checks pass may the project publish a new 0.3 Beta Release.
-The verification record must include artifact path, SHA-256, signing status, two-machine evidence and remaining
-distribution limitations. Until then, this ad-hoc DMG remains an acceptance candidate and existing 0.2 Release
-records remain historical facts.
+GitHub prerelease `v0.3.0-beta.2` is public, non-draft and contains the 28,677,748-byte arm64 DMG whose GitHub
+digest matches the SHA-256 above. Pre-launch distribution remains Beta-only. Until the real-Host and security
+checks pass, the ad-hoc, non-notarized package remains an acceptance build: no stable release and no
+production-ready claim. Existing 0.2 Release records remain historical facts.

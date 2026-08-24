@@ -63,4 +63,4 @@
 - [ ] 一个 task 同时订阅两个频道时不串台；一个频道绑定两个 task 时状态和游标独立
 - [ ] 模板和 same-member 策略在真实 turn 中生效，filtered 与空闲均为零 turn
 - [ ] 断网、App 重启、Host 不可用和 unknown 回执均不静默丢消息或跨 Subscription 扩散
-- [ ] 完成上述证据后再构建、签名、校验并发布全新 0.3 Beta；发布前不改写现有 0.2 Release 事实
+- [x] 构建、签名、校验并发布全新 0.3 Beta prerelease；不改写现有 0.2 Release 事实

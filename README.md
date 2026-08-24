@@ -31,7 +31,7 @@
 ## macOS 0.3 Beta 验收包
 
 当前候选版本为 `0.3.0-beta.2`，它内嵌自包含 Bridge，不要求用户安装 Node、npm 或 Codex CLI。
-正式发布 GitHub prerelease 前可从源码构建：
+已发布 [v0.3.0-beta.2 GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.2)；也可从源码构建：
 
 ```bash
 ./macos/build-app.sh
