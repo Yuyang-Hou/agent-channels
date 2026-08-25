@@ -267,7 +267,7 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 
 - **GIVEN** 用户进入“转发到会话”且当前 Host 支持会话发现
 - **WHEN** 用户按标题或 id 搜索，或直接输入会话 id/链接
-- **THEN** App 不自动展示最近会话，仅在用户输入非空关键词后从全部未归档用户主会话索引中匹配，并排除 subagent/reviewer；匹配项在搜索框下方以不透出底层内容的系统实色浮层按内容高度展开，整行点选即绑定且不改变页面布局；用户也可直接发起绑定，创建 Subscription 前执行 Host preflight，搜索标题不写入 Binding
+- **THEN** App 不自动展示最近会话，仅在用户输入非空关键词后从全部未归档用户主会话索引中匹配，并排除 subagent/reviewer；匹配项在搜索框下方以不透出底层内容的系统实色浮层按内容高度展开，浮层位于同一区域的说明文字之上，整行点选即绑定且不改变页面布局；用户也可直接发起绑定，创建 Subscription 前执行 Host preflight，搜索标题不写入 Binding
 
 #### Scenario: 服务端成员身份重建后恢复监听
 

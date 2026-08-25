@@ -4180,6 +4180,7 @@ private struct ChannelSubscriptionsView: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+                .zIndex(1)
                 Text("当前支持 ChatGPT Codex。可按本地会话标题搜索，也可直接粘贴 ID；绑定时会再次验证会话是否可投递。")
                     .font(.caption).foregroundStyle(.secondary)
             }
