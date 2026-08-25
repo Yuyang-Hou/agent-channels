@@ -1,4 +1,4 @@
-# Proposal: Package Pijoo 0.3.0 Beta 19
+# Proposal: Release Pijoo 0.3.0 Beta 19
 
 ## Why
 
@@ -8,9 +8,10 @@ Pijoo 已合并新建专属 Codex 会话、频道多人 @ 与仅接收 @我的�
 
 - 将 App 与内嵌 MCP 版本提升为 `0.3.0-beta.19`，bundle build 提升为 `19`。
 - 从已推送 `main` 的确定提交构建 Developer ID 签名的 Apple Silicon DMG。
-- 校验 DMG、App 深度签名、内嵌 sidecar/MCP 版本、Pijoo Skill 与 SHA-256。
+- 提交 Apple notarization，Accepted 后 staple，并校验 Gatekeeper。
+- 创建 GitHub prerelease、上传 DMG，并回下载校验公开资产、内嵌 sidecar/MCP 版本与 Pijoo Skill。
 
 ## Non-goals
 
-- Apple 公证、staple、安装到 `/Applications` 或创建 GitHub Release。
+- 安装到 `/Applications` 或自动替换用户当前 App。
 - Intel 构建或稳定版发布。

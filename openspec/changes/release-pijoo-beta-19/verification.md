@@ -1,6 +1,6 @@
 # Verification
 
-Status: Developer ID signed local package complete; not notarized, stapled, installed or published as a GitHub Release.
+Status: Developer ID signed package complete; notarization and GitHub prerelease in progress.
 
 ## Release Evidence
 
@@ -18,6 +18,8 @@ Status: Developer ID signed local package complete; not notarized, stapled, inst
 - macOS App self-test passed after merging dedicated conversation creation and channel mentions.
 - `openspec validate --strict --all`: 10 passed; `git diff --check`: passed.
 
-## Boundary
+## Pending Public Release Evidence
 
-- The DMG has a stable Developer ID signature but has not been submitted to Apple notarization, stapled, installed or published as a GitHub Release; it is not claimed as a public distribution release.
+- Apple notarization submission, Accepted status, staple and Gatekeeper evidence.
+- GitHub prerelease URL and downloaded public asset verification.
+- The App remains uninstalled locally unless separately requested.

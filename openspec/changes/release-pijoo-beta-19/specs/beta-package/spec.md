@@ -11,11 +11,11 @@ Beta.19 DMG MUST 从已推送 `main` 的确定提交构建，使用稳定 Develo
 - **WHEN** 维护者检查 beta.19 DMG
 - **THEN** 可以核对源提交、DMG SHA-256、App 深度签名、内嵌可执行文件、MCP 版本和 Pijoo Skill
 
-### Requirement: Publication Boundary
+### Requirement: Notarized Public Beta
 
-本地发包 MUST NOT 被描述为已公证或已公开发布，除非 notarization、staple、Gatekeeper 与公开 Release 均另行完成。
+公开 Beta MUST 获得 Apple notarization Accepted、staple 并通过 Gatekeeper，GitHub prerelease MUST 指向构建源码提交并只附带校验一致的 beta.19 arm64 DMG。
 
-#### Scenario: Package is handed off locally
+#### Scenario: Tester downloads the public prerelease
 
-- **WHEN** Developer ID 签名 DMG 构建和本地校验完成
-- **THEN** 交付记录明确区分本地签名包与公开公证版本
+- **WHEN** 测试者下载并打开 beta.19 GitHub prerelease DMG
+- **THEN** DMG 与其中的 Pijoo App 都通过签名、staple 与 Gatekeeper 校验，且 MCP/Skill 与发布记录一致
