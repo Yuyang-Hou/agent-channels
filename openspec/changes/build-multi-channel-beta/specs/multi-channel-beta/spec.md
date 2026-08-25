@@ -117,7 +117,7 @@ App MUST 以主窗口展示多个 ChannelConnection，并为当前频道提供�
 
 - **GIVEN** 当前频道已有成员和已连接的 AI 会话
 - **WHEN** 用户切换到对应 Tab
-- **THEN** 成员危险操作收敛在行尾菜单，会话页命名为“转发到会话”，明确频道消息将作为新输入
+- **THEN** 邀请与成员行使用相同宽度的前导状态栏并对齐标题；成员危险操作收敛在行尾菜单，会话页命名为“转发到会话”，明确频道消息将作为新输入
   发送到具体 AI 会话，并按需展开接收、默认回复频道、模板等低频设置
 
 ### Requirement: 每个成员拥有独立凭证
@@ -267,7 +267,7 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 
 - **GIVEN** 用户进入“转发到会话”且当前 Host 支持会话发现
 - **WHEN** 用户按标题或 id 搜索，或直接输入会话 id/链接
-- **THEN** App 允许从最小会话索引点选或直接发起绑定，并在创建 Subscription 前执行 Host preflight；搜索标题不写入 Binding
+- **THEN** App 不自动展示最近会话，仅在用户输入非空关键词后从全部未归档用户主会话索引中匹配，并排除 subagent/reviewer；匹配项在搜索框下方按内容高度展开为浮层，整行点选即绑定且不改变页面布局；用户也可直接发起绑定，创建 Subscription 前执行 Host preflight，搜索标题不写入 Binding
 
 #### Scenario: 重启恢复
 

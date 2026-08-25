@@ -2231,12 +2231,17 @@ extension AppModel {
     }
 
     func searchHostConversations() async {
+        let query = draftTask.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            conversationSearchResults = []
+            conversationSearchStatus = ""
+            return
+        }
         busy = true
         defer { busy = false }
         do {
-            let query = draftTask.trimmingCharacters(in: .whitespacesAndNewlines)
             var arguments = ["host-conversations", "--host-provider", "codex", "--limit", "30"]
-            if !query.isEmpty { arguments.append(contentsOf: ["--query", query]) }
+            arguments.append(contentsOf: ["--query", query])
             let result = try await Sidecar.run(arguments)
             guard result.status == 0,
                   let data = result.stdout.data(using: .utf8),
@@ -3883,6 +3888,7 @@ private struct ChannelMembersView: View {
                                 HStack(spacing: 10) {
                                     Image(systemName: invitation.status == "active" ? "envelope.open" : "envelope")
                                         .foregroundStyle(invitation.status == "active" ? Color.green : Color.secondary)
+                                        .frame(width: 24)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(invitation.label.isEmpty ? "未命名邀请" : invitation.label)
                                         Text(invitationSummary(invitation))
@@ -3905,6 +3911,7 @@ private struct ChannelMembersView: View {
                     ForEach(model.members) { member in
                         HStack(spacing: 10) {
                             Circle().fill(member.online == true ? .green : .secondary.opacity(0.35)).frame(width: 8, height: 8)
+                                .frame(width: 24)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(member.name.isEmpty ? member.memberID : member.name)
                                 Text(memberSummary(member))
@@ -3949,48 +3956,61 @@ private struct ChannelSubscriptionsView: View {
                     TextField("搜索标题，或输入会话 ID / 链接", text: $model.draftTask)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { Task { await model.searchHostConversations() } }
+                        .onChange(of: model.draftTask) { _ in
+                            model.conversationSearchResults = []
+                            model.conversationSearchStatus = ""
+                        }
+                        .overlay(alignment: .topLeading) {
+                            if !model.conversationSearchResults.isEmpty {
+                                ScrollView {
+                                    LazyVStack(spacing: 0) {
+                                        ForEach(model.conversationSearchResults) { conversation in
+                                            Button {
+                                                Task { await model.bindHostConversation(conversation) }
+                                            } label: {
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text(conversation.title).lineLimit(1)
+                                                    Text("\(hostDisplayName(conversation.provider)) · \(conversation.conversationID)")
+                                                        .font(.caption2).foregroundStyle(.secondary)
+                                                }
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 7)
+                                                .contentShape(Rectangle())
+                                            }
+                                            .buttonStyle(.plain)
+                                            .disabled(model.busy)
+                                            if conversation.id != model.conversationSearchResults.last?.id { Divider() }
+                                        }
+                                    }
+                                }
+                                .frame(height: min(CGFloat(model.conversationSearchResults.count) * 48, 210))
+                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+                                .overlay { RoundedRectangle(cornerRadius: 7).stroke(.separator) }
+                                .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
+                                .offset(y: 30)
+                            } else if !model.conversationSearchStatus.isEmpty {
+                                Text(model.conversationSearchStatus)
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(10)
+                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+                                    .overlay { RoundedRectangle(cornerRadius: 7).stroke(.separator) }
+                                    .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                                    .offset(y: 30)
+                            }
+                        }
                     Button("搜索") { Task { await model.searchHostConversations() } }
-                        .disabled(model.busy)
+                        .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Button("按 ID 绑定") { Task { await model.addTaskSubscription() } }
                         .buttonStyle(.borderedProminent)
                         .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                if !model.conversationSearchResults.isEmpty {
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(model.conversationSearchResults) { conversation in
-                                HStack(spacing: 10) {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(conversation.title).lineLimit(1)
-                                        Text("\(hostDisplayName(conversation.provider)) · \(conversation.conversationID)")
-                                            .font(.caption2).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Button("绑定") {
-                                        Task { await model.bindHostConversation(conversation) }
-                                    }
-                                    .disabled(model.busy)
-                                }
-                                .padding(.vertical, 7)
-                                if conversation.id != model.conversationSearchResults.last?.id { Divider() }
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 210)
-                    .padding(.horizontal, 10)
-                    .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 7))
-                } else if !model.conversationSearchStatus.isEmpty {
-                    Text(model.conversationSearchStatus).font(.caption).foregroundStyle(.secondary)
                 }
                 Text("当前支持 ChatGPT Codex。可按本地会话标题搜索，也可直接粘贴 ID；绑定时会再次验证会话是否可投递。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(16)
-            .task {
-                if model.conversationSearchResults.isEmpty && model.conversationSearchStatus.isEmpty {
-                    await model.searchHostConversations()
-                }
-            }
+            .zIndex(1)
             Divider()
             if model.selectedSubscriptions.isEmpty {
                 EmptyStateView(title: "尚未连接会话", systemImage: "link.badge.plus", detail: "搜索或输入 AI 会话，让该会话接收本频道消息。") { EmptyView() }
