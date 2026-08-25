@@ -17,6 +17,8 @@
    Developer ID 签名、公证并发布 `0.3.0-beta.18` Apple Silicon 正式 Beta。
 7. [`changes/add-channel-mentions`](./changes/add-channel-mentions/)：为 App 与 AI 发送增加不@、
    @所有人和@多名成员，并让每条“转发到会话”Subscription 可选择仅接收提及自己的消息。
+8. [`changes/release-pijoo-beta-19`](./changes/release-pijoo-beta-19/)：从合并全部本地功能后的
+   `main` 确定提交构建并校验 `0.3.0-beta.19` Apple Silicon DMG；本轮不创建公开 Release。
 
 已完成设计、尚未进入实现的 change：
 
@@ -37,7 +39,7 @@ IPC Connector 已完成。0.2 的发送凭证与断线状态修复继续作为�
 4. [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
 5. [`../docs/OPEN_QUESTIONS.md`](../docs/OPEN_QUESTIONS.md)
 
-当前只执行上述六个活动 change；账号 change 仅作为下一阶段设计。当前不建设通用插件框架、其他 Host Connector、独立模型
+当前只执行上述八个活动 change；账号 change 仅作为下一阶段设计。当前不建设通用插件框架、其他 Host Connector、独立模型
 Runtime 或完整聊天客户端。已完成的 Codex 验证记录保留在
 [`changes/archive/2026-08-19-add-codex-thread-bridge`](./changes/archive/2026-08-19-add-codex-thread-bridge/)。
 

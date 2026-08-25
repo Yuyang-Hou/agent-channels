@@ -39,7 +39,7 @@ Pijoo `0.3.0-beta.18` 已使用 Developer ID 签名、通过 Apple 公证并作�
 
 ```bash
 ./macos/build-app.sh
-open "macos/build/Pijoo-0.3.0-beta.18-arm64.dmg"
+open "macos/build/Pijoo-0.3.0-beta.19-arm64.dmg"
 ```
 
 0.3 不迁移 0.2 数据。把 App 拖入 Applications 后，在主窗口新建或用 `ac2:` 邀请加入频道，
