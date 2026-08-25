@@ -1,8 +1,8 @@
 # Verification
 
-Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.13 local candidate adds the product Skill, editable
-Markdown external-message card, replay recovery, on-demand conversation search, member identity recovery, client log export and a fixed internal signing
-identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.13
+Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.14 local candidate adds the product Skill, editable
+Markdown external-message card, replay recovery, on-demand conversation search with corrected overlay stacking, member identity recovery, client log export and a fixed internal signing
+identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.14
 publication remain pending.
 
 ## Post-candidate Working Tree
@@ -159,6 +159,12 @@ publication remain pending.
 
 - The search action row now has a higher local z-index than its following explanatory text, so the opaque result overlay covers that sibling instead of letting the later-drawn label appear above it.
 - This is a source-only layout correction; no App package was rebuilt or installed.
+
+## 2026-08-25 Beta.14 Local Package
+
+- `fix-conversation-search-layer` commit `ef21003` was merged into local `main` as `d80ce43`; the package includes the corrected conversation-search overlay stacking.
+- `macos/build/Agent-Channels-0.3.0-beta.14-arm64.dmg` is 28,506,699 bytes with SHA-256 `c28b85da0b2dddd50f8798d3eeda35ff09965a0d37ae26ff1d649c31c0ff9088`.
+- The mounted DMG contains release version `0.3.0-beta.14`, bundle build `14`, a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.14`; `hdiutil verify` passes. It is not notarized, installed, pushed or published.
 
 ## 2026-08-24 Configurable Invitations
 
