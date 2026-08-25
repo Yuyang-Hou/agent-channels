@@ -2,12 +2,9 @@
 
 ## 当前阶段
 
-当前处于 **Pijoo 0.3 Beta 发布准备**：多频道 App、Host 无关边界和 Codex 公网入站链路已经完成；
-工作名称已在源码中 clean-slate 切换为 Pijoo，当前源码候选为 `0.3.0-beta.17`。Pijoo App、DMG、
-Developer ID 签名和公证尚未构建或执行。
-
-公开 GitHub prerelease 仍是旧工作名称的 beta.2；旧 beta.16 是固定内测签名的本地验收包，
-不是 Pijoo 或 Developer ID 已公证的生产分发版本。
+当前处于 **Pijoo 0.3 Beta 外部试用**：多频道 App、Host 无关边界和 Codex 公网入站链路已经完成；
+`0.3.0-beta.17` 已从 `main` 构建，使用 Developer ID 签名、通过 Apple 公证并作为
+[GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.17) 发布。
 
 ## 已完成
 
@@ -24,7 +21,7 @@ Developer ID 签名和公证尚未构建或执行。
 | CLI 失败状态 | 已完成 | 未支持 Host 参数、Host 不可用和错误凭证均明确失败 |
 | Codex Desktop IPC | 已完成 | 无 daemon/env，空闲 start 与忙时 steer 已实机通过；不确定回执停机有自动化覆盖 |
 | 两设备公网双向入站 | 已完成 | A、B 两台 Mac 均完成频道消息 → Desktop IPC → 目标 task 真实 turn；正文按不可信输入处理 |
-| Apple Silicon 菜单栏包 | Pijoo 源码已完成，待构建 | 旧 beta.16 已验证原生 App、自包含 sidecar 与 DMG；新 Bundle ID 尚未打包实机验证 |
+| Apple Silicon 菜单栏包 | Beta 17 已发布 | Developer ID 签名、公证、staple、DMG 与挂载后 App Gatekeeper 均通过；待测试者实机产品验收 |
 | 安全本机配置 | 已完成 | token/owner password 进入 Keychain；监听 secret 走 stdin；MCP 配置需用户确认 |
 | 只读 task 预检 | 已完成 | 打包版对当前真实 task owner discovery 通过且不创建 turn |
 | Task 频道工具 | 本地代码已完成，待打包实机 | 七个 task-scoped 工具通过 `_meta.threadId` 精确路由；来源查询只读本地最近投递记录，MCP 不持有接收链路 |
@@ -49,7 +46,7 @@ Developer ID 签名和公证尚未构建或执行。
 
 ## 尚未开始
 
-- Developer ID 签名、公证、静默自更新和 Intel Mac；
+- 静默自更新和 Intel Mac；
 - 正式 Human 账户、跨设备 Membership、邀请和撤权体验；
 - 离线未读摘要和恢复选择 UI；
 - 跨进程原子 claim 与并发孤儿 sidecar 下的严格 exactly-once；

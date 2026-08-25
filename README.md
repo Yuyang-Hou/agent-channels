@@ -30,9 +30,9 @@
 
 ## macOS 0.3 Beta 验收包
 
-历史工作名称下已发布 `0.3.0-beta.2`，最后一个本地验收包是 `beta.16`。当前 Pijoo
-源码候选为 `0.3.0-beta.17`，尚未构建安装包；安装包将内嵌自包含 Bridge，不要求用户安装
-Node、npm 或 Codex CLI。[历史 v0.3.0-beta.2 GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.2)；可从源码构建：
+Pijoo `0.3.0-beta.17` 已使用 Developer ID 签名、通过 Apple 公证并作为
+[GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.17) 发布。
+安装包内嵌自包含 Bridge，不要求用户安装 Node、npm 或 Codex CLI；也可从源码构建：
 
 ```bash
 ./macos/build-app.sh
@@ -47,7 +47,7 @@ App 使用 E3 品牌图标和单色菜单栏图标。用户可在设置中开启
 每 24 小时自动检查并下载 arm64 DMG，下次启动完成签名校验、替换并自动重新打开。也可手动
 点击“检查并下载 Beta 更新”。
 
-本地候选包使用固定内测签名，但仍未使用 Developer ID 或公证，不是生产分发版本。完整构建、双机验收与数据路径见
+Beta 17 是可公开分发的已公证测试包，但尚未完成双机真实 Host 产品验收，不是稳定版。完整构建、双机验收与数据路径见
 [`macos/README.md`](./macos/README.md)。
 
 ## 本地验证
