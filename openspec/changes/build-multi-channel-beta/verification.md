@@ -155,6 +155,11 @@ publication remain pending.
 - `macos/build/Agent-Channels-0.3.0-beta.13-arm64.dmg` is 28,506,272 bytes with SHA-256 `1a0bbebec1e8b583f06f7c68135044fbb2baec03ff161ae80ed10e0b5dc57d24`.
 - The mounted DMG contains release version `0.3.0-beta.13`, bundle build `13`, a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.13`; `hdiutil verify` passes. It is not notarized, installed, pushed or published.
 
+## 2026-08-25 Conversation Search Overlay Stacking
+
+- The search action row now has a higher local z-index than its following explanatory text, so the opaque result overlay covers that sibling instead of letting the later-drawn label appear above it.
+- This is a source-only layout correction; no App package was rebuilt or installed.
+
 ## 2026-08-24 Configurable Invitations
 
 - Owner invitation creation accepts an optional 64-character label, 1–100 uses and 1–720 hours in the App;
