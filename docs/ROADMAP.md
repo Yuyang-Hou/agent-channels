@@ -33,11 +33,14 @@ P1 不增加第二个 Host，先把 Codex 体验做完整。
 
 目标：从临时 token 实验升级为可管理的协作产品。
 
-- Human 账户与设备身份；
-- 持久 Membership、邀请、接受、撤权和频道所有权；
+- GitHub OAuth + PKCE 登录；GitHub 只验证稳定 Human，频道服务签发自己的可撤销 Session；
+- Account、设备身份和跨设备 Membership 恢复，本机 Host 会话与消息历史不上传；
+- 持久 Membership、邀请、接受、撤权、账号级封禁和频道所有权转移；
 - 多设备和多个 Conversation Session 的明确绑定规则；
 - 短期消息保留、审计边界和滥用治理；
 - 服务端共享运行态与高可用评估。
+
+详细设计见 [`../openspec/changes/add-github-account-system`](../openspec/changes/add-github-account-system/)。
 
 ## Later：按真实需求扩展 Host
 

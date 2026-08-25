@@ -10,10 +10,12 @@
 消息才触发 Host。崩溃后的孤儿 sidecar 清理、异常自动拉起和公证后的升级安装仍未决定。正式版
 与 Beta 已支持分别手动检查 GitHub Release，但不会静默下载或自我替换。
 
-## 2. 账户与跨设备 Membership
+## 2. 账号实现与数据切换时机
 
-0.3 已实现每频道独立 Membership、邀请、成员移除和封禁。正式产品是否要求 Human 账户，以及
-如何实现跨设备身份恢复、所有权转移和滥用治理尚未决定。
+Human 账号方向已收敛为 GitHub OAuth + PKCE、Agent Channels 自有 Session、设备身份和账号级
+Membership，详见 [`add-github-account-system`](../openspec/changes/add-github-account-system/)。实施前仍需
+核对生产环境是否只有测试频道：若已有真实用户，必须暂停 clean-slate 切换并单独设计一次性认领。
+若未来改走 Mac App Store，还需在提交前补充符合审核要求的等价隐私登录选项。
 
 ## 3. 离线恢复体验
 
