@@ -13,7 +13,7 @@
 
 ## 3. Publication Boundary
 
-- [ ] Apple notarization Accepted，staple 后通过 Gatekeeper 验证
-- [ ] 创建 `v0.3.0-beta.19` GitHub prerelease 并上传 DMG
-- [ ] 回下载公开资产，复核 SHA-256、签名、staple、Gatekeeper、MCP 与 Skill
-- [ ] 明确记录本轮未安装到 `/Applications`
+- [x] Apple notarization Accepted，staple 后通过 Gatekeeper 验证
+- [x] 创建 `v0.3.0-beta.19` GitHub prerelease 并上传 DMG
+- [x] 回下载公开资产，复核 SHA-256、签名、staple、Gatekeeper、MCP 与 Skill
+- [x] 明确记录本轮未安装到 `/Applications`

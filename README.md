@@ -33,8 +33,8 @@ App 与 AI 发送均支持不@、@所有人和@多名频道成员；每条“转
 
 ## macOS 0.3 Beta 验收包
 
-Pijoo `0.3.0-beta.18` 已使用 Developer ID 签名、通过 Apple 公证并作为
-[GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.18) 发布。
+Pijoo `0.3.0-beta.19` 已使用 Developer ID 签名、通过 Apple 公证并作为
+[GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.19) 发布。
 安装包内嵌自包含 Bridge，不要求用户安装 Node、npm 或 Codex CLI；也可从源码构建：
 
 ```bash
