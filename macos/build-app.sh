@@ -192,6 +192,9 @@ hdiutil create \
   -ov \
   -format UDZO \
   "$DMG" >/dev/null
+if [[ "$SIGN_IDENTITY" != "-" ]]; then
+  codesign --force --sign "$SIGN_IDENTITY" --timestamp "$DMG"
+fi
 
 echo "Built: $APP"
 echo "Built: $DMG"

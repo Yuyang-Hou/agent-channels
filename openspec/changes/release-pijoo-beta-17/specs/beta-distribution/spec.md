@@ -4,7 +4,7 @@
 
 ### Requirement: Notarized Developer ID Distribution
 
-正式 Beta MUST 由 Developer ID 签名，App 与内嵌可执行文件 MUST 启用 hardened runtime 和安全时间戳，DMG MUST 获得 Apple notarization Accepted 并 staple。
+正式 Beta MUST 由 Developer ID 签名，App 与内嵌可执行文件 MUST 启用 hardened runtime 和安全时间戳，DMG 容器 MUST 使用 Developer ID 时间戳签名、获得 Apple notarization Accepted 并 staple。
 
 #### Scenario: Tester opens the downloaded DMG
 
