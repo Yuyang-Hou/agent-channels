@@ -1,8 +1,8 @@
 # Verification
 
-Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.12 local candidate adds the product Skill, editable
-Markdown external-message card, replay recovery, on-demand conversation search, aligned member management and a fixed internal signing
-identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.12
+Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.13 local candidate adds the product Skill, editable
+Markdown external-message card, replay recovery, on-demand conversation search, member identity recovery, client log export and a fixed internal signing
+identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.13
 publication remain pending.
 
 ## Post-candidate Working Tree
@@ -148,6 +148,12 @@ publication remain pending.
 - The App keeps two local 1 MB client diagnostic logs for lifecycle, UI errors, channel reconnects and Subscription listener failures; it does not log channel text, invitation tokens or member credentials.
 - Settings exposes “导出客户端日志…” and combines the previous and current rolling logs into one user-selected `.log` file without deleting the originals.
 - Swift warnings-as-errors typecheck, the focused macOS self-test, strict OpenSpec validation (4/4) and diff checks pass. No App package was built, installed or published.
+
+## 2026-08-25 Beta.13 Local Package
+
+- `fix-conversation-overlay-binding` commit `07c4325` was merged into local `main` as `2c1ba16`; the package includes the opaque conversation overlay, authenticated Member identity recovery, cancellation handling and exportable client diagnostics.
+- `macos/build/Agent-Channels-0.3.0-beta.13-arm64.dmg` is 28,506,272 bytes with SHA-256 `1a0bbebec1e8b583f06f7c68135044fbb2baec03ff161ae80ed10e0b5dc57d24`.
+- The mounted DMG contains release version `0.3.0-beta.13`, bundle build `13`, a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.13`; `hdiutil verify` passes. It is not notarized, installed, pushed or published.
 
 ## 2026-08-24 Configurable Invitations
 
