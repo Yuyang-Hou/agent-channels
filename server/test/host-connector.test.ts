@@ -73,7 +73,7 @@ describe("Host delivery boundary", () => {
       "--session", "test-session",
       "--host-provider", "codex",
       "--host-conversation", THREAD_ID,
-      "--codex-socket", join("/tmp", "agent-channels-missing.sock"),
+      "--codex-socket", join("/tmp", "pijoo-missing.sock"),
     ]);
     expect(code).toBe(1);
     expect(error.mock.calls.flat().join("\n")).toContain("Codex Desktop IPC socket not found");

@@ -8,9 +8,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 private let defaultOrigin = "https://rogerthat-production-fff6.up.railway.app"
-private let keychainService = "com.agentchannels.channel"
-private let managedConfigStart = "# >>> Agent Channels managed MCP >>>"
-private let managedConfigEnd = "# <<< Agent Channels managed MCP <<<"
+private let keychainService = "dev.pijoo.channel"
+private let managedConfigStart = "# >>> Pijoo managed MCP >>>"
+private let managedConfigEnd = "# <<< Pijoo managed MCP <<<"
 private let githubReleasesURL = URL(string: "https://api.github.com/repos/Yuyang-Hou/agent-channels/releases?per_page=100")!
 private let automaticUpdateChecksKey = "automaticUpdateChecks"
 private let loadedCodexMCPVersionKey = "loadedCodexMCPVersion"
@@ -19,14 +19,14 @@ private let localSendProtocolVersion = 2
 private let maxChannelMessageLength = 8192
 private let maxLocalSendFrameBytes = 64 * 1024
 private let defaultMessageTemplate = """
-> **↗ Agent Channels · 外部频道消息**
+> **↗ Pijoo · 外部频道消息**
 >
 > **频道** `{channel_name}` · **来自** `{sender_name}` · `#{message_id}`
 >
 > {message_text}
 """
 private let defaultSentMessageTemplate = """
-> **↗ Agent Channels · 已发送到频道**
+> **↗ Pijoo · 已发送到频道**
 >
 > **频道** `{channel_name}` · `#{message_id}`
 >
@@ -452,7 +452,7 @@ enum CodexConfigEditor {
     static func managedBlock(sidecar: String, binding: String) -> String {
         [
             managedConfigStart,
-            "[mcp_servers.agent_channels]",
+            "[mcp_servers.pijoo]",
             "command = \(tomlString(sidecar))",
             "args = [\(tomlString("channel-mcp")), \(tomlString("--config")), \(tomlString(binding))]",
             managedConfigEnd,
@@ -463,15 +463,15 @@ enum CodexConfigEditor {
         let startRanges = existing.ranges(of: managedConfigStart)
         let endRanges = existing.ranges(of: managedConfigEnd)
         if startRanges.isEmpty && endRanges.isEmpty {
-            if existing.range(of: #"(?m)^\s*\[mcp_servers\.agent_channels\]\s*$"#, options: .regularExpression) != nil {
-                throw AppFailure("~/.codex/config.toml 已有非 Agent Channels 管理的同名 MCP，请先手动处理")
+            if existing.range(of: #"(?m)^\s*\[mcp_servers\.pijoo\]\s*$"#, options: .regularExpression) != nil {
+                throw AppFailure("~/.codex/config.toml 已有非 Pijoo 管理的同名 MCP，请先手动处理")
             }
             let prefix = existing.isEmpty ? "" : existing.trimmingCharacters(in: .newlines) + "\n\n"
             return prefix + block + "\n"
         }
         guard startRanges.count == 1, endRanges.count == 1,
               startRanges[0].lowerBound < endRanges[0].lowerBound else {
-            throw AppFailure("Agent Channels 配置标记不完整，未修改 ~/.codex/config.toml")
+            throw AppFailure("Pijoo 配置标记不完整，未修改 ~/.codex/config.toml")
         }
         let replacementRange = startRanges[0].lowerBound..<endRanges[0].upperBound
         return existing.replacingCharacters(in: replacementRange, with: block)
@@ -483,7 +483,7 @@ enum CodexConfigEditor {
         if startRanges.isEmpty && endRanges.isEmpty { return existing }
         guard startRanges.count == 1, endRanges.count == 1,
               startRanges[0].lowerBound < endRanges[0].lowerBound else {
-            throw AppFailure("Agent Channels 配置标记不完整，未修改 ~/.codex/config.toml")
+            throw AppFailure("Pijoo 配置标记不完整，未修改 ~/.codex/config.toml")
         }
         var output = existing.replacingCharacters(
             in: startRanges[0].lowerBound..<endRanges[0].upperBound,
@@ -600,7 +600,7 @@ private func renderMessageTemplate(
 
 enum AppPaths {
     static let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("Agent Channels", isDirectory: true)
+        .appendingPathComponent("Pijoo", isDirectory: true)
     static let state = support.appendingPathComponent("state-v2.json")
     static let legacyBinding = support.appendingPathComponent("binding.json")
     static let sendSocket = support.appendingPathComponent("send.sock")
@@ -614,7 +614,7 @@ enum AppPaths {
         .appendingPathComponent(".codex", isDirectory: true)
     static let codexConfig = codexDirectory.appendingPathComponent("config.toml")
     static let codexSkills = codexDirectory.appendingPathComponent("skills", isDirectory: true)
-    static let agentChannelsSkill = codexSkills.appendingPathComponent("agent-channels", isDirectory: true)
+    static let agentChannelsSkill = codexSkills.appendingPathComponent("pijoo", isDirectory: true)
 
     static var appIsInstalled: Bool {
         let app = Bundle.main.bundleURL.standardizedFileURL.path
@@ -634,7 +634,7 @@ enum AppPaths {
 }
 
 enum ClientLog {
-    private static let queue = DispatchQueue(label: "com.agentchannels.client-log")
+    private static let queue = DispatchQueue(label: "dev.pijoo.client-log")
     private static let maxBytes = 1_000_000
 
     static func record(
@@ -657,7 +657,7 @@ enum ClientLog {
                 data.append(try Data(contentsOf: url))
             }
             if data.isEmpty {
-                data = Data("No Agent Channels client log entries.\n".utf8)
+                data = Data("No Pijoo client log entries.\n".utf8)
             }
             try data.write(to: destination, options: .atomic)
         }
@@ -712,11 +712,11 @@ enum ClientLog {
     }
 }
 
-enum AgentChannelsSkillInstaller {
+enum PijooSkillInstaller {
     static var bundledSkill: URL {
         Bundle.main.resourceURL!
             .appendingPathComponent("skills", isDirectory: true)
-            .appendingPathComponent("agent-channels", isDirectory: true)
+            .appendingPathComponent("pijoo", isDirectory: true)
     }
 
     static func isInstalled(
@@ -741,14 +741,14 @@ enum AgentChannelsSkillInstaller {
         destination: URL = AppPaths.agentChannelsSkill
     ) throws {
         guard FileManager.default.fileExists(atPath: source.appendingPathComponent("SKILL.md").path) else {
-            throw AppFailure("App 安装包缺少 Agent Channels Skill，请重新安装")
+            throw AppFailure("App 安装包缺少 Pijoo Skill，请重新安装")
         }
         if itemExists(destination) {
             guard isSymbolicLink(destination) else {
-                throw AppFailure("~/.codex/skills/agent-channels 已存在且不由本 App 管理，请先手动处理")
+                throw AppFailure("~/.codex/skills/pijoo 已存在且不由本 App 管理，请先手动处理")
             }
             guard try resolvedLinkTarget(destination).standardizedFileURL == source.standardizedFileURL else {
-                throw AppFailure("~/.codex/skills/agent-channels 指向其他内容，未覆盖")
+                throw AppFailure("~/.codex/skills/pijoo 指向其他内容，未覆盖")
             }
             return
         }
@@ -775,7 +775,7 @@ enum AgentChannelsSkillInstaller {
         guard itemExists(destination) else { return }
         guard isSymbolicLink(destination),
               try resolvedLinkTarget(destination).standardizedFileURL == source.standardizedFileURL else {
-            throw AppFailure("未移除不由本 App 管理的 Agent Channels Skill")
+            throw AppFailure("未移除不由本 App 管理的 Pijoo Skill")
         }
     }
 
@@ -801,21 +801,21 @@ enum CodexIntegrationInstaller {
     static func install(
         configURL: URL,
         block: String,
-        skillSource: URL = AgentChannelsSkillInstaller.bundledSkill,
+        skillSource: URL = PijooSkillInstaller.bundledSkill,
         skillDestination: URL = AppPaths.agentChannelsSkill
     ) throws {
         let existing = try CodexConfigEditor.reading(configURL) ?? ""
         let updated = try CodexConfigEditor.installing(block: block, into: existing)
-        let skillLinkAlreadyExisted = AgentChannelsSkillInstaller.isManagedLink(
+        let skillLinkAlreadyExisted = PijooSkillInstaller.isManagedLink(
             source: skillSource,
             destination: skillDestination
         )
         do {
-            try AgentChannelsSkillInstaller.install(source: skillSource, destination: skillDestination)
+            try PijooSkillInstaller.install(source: skillSource, destination: skillDestination)
             if updated != existing { try CodexConfigEditor.writing(updated, to: configURL) }
         } catch {
             if !skillLinkAlreadyExisted {
-                try? AgentChannelsSkillInstaller.remove(source: skillSource, destination: skillDestination)
+                try? PijooSkillInstaller.remove(source: skillSource, destination: skillDestination)
             }
             throw error
         }
@@ -823,16 +823,16 @@ enum CodexIntegrationInstaller {
 
     static func remove(
         configURL: URL,
-        skillSource: URL = AgentChannelsSkillInstaller.bundledSkill,
+        skillSource: URL = PijooSkillInstaller.bundledSkill,
         skillDestination: URL = AppPaths.agentChannelsSkill
     ) throws {
-        try AgentChannelsSkillInstaller.validateRemoval(source: skillSource, destination: skillDestination)
+        try PijooSkillInstaller.validateRemoval(source: skillSource, destination: skillDestination)
         let existing = try CodexConfigEditor.reading(configURL)
         let updated = try existing.map { try CodexConfigEditor.removingManagedBlock(from: $0) }
         let configChanged = existing != updated
         if let updated, configChanged { try CodexConfigEditor.writing(updated, to: configURL) }
         do {
-            try AgentChannelsSkillInstaller.remove(source: skillSource, destination: skillDestination)
+            try PijooSkillInstaller.remove(source: skillSource, destination: skillDestination)
         } catch {
             if let existing, configChanged { try? CodexConfigEditor.writing(existing, to: configURL) }
             throw error
@@ -1049,7 +1049,7 @@ private final class LocalSendServer {
 
     private let socketURL: URL
     private let handler: Handler
-    private let queue = DispatchQueue(label: "com.agentchannels.local-send", qos: .utility)
+    private let queue = DispatchQueue(label: "dev.pijoo.local-send", qos: .utility)
     private var source: DispatchSourceRead?
     private var ownsSocket = false
 
@@ -1181,7 +1181,7 @@ private final class LocalSendServer {
                 Darwin.connect(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        if result == 0 { throw AppFailure("Agent Channels 已在运行") }
+        if result == 0 { throw AppFailure("Pijoo 已在运行") }
         guard errno == ECONNREFUSED else { throw posixFailure("无法探测本机发送 socket") }
         guard unlink(socketURL.path) == 0 else { throw posixFailure("无法清理旧的本机发送 socket") }
     }
@@ -1318,7 +1318,7 @@ private enum UpdateCoordinator {
             return false
         }
         guard AppPaths.appIsInstalled else { throw AppFailure("更新已下载；请先把 App 移到 Applications") }
-        let helper = Bundle.main.executableURL!.deletingLastPathComponent().appendingPathComponent("agent-channels-updater")
+        let helper = Bundle.main.executableURL!.deletingLastPathComponent().appendingPathComponent("pijoo-updater")
         guard FileManager.default.isExecutableFile(atPath: helper.path) else { throw AppFailure("更新助手缺失") }
         let process = Process()
         process.executableURL = helper
@@ -1340,7 +1340,7 @@ private enum UpdateCoordinator {
 
 enum BrandAssets {
     static let menuBarImage: NSImage? = {
-        guard let url = Bundle.main.url(forResource: "AgentChannelsMenuBar", withExtension: "svg"),
+        guard let url = Bundle.main.url(forResource: "PijooMenuBar", withExtension: "svg"),
               let image = NSImage(contentsOf: url) else { return nil }
         image.isTemplate = true
         image.size = NSSize(width: 18, height: 18)
@@ -1663,7 +1663,7 @@ extension AppModel {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let nickname = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard nickname.count <= 64 else {
-            showNotice(title: "Agent Channels", message: "频道昵称不能超过 64 个字符")
+            showNotice(title: "Pijoo", message: "频道昵称不能超过 64 个字符")
             return
         }
         state.channels[index].displayName = channelDisplayName(nickname, original: profile.channel)
@@ -1751,7 +1751,7 @@ extension AppModel {
             text: text,
             at: Date().timeIntervalSince1970 * 1000,
             state: .pending,
-            source: MessageSourceReference(provider: "agent-channels", label: "Agent Channels App")
+            source: MessageSourceReference(provider: "pijoo", label: "Pijoo App")
         )
         upsertMessage(pending, persist: false)
         busy = true
@@ -1761,7 +1761,7 @@ extension AppModel {
                 text,
                 profile: profile,
                 endpoint: endpointCallsign(profile, kind: "app"),
-                source: MessageSourceReference(provider: "agent-channels", label: "Agent Channels App")
+                source: MessageSourceReference(provider: "pijoo", label: "Pijoo App")
             )
             composerText = ""
             messages.removeAll { $0.id == pending.id }
@@ -1776,7 +1776,7 @@ extension AppModel {
                 state: .accepted,
                 senderMemberID: result.memberID,
                 senderEndpointID: result.endpointID,
-                source: MessageSourceReference(provider: "agent-channels", label: "Agent Channels App")
+                source: MessageSourceReference(provider: "pijoo", label: "Pijoo App")
             ))
         } catch {
             var final = pending
@@ -2212,7 +2212,7 @@ final class AppModel: ObservableObject {
         }
         do {
             let server = LocalSendServer(socketURL: AppPaths.sendSocket) { [weak self] request in
-                guard let self else { return .failure("Agent Channels app is unavailable") }
+                guard let self else { return .failure("Pijoo app is unavailable") }
                 return await self.handleLocalRequest(request)
             }
             try server.start()
@@ -2232,7 +2232,7 @@ final class AppModel: ObservableObject {
     }
 
     var currentVersion: String {
-        (Bundle.main.object(forInfoDictionaryKey: "AgentChannelsReleaseVersion") as? String)
+        (Bundle.main.object(forInfoDictionaryKey: "PijooReleaseVersion") as? String)
             ?? (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
             ?? "0.0.0"
     }
@@ -2374,19 +2374,19 @@ extension AppModel {
                       let profile = state.channels.first(where: { $0.id == record.channelID }) else {
                     return .success(LocalOperationResult(
                         provenance: .notFound,
-                        message: "当前会话没有可追溯的已投递 Agent Channels 消息；这不证明其他消息一定是用户手动输入"
+                        message: "当前会话没有可追溯的已投递 Pijoo 消息；这不证明其他消息一定是用户手动输入"
                     ))
                 }
                 let sourceKind: String
                 switch record.source?.provider {
-                case "agent-channels": sourceKind = "agent_channels_app"
+                case "pijoo": sourceKind = "pijoo_app"
                 case "codex": sourceKind = "codex_mcp"
                 default: sourceKind = "unknown"
                 }
                 return .success(LocalOperationResult(
                     provenance: LocalMessageProvenance(
                         found: true,
-                        origin: "agent_channels",
+                        origin: "pijoo",
                         channel: profile.channel,
                         channelName: profile.displayName,
                         messageID: record.messageID,
@@ -2399,7 +2399,7 @@ extension AppModel {
                         sourceLabel: record.source?.label,
                         receivedAt: record.at
                     ),
-                    message: "最近一条已投递消息来自 Agent Channels：\(profile.displayName) #\(record.messageID)，发送者 \(record.from)"
+                    message: "最近一条已投递消息来自 Pijoo：\(profile.displayName) #\(record.messageID)，发送者 \(record.from)"
                 ))
             case "send":
                 guard let message = request.message else { throw AppFailure("message is required") }
@@ -2681,7 +2681,7 @@ extension AppModel {
         source: LocalSource,
         channel: String?
     ) throws -> (TaskBinding, ChannelSubscription, ChannelProfile) {
-        guard let task = taskBinding(for: source) else { throw AppFailure("当前会话尚未连接 Agent Channels") }
+        guard let task = taskBinding(for: source) else { throw AppFailure("当前会话尚未连接 Pijoo") }
         let candidates = state.subscriptions.filter { subscription in
             guard subscription.taskID == task.id,
                   state.channels.contains(where: { $0.id == subscription.channelID }) else { return false }
@@ -3071,8 +3071,8 @@ extension AppModel {
         while let newline = listener.remainder.firstIndex(of: "\n") {
             let line = String(listener.remainder[..<newline])
             listener.remainder.removeSubrange(...newline)
-            guard line.hasPrefix("@agent-channels "),
-                  let raw = line.dropFirst("@agent-channels ".count).data(using: .utf8),
+            guard line.hasPrefix("@pijoo "),
+                  let raw = line.dropFirst("@pijoo ".count).data(using: .utf8),
                   let event = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
                   let state = event["state"] as? String else { continue }
             clearRecoveredBridgeError(id, state: state)
@@ -3304,7 +3304,7 @@ extension AppModel {
                 var request = URLRequest(url: base.appendingPathComponent("stream"))
                 request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
                 request.setValue(session, forHTTPHeaderField: "X-Session-Id")
-                request.setValue("agent-channels", forHTTPHeaderField: "X-Railway-Debug")
+                request.setValue("pijoo", forHTTPHeaderField: "X-Railway-Debug")
                 request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                 let (bytes, response) = try await URLSession.shared.bytes(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -3417,7 +3417,7 @@ extension AppModel {
     func refreshCodexIntegrationStatus() {
         let raw = (try? String(contentsOf: AppPaths.codexConfig, encoding: .utf8)) ?? ""
         let mcp = raw.contains(managedConfigStart) && raw.contains(AppPaths.state.path)
-        let skill = AgentChannelsSkillInstaller.isInstalled()
+        let skill = PijooSkillInstaller.isInstalled()
         codexIntegrationNeedsRestart = requiresCodexRestart(
             configured: mcp && skill,
             appVersion: currentVersion,
@@ -3443,7 +3443,7 @@ extension AppModel {
             guard let self, self.codexIntegrationNeedsRestart else { return }
             self.showNotice(
                 title: "需要重启 ChatGPT",
-                message: "请完全退出并重新打开 ChatGPT，加载 Agent Channels MCP \(self.currentVersion)。此提示会在新 MCP 连接后自动消失。"
+                message: "请完全退出并重新打开 ChatGPT，加载 Pijoo MCP \(self.currentVersion)。此提示会在新 MCP 连接后自动消失。"
             )
         }
     }
@@ -3457,7 +3457,7 @@ extension AppModel {
     func enableCodexIntegration() {
         defer { refreshCodexIntegrationStatus() }
         do {
-            guard AppPaths.appIsInstalled else { throw AppFailure("请先把 Agent Channels.app 移到 Applications 后再启用 Codex 集成") }
+            guard AppPaths.appIsInstalled else { throw AppFailure("请先把 Pijoo.app 移到 Applications 后再启用 Codex 集成") }
             persistState()
             try FileManager.default.createDirectory(at: AppPaths.codexDirectory, withIntermediateDirectories: true)
             let block = CodexConfigEditor.managedBlock(sidecar: Sidecar.executable.path, binding: AppPaths.state.path)
@@ -3465,7 +3465,7 @@ extension AppModel {
             loadedCodexMCPVersion = nil
             UserDefaults.standard.removeObject(forKey: loadedCodexMCPVersionKey)
             UserDefaults.standard.set(currentVersion, forKey: shownCodexRestartVersionKey)
-            showNotice(title: "Codex 集成已启用", message: "请完全退出并重新打开 ChatGPT，让所有 task 加载 Agent Channels 工具与 Skill。")
+            showNotice(title: "Codex 集成已启用", message: "请完全退出并重新打开 ChatGPT，让所有 task 加载 Pijoo 工具与 Skill。")
         } catch {
             fail(error)
         }
@@ -3523,7 +3523,7 @@ extension AppModel {
     func checkBetaUpdate(interactive: Bool = true) async {
         if let pending = UpdateCoordinator.pendingVersion() {
             updateStatus = "已下载 " + pending + "，重启后安装"
-            if interactive { showNotice(title: "Agent Channels", message: "更新 " + pending + " 已下载，重启 App 后自动安装。") }
+            if interactive { showNotice(title: "Pijoo", message: "更新 " + pending + " 已下载，重启 App 后自动安装。") }
             return
         }
         guard !busy else { return }
@@ -3531,7 +3531,7 @@ extension AppModel {
         defer { busy = false }
         do {
             var request = URLRequest(url: githubReleasesURL)
-            request.setValue("Agent-Channels/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+            request.setValue("Pijoo/\(currentVersion)", forHTTPHeaderField: "User-Agent")
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw AppFailure("GitHub Release 查询失败") }
             let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
@@ -3540,7 +3540,7 @@ extension AppModel {
                 .sorted { ($0.version ?? current) > ($1.version ?? current) }
             guard let release = available.first, let version = release.version else {
                 updateStatus = "已是最新 Beta"
-                if interactive { showNotice(title: "Agent Channels", message: "当前已是最新 Beta。") }
+                if interactive { showNotice(title: "Pijoo", message: "当前已是最新 Beta。") }
                 return
             }
             guard let dmg = release.arm64DMG else {
@@ -3550,7 +3550,7 @@ extension AppModel {
             }
             if interactive {
                 let alert = NSAlert()
-                alert.messageText = "发现 Agent Channels Beta 更新"
+                alert.messageText = "发现 Pijoo Beta 更新"
                 alert.informativeText = "当前 \(current)，最新 \(version)。下载后只需重启 App 即可完成更新。"
                 alert.addButton(withTitle: "下载更新")
                 alert.addButton(withTitle: "取消")
@@ -3561,7 +3561,7 @@ extension AppModel {
             guard (downloadResponse as? HTTPURLResponse)?.statusCode == 200 else { throw AppFailure("更新包下载失败") }
             try UpdateCoordinator.saveDownloadedDMG(temporaryURL, version: version.description)
             updateStatus = "已下载 \(version)，重启后安装"
-            if interactive { showNotice(title: "更新已下载", message: "重启 Agent Channels 后将自动安装 \(version)。") }
+            if interactive { showNotice(title: "更新已下载", message: "重启 Pijoo 后将自动安装 \(version)。") }
         } catch {
             updateStatus = "检查失败"
             if interactive { fail(error) }
@@ -3611,7 +3611,7 @@ extension AppModel {
     fileprivate func fail(_ error: Error) {
         guard !isCancellationError(error) else { return }
         ClientLog.record("error", "operation_failed", detail: error.localizedDescription)
-        showNotice(title: "Agent Channels", message: error.localizedDescription)
+        showNotice(title: "Pijoo", message: error.localizedDescription)
     }
 
     func exportClientLog() {
@@ -3620,7 +3620,7 @@ extension AppModel {
         panel.canCreateDirectories = true
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
-        panel.nameFieldStringValue = "Agent-Channels-client-\(formatter.string(from: Date())).log"
+        panel.nameFieldStringValue = "Pijoo-client-\(formatter.string(from: Date())).log"
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         do {
             ClientLog.record("info", "client_log_exported")
@@ -3697,7 +3697,7 @@ private struct V2MenuPanel: View {
             HStack(spacing: 10) {
                 BrandIcon(fallback: model.menuIcon, size: 22)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Agent Channels").font(.headline)
+                    Text("Pijoo").font(.headline)
                     HStack(spacing: 5) {
                         Circle().fill(statusColor).frame(width: 7, height: 7)
                         Text("\(model.state.channels.count) 个频道 · \(model.runningListenerCount)/\(model.enabledSubscriptionCount) 个监听")
@@ -3719,7 +3719,7 @@ private struct V2MenuPanel: View {
                 .background(.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             }
             Button(action: openMainWindow) {
-                Label("打开 Agent Channels", systemImage: "arrow.up.forward.app")
+                Label("打开 Pijoo", systemImage: "arrow.up.forward.app")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
@@ -3830,7 +3830,7 @@ private struct MainWindowView: View {
                 .background(showingSettings ? Color.accentColor : .clear, in: RoundedRectangle(cornerRadius: 6))
                 .padding(8)
             }
-            .navigationTitle("Agent Channels")
+            .navigationTitle("Pijoo")
             .toolbar {
                 Button {
                     showingSettings = false
@@ -3841,7 +3841,7 @@ private struct MainWindowView: View {
             }
         } detail: {
             if showingSettings {
-                AgentChannelsSettingsView(model: model)
+                PijooSettingsView(model: model)
             } else if let channel = model.selectedChannel {
                 ChannelDetailView(model: model, channel: channel)
             } else {
@@ -4654,7 +4654,7 @@ private struct EmptyStateView<Actions: View>: View {
     }
 }
 
-private struct AgentChannelsSettingsView: View {
+private struct PijooSettingsView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
@@ -4741,19 +4741,19 @@ private struct AgentChannelsSettingsView: View {
 
 #if !SELF_TEST
 @MainActor
-private final class AgentChannelsAppDelegate: NSObject, NSApplicationDelegate {
+private final class PijooAppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         AppModel.shared.shutdown()
     }
 }
 
 @main
-private struct AgentChannelsV2App: App {
-    @NSApplicationDelegateAdaptor(AgentChannelsAppDelegate.self) private var appDelegate
+private struct PijooV2App: App {
+    @NSApplicationDelegateAdaptor(PijooAppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel.shared
 
     var body: some Scene {
-        Window("Agent Channels", id: "main") {
+        Window("Pijoo", id: "main") {
             MainWindowView(model: model)
                 .frame(minWidth: 900, minHeight: 620)
         }
@@ -4763,14 +4763,14 @@ private struct AgentChannelsV2App: App {
             V2MenuPanel(model: model)
         } label: {
             BrandIcon(fallback: model.menuIcon, size: 18)
-                .accessibilityLabel("Agent Channels")
+                .accessibilityLabel("Pijoo")
         }
         .menuBarExtraStyle(.window)
     }
 }
 #else
 @main
-private struct AgentChannelsV2SelfTest {
+private struct PijooV2SelfTest {
     static func main() throws {
         let invitation = ChannelInvitation(
             version: 2,
@@ -4802,7 +4802,7 @@ private struct AgentChannelsV2SelfTest {
             _ = try reconciledChannelProfile(joinedChannel, authenticatedMemberID: "")
             preconditionFailure("empty authenticated member id was accepted")
         } catch {}
-        let block = CodexConfigEditor.managedBlock(sidecar: "/Applications/Agent Channels.app/Contents/MacOS/rogerthat-sidecar", binding: "/tmp/state-v2.json")
+        let block = CodexConfigEditor.managedBlock(sidecar: "/Applications/Pijoo.app/Contents/MacOS/rogerthat-sidecar", binding: "/tmp/state-v2.json")
         let installed = try CodexConfigEditor.installing(block: block, into: "model = \"gpt-5\"\n")
         precondition(installed.contains(managedConfigStart))
         let removed = try CodexConfigEditor.removingManagedBlock(from: installed)
@@ -4984,14 +4984,14 @@ private struct AgentChannelsV2SelfTest {
         } catch {}
         try FileManager.default.removeItem(at: configURL)
         let skillSource = socketDirectory.appendingPathComponent("app-skill", isDirectory: true)
-        let skillDestination = socketDirectory.appendingPathComponent("codex-skills/agent-channels", isDirectory: true)
+        let skillDestination = socketDirectory.appendingPathComponent("codex-skills/pijoo", isDirectory: true)
         try FileManager.default.createDirectory(at: skillSource, withIntermediateDirectories: true)
-        try "---\nname: agent-channels\n---\n".write(
+        try "---\nname: pijoo\n---\n".write(
             to: skillSource.appendingPathComponent("SKILL.md"),
             atomically: true,
             encoding: .utf8
         )
-        let integrationBlock = CodexConfigEditor.managedBlock(sidecar: "/Applications/Agent Channels.app/sidecar", binding: "/tmp/state.json")
+        let integrationBlock = CodexConfigEditor.managedBlock(sidecar: "/Applications/Pijoo.app/sidecar", binding: "/tmp/state.json")
         try "model = \"gpt-5\"\n".write(to: configURL, atomically: true, encoding: .utf8)
         try CodexIntegrationInstaller.install(
             configURL: configURL,
@@ -4999,7 +4999,7 @@ private struct AgentChannelsV2SelfTest {
             skillSource: skillSource,
             skillDestination: skillDestination
         )
-        precondition(AgentChannelsSkillInstaller.isInstalled(source: skillSource, destination: skillDestination))
+        precondition(PijooSkillInstaller.isInstalled(source: skillSource, destination: skillDestination))
         let installedConfig = try CodexConfigEditor.reading(configURL)
         precondition(installedConfig?.contains(managedConfigStart) == true)
         try CodexIntegrationInstaller.install(
@@ -5015,7 +5015,7 @@ private struct AgentChannelsV2SelfTest {
         )
         let removedConfig = try CodexConfigEditor.reading(configURL)
         precondition(removedConfig == "model = \"gpt-5\"\n")
-        precondition(!AgentChannelsSkillInstaller.isManagedLink(source: skillSource, destination: skillDestination))
+        precondition(!PijooSkillInstaller.isManagedLink(source: skillSource, destination: skillDestination))
         let linkedConfig = socketDirectory.appendingPathComponent("linked-config.toml")
         try "model = \"gpt-5\"\n".write(to: linkedConfig, atomically: true, encoding: .utf8)
         try FileManager.default.removeItem(at: configURL)

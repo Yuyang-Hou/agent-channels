@@ -40,14 +40,14 @@ Channel Service + PostgreSQL
   -> Account x Channel = Membership
   -> Invite / ownership / ban / message authorization
 
-Agent Channels.app
+Pijoo.app
   -> ASWebAuthenticationSession
   -> 一个 Keychain Session credential
   -> 云端 Membership 列表
   -> 本机 TaskBinding / Subscription / LocalMessage
 ```
 
-GitHub Account 不是产品内身份。Agent Channels Account 使用自己的 UUID，其他成员只看到用户设置
+GitHub Account 不是产品内身份。Pijoo Account 使用自己的 UUID，其他成员只看到用户设置
 的昵称、Membership id、角色和在线状态；看不到 GitHub user id、用户名或邮箱。
 
 ## Login Flow
@@ -59,7 +59,7 @@ GitHub Account 不是产品内身份。Agent Channels Account 使用自己的 UU
 3. GitHub 回调服务端。服务端校验 `state`，交换 code，调用 GitHub authenticated-user API，读取
    稳定 numeric user id 与公开名称，然后立即丢弃 provider token。
 4. 服务端为该 LoginAttempt 生成一次性 exchange code，只保存 hash，并重定向
-   `agentchannels://oauth/callback?code=...&state=...`。
+   `pijoo://oauth/callback?code=...&state=...`。
 5. App 校验 `client_state`，把 exchange code 和原始 App verifier 发送到
    `/v1/auth/device/exchange`。服务端原子消费 LoginAttempt，创建或读取 Account，创建 Device 和
    90 天 Session，只返回一次 Session credential。
@@ -73,7 +73,7 @@ exchange code、PKCE verifier 或 Session credential。
 ## Session Model
 
 Session credential 是 32 字节随机值，服务端只保存 SHA-256 hash。每个请求先解析 Session，再按
-Membership 授权；不使用 GitHub token 调用 Agent Channels API，也不把 credential 放进消息、
+Membership 授权；不使用 GitHub token 调用 Pijoo API，也不把 credential 放进消息、
 本地 JSON、命令行参数或模型上下文。
 
 - 固定有效期 90 天，不做滑动延期；到期重新登录。

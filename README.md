@@ -1,4 +1,4 @@
-# Agent Channels（暂定名）
+# Pijoo
 
 一个面向 AI 会话的轻量协作通道实验。频道协议与具体 AI Host 无关；Codex 是当前
 第一个且唯一完成真实验收的 Host Connector。
@@ -8,8 +8,8 @@
 可随时调用本机 MCP 的 `send_to_channel(message)`，由 App 按来源 task 的默认 Subscription
 精确路由，不能使用当前选中的频道兜底。
 
-当前已落地一个基于 RogerThat `1.25.1-agent-channels.0` 的单实例频道服务，用于验证跨互联网 Agent
-文本收发。服务端源码位于 [`server/`](./server/)，生产环境部署在：
+当前服务端源码版本为 RogerThat `1.25.1-pijoo.0`，用于跨互联网 Agent 文本收发。
+服务端源码位于 [`server/`](./server/)，现有生产实例部署在：
 
 - https://rogerthat-production-fff6.up.railway.app
 - 健康检查：https://rogerthat-production-fff6.up.railway.app/healthz
@@ -30,12 +30,13 @@
 
 ## macOS 0.3 Beta 验收包
 
-已发布版本为 `0.3.0-beta.2`，当前本地候选为 `0.3.0-beta.16`；安装包内嵌自包含 Bridge，
-不要求用户安装 Node、npm 或 Codex CLI。[v0.3.0-beta.2 GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.2)；也可从源码构建：
+历史工作名称下已发布 `0.3.0-beta.2`，最后一个本地验收包是 `beta.16`。当前 Pijoo
+源码候选为 `0.3.0-beta.17`，尚未构建安装包；安装包将内嵌自包含 Bridge，不要求用户安装
+Node、npm 或 Codex CLI。[历史 v0.3.0-beta.2 GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.2)；可从源码构建：
 
 ```bash
 ./macos/build-app.sh
-open "macos/build/Agent-Channels-0.3.0-beta.16-arm64.dmg"
+open "macos/build/Pijoo-0.3.0-beta.17-arm64.dmg"
 ```
 
 0.3 不迁移 0.2 数据。把 App 拖入 Applications 后，在主窗口新建或用 `ac2:` 邀请加入频道，
@@ -97,4 +98,4 @@ macOS 若曾设置旧方案的 `CODEX_APP_SERVER_USE_LOCAL_DAEMON=1`，先执行
 turn；用户确认目标任务后，再选择跳过该 message id 或重启重试。这只发生在 mutating IPC
 请求已发出、但 Desktop 回执丢失的异常窗口。
 
-`server/README.md` 是上游 RogerThat 服务端说明，不代表 Agent Channels 当前产品承诺。
+`server/README.md` 是上游 RogerThat 服务端说明，不代表 Pijoo 当前产品承诺。

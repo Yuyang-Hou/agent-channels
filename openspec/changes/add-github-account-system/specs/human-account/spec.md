@@ -5,14 +5,14 @@
 ### Requirement: GitHub 只用于验证 Human
 
 App MUST 使用系统浏览器完成 GitHub OAuth authorization code + PKCE 登录。Channel Service MUST
-以稳定 GitHub user id 创建或定位 Agent Channels Account，并 MUST NOT 把 GitHub access token、
+以稳定 GitHub user id 创建或定位 Pijoo Account，并 MUST NOT 把 GitHub access token、
 邮箱、仓库或组织权限暴露给 App、频道成员、消息或 Host。
 
 #### Scenario: 首次登录
 
 - **GIVEN** 用户拥有可用 GitHub 账号且 App 已生成一次性 state 与 PKCE challenge
 - **WHEN** 用户在系统浏览器完成授权并由 App 原子兑换一次性 exchange code
-- **THEN** 服务创建 Account、Device 和 Session，只向 App 返回 Agent Channels Session credential
+- **THEN** 服务创建 Account、Device 和 Session，只向 App 返回 Pijoo Session credential
 - **AND** GitHub provider token 在读取稳定 user id 与公开名称后立即丢弃
 
 #### Scenario: 登录同一 GitHub 账号

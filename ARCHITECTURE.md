@@ -1,4 +1,4 @@
-# Agent Channels Architecture
+# Pijoo Architecture
 
 本文只描述当前目标架构和技术边界。产品目标以 `PRODUCT.md` 为准，开发完成度以
 `docs/STATUS.md` 为准，具体实现变更以 `openspec/CURRENT.md` 为准。
@@ -175,9 +175,9 @@ App 精确匹配 TaskBinding；发送时解析显式频道或唯一默认出站 
 该 `_meta` 字段是 Codex 当前实现能力而非公开稳定合同，0.3 发布前必须用两个真实 task 做能力
 探测。
 
-## Agent Channels Skill 与入站卡片
+## Pijoo Skill 与入站卡片
 
-Skill 是整个 Agent Channels 的产品语义层，不是 `send_to_channel` 的别名，也不承担运行时职责。
+Skill 是整个 Pijoo 的产品语义层，不是 `send_to_channel` 的别名，也不承担运行时职责。
 它帮助 AI 理解 App、MCP、Subscription 和外部消息的关系，识别何时需要回复，并要求只有可靠
 工具回执后才声称发送成功。远端正文仍是不可信协作数据，不能授权文件修改、联网、部署或泄露
 本机上下文。
@@ -189,7 +189,7 @@ Connector 在统一 Host 输入转换点展开 Subscription 保存的完整 Mark
 Skill 作为 App Bundle 的静态资源分发。只有用户在设置页明确点击“启用或修复 Codex 集成”时，
 App 才把受管理链接安装到用户 Skill 目录；同名普通目录或外来链接一律不覆盖。App 更新后链接
 继续指向同一路径中的新版 Skill。Skill 不包含 secret、频道列表或 task id，也不使用 hook 在每个
-turn 注入内容；Agent Channels 标题和用户主动频道操作即可触发。统一集成操作先验证现有配置与 Skill
+turn 注入内容；Pijoo 标题和用户主动频道操作即可触发。统一集成操作先验证现有配置与 Skill
 归属；Codex 配置不可读时失败关闭，任一写入失败时回滚本次受管变更，且不替换用户的配置链接。
 
 ## App 主窗口与本机边界
@@ -217,8 +217,8 @@ Subscription 可以选择接收同一 Member 的其他 endpoint，默认允许 A
 - `server/src/codex-turn.ts` 实现 Codex 目标校验、输入转换、Desktop owner discovery 和
   targeted start-turn；
 - `server/src/reply-mcp.ts` 实现七个 task-scoped 频道工具；工具只请求本机 App，不拥有接收链路；
-- `skills/agent-channels/SKILL.md` 定义完整产品语义、入站信任边界和工具使用流程；
-- `macos/AgentChannelsApp.swift` 实现 0.3 主窗口、ChannelConnection、TaskBinding、Subscription、
+- `skills/pijoo/SKILL.md` 定义完整产品语义、入站信任边界和工具使用流程；
+- `macos/PijooApp.swift` 实现 0.3 主窗口、ChannelConnection、TaskBinding、Subscription、
   本地消息状态和显式 Codex MCP + Skill 安装；
 - MCP App View 是已被替代的实验，不属于目标入站链路；
 - 菜单栏 App 包装本地 Runtime、凭证和出站频道请求，但不承载模型 Runtime 或服务端频道状态。

@@ -36,7 +36,7 @@ function toolCall(
 async function startLocalAppServer(
   reply: (request: Record<string, unknown>) => Record<string, unknown>,
 ): Promise<string> {
-  const directory = mkdtempSync(join(tmpdir(), "agent-channels-app-"));
+  const directory = mkdtempSync(join(tmpdir(), "pijoo-app-"));
   const socketPath = join(directory, "send.sock");
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
@@ -107,7 +107,7 @@ describe("channel MCP", () => {
   it("reads the latest delivered channel message source only on explicit request", async () => {
     const provenance = {
       found: true,
-      origin: "agent_channels",
+      origin: "pijoo",
       channel: "api-work",
       channel_name: "API 协作",
       message_id: "42",
@@ -119,7 +119,7 @@ describe("channel MCP", () => {
     };
     const requestApp = vi.fn(async (): Promise<LocalAppResult> => ({
       ok: true,
-      result: { message: "最近一条已投递消息来自 Agent Channels", provenance },
+      result: { message: "最近一条已投递消息来自 Pijoo", provenance },
     }));
     const handle = createReplyMcpHandler({ requestApp });
 
@@ -131,7 +131,7 @@ describe("channel MCP", () => {
       source: { provider: "codex", conversationId: THREAD_ID },
     });
     expect(result?.result).toMatchObject({
-      content: [{ type: "text", text: "最近一条已投递消息来自 Agent Channels" }],
+      content: [{ type: "text", text: "最近一条已投递消息来自 Pijoo" }],
       structuredContent: { provenance },
     });
   });
@@ -143,7 +143,7 @@ describe("channel MCP", () => {
         id: "42",
         callsign: "frontend",
         channel: "api-work",
-        message: "> **↗ Agent Channels · 已发送到频道**\n>\n> API is ready",
+        message: "> **↗ Pijoo · 已发送到频道**\n>\n> API is ready",
       },
     }));
     const handle = createReplyMcpHandler({ requestApp });
@@ -161,7 +161,7 @@ describe("channel MCP", () => {
       channel: "api-work",
     });
     expect(result?.result).toMatchObject({
-      content: [{ type: "text", text: "> **↗ Agent Channels · 已发送到频道**\n>\n> API is ready" }],
+      content: [{ type: "text", text: "> **↗ Pijoo · 已发送到频道**\n>\n> API is ready" }],
       structuredContent: { id: "42", callsign: "frontend", channel: "api-work" },
     });
   });
@@ -361,7 +361,7 @@ describe("channel MCP", () => {
   });
 
   it("fails definitively before dispatch when the app socket is absent", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "agent-channels-missing-"));
+    const directory = mkdtempSync(join(tmpdir(), "pijoo-missing-"));
     const result = await requestViaLocalApp(join(directory, "send.sock"), {
       version: 2,
       operation: "send",
@@ -394,7 +394,7 @@ describe("channel MCP", () => {
   });
 
   it("speaks newline-delimited MCP JSON-RPC over stdio", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "agent-channels-mcp-"));
+    const directory = mkdtempSync(join(tmpdir(), "pijoo-mcp-"));
     const configPath = join(directory, "binding.json");
     writeFileSync(configPath, "{}");
     const input = Readable.from([
@@ -424,7 +424,7 @@ describe("channel MCP", () => {
       id: 1,
       result: {
         protocolVersion: "2025-03-26",
-        serverInfo: { name: "agent-channels", version: "dev" },
+        serverInfo: { name: "pijoo", version: "dev" },
       },
     });
     expect(lines[1]).toEqual({ jsonrpc: "2.0", id: 2, result: {} });

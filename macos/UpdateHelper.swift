@@ -7,10 +7,10 @@ private struct UpdateFailure: LocalizedError {
 }
 
 @main
-private enum AgentChannelsUpdateHelper {
+private enum PijooUpdateHelper {
     static func main() {
         if CommandLine.arguments.dropFirst().first == "--self-test" {
-            precondition(designatedRequirement(from: "designated => identifier \"com.agentchannels.menubar\"\n") == "identifier \"com.agentchannels.menubar\"")
+            precondition(designatedRequirement(from: "designated => identifier \"dev.pijoo.menubar\"\n") == "identifier \"dev.pijoo.menubar\"")
             precondition(designatedRequirement(from: "# designated => cdhash H\"abc\"\n") == "cdhash H\"abc\"")
             return
         }
@@ -55,15 +55,15 @@ private enum AgentChannelsUpdateHelper {
         }
         defer { _ = try? run("/usr/bin/hdiutil", ["detach", mountPath]) }
 
-        let candidate = URL(fileURLWithPath: mountPath).appendingPathComponent("Agent Channels.app")
+        let candidate = URL(fileURLWithPath: mountPath).appendingPathComponent("Pijoo.app")
         try verifyBundle(candidate, expectedVersion: expectedVersion)
         guard try currentDesignatedRequirement(candidate) == requirement else {
             throw UpdateFailure(message: "更新包签名身份与当前 App 不一致")
         }
 
         let manager = FileManager.default
-        let staged = target.deletingLastPathComponent().appendingPathComponent(".Agent-Channels-update-\(UUID().uuidString).app")
-        let backupName = ".Agent-Channels-previous-\(UUID().uuidString).app"
+        let staged = target.deletingLastPathComponent().appendingPathComponent(".Pijoo-update-\(UUID().uuidString).app")
+        let backupName = ".Pijoo-previous-\(UUID().uuidString).app"
         let backup = target.deletingLastPathComponent().appendingPathComponent(backupName)
         defer { try? manager.removeItem(at: staged) }
         try manager.copyItem(at: candidate, to: staged)
@@ -88,11 +88,11 @@ private enum AgentChannelsUpdateHelper {
         }
         let plistURL = app.appendingPathComponent("Contents/Info.plist")
         guard let values = NSDictionary(contentsOf: plistURL) as? [String: Any],
-              values["CFBundleIdentifier"] as? String == "com.agentchannels.menubar" else {
-            throw UpdateFailure(message: "更新包不是 Agent Channels")
+              values["CFBundleIdentifier"] as? String == "dev.pijoo.menubar" else {
+            throw UpdateFailure(message: "更新包不是 Pijoo")
         }
         if let expectedVersion,
-           values["AgentChannelsReleaseVersion"] as? String != expectedVersion {
+           values["PijooReleaseVersion"] as? String != expectedVersion {
             throw UpdateFailure(message: "更新包版本与 Release 不一致")
         }
         _ = try run("/usr/bin/codesign", ["--verify", "--deep", "--strict", app.path])

@@ -65,7 +65,7 @@ App MUST 在监听前验证 Desktop IPC 与目标 task owner，且预检 MUST NO
 
 #### Scenario: 内测分发构建
 
-- **GIVEN** 构建机安装了锁定的 Agent Channels 内测签名身份
+- **GIVEN** 构建机安装了锁定的 Pijoo 内测签名身份
 - **WHEN** 连续构建两个相同 Bundle ID 的 Beta 包
 - **THEN** 两个 App 的 designated requirement 相同且嵌入 sidecar 单独由同一身份签名
 
@@ -83,7 +83,7 @@ App MUST 在监听前验证 Desktop IPC 与目标 task owner，且预检 MUST NO
 
 #### Scenario: 首次启用发送
 
-- **GIVEN** 用户尚未启用 Agent Channels 发送工具
+- **GIVEN** 用户尚未启用 Pijoo 发送工具
 - **WHEN** 用户确认配置变更
 - **THEN** App 写入受 marker 管理的 MCP 配置并提示重启 ChatGPT
 
@@ -153,7 +153,7 @@ App MUST 使用仓库现有 E3 传信鸽图作为 App icon，并使用同轮廓�
 #### Scenario: 明暗菜单栏
 
 - **GIVEN** 用户切换 macOS 明暗外观
-- **WHEN** 菜单栏显示 Agent Channels
+- **WHEN** 菜单栏显示 Pijoo
 - **THEN** Template Image 由系统着色并保持可辨认
 
 ### Requirement: 可操作错误状态

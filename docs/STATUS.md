@@ -1,11 +1,13 @@
-# Agent Channels Development Status
+# Pijoo Development Status
 
 ## 当前阶段
 
-当前处于 **0.3 Beta 安装包验收**：多频道 App、Host 无关边界和 Codex 公网入站链路已经完成；
-产品级 Skill、可编辑 Markdown 收发消息模板、重放幂等、按需会话搜索及浮层层级修复、成员身份恢复、客户端日志导出、MCP 版本感知与持续重启提示已打入本地 `0.3.0-beta.16` Apple Silicon 验收包。发送成功模板已在重启后的真实会话中验收；新版重启提示仍待实机验收。
+当前处于 **Pijoo 0.3 Beta 发布准备**：多频道 App、Host 无关边界和 Codex 公网入站链路已经完成；
+工作名称已在源码中 clean-slate 切换为 Pijoo，当前源码候选为 `0.3.0-beta.17`。Pijoo App、DMG、
+Developer ID 签名和公证尚未构建或执行。
 
-公开 GitHub prerelease 仍是 beta.2；本轮 beta.16 是固定内测签名的本地验收包，不是 Developer ID 已公证的生产分发版本。
+公开 GitHub prerelease 仍是旧工作名称的 beta.2；旧 beta.16 是固定内测签名的本地验收包，
+不是 Pijoo 或 Developer ID 已公证的生产分发版本。
 
 ## 已完成
 
@@ -22,11 +24,11 @@
 | CLI 失败状态 | 已完成 | 未支持 Host 参数、Host 不可用和错误凭证均明确失败 |
 | Codex Desktop IPC | 已完成 | 无 daemon/env，空闲 start 与忙时 steer 已实机通过；不确定回执停机有自动化覆盖 |
 | 两设备公网双向入站 | 已完成 | A、B 两台 Mac 均完成频道消息 → Desktop IPC → 目标 task 真实 turn；正文按不可信输入处理 |
-| Apple Silicon 菜单栏包 | 已完成 | 原生 App、自包含 sidecar、固定内测签名与 DMG 完整性校验通过；不依赖 Node/npm/Codex CLI |
+| Apple Silicon 菜单栏包 | Pijoo 源码已完成，待构建 | 旧 beta.16 已验证原生 App、自包含 sidecar 与 DMG；新 Bundle ID 尚未打包实机验证 |
 | 安全本机配置 | 已完成 | token/owner password 进入 Keychain；监听 secret 走 stdin；MCP 配置需用户确认 |
 | 只读 task 预检 | 已完成 | 打包版对当前真实 task owner discovery 通过且不创建 turn |
 | Task 频道工具 | 本地代码已完成，待打包实机 | 七个 task-scoped 工具通过 `_meta.threadId` 精确路由；来源查询只读本地最近投递记录，MCP 不持有接收链路 |
-| Agent Channels Skill | 本地 Beta 包已完成，待实机 | 面向完整产品语义、入站信任边界和七项频道动作；仅在用户主动追问时查询来源，不使用每 turn hook |
+| Pijoo Skill | 源码已完成，待新包实机 | 面向完整产品语义、入站信任边界和七项频道动作；仅在用户主动追问时查询来源，不使用每 turn hook |
 | Markdown 外部消息卡片 | 本地 Beta 包已完成，待实机 | 默认为当前卡片；标题、来源栏、正文和引用样式均可编辑 |
 | Markdown 发送成功卡片 | beta.15 真实会话已验收 | 每 Subscription 可编辑；可靠回执按模板展示，不改写频道正文或制造自回声 turn |
 | MCP 更新重启提示 | beta.16 本地包已完成，待实机 | 设置页持续显示已加载版本，MCP 上报当前版本后自动清除；不占用菜单栏健康状态 |

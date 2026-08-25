@@ -32,7 +32,7 @@
 ## 5. macOS Product
 
 - [ ] 使用 `ASWebAuthenticationSession` 完成 GitHub 登录，App 不嵌入 WebView 或持有 GitHub token
-- [ ] Keychain 只保存 Agent Channels Session credential；登录激活失败时回滚本次 Session 与凭证
+- [ ] Keychain 只保存 Pijoo Session credential；登录激活失败时回滚本次 Session 与凭证
 - [ ] 设置页增加账号昵称、设备、退出与删除入口，不增加菜单栏复杂度
 - [ ] 登录新 Mac 后恢复 ChannelConnection，但明确要求用户重新“转发到会话”
 - [ ] Session 失效只暂停云端频道连接，不删除本地消息、TaskBinding 或 Subscription

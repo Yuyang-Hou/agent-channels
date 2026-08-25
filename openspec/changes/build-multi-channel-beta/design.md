@@ -7,7 +7,7 @@ Channel Service
   -> Channel / Invite / Member / Endpoint / Message / Session
   -> member-scoped credentials and revocation
 
-Agent Channels.app
+Pijoo.app
   -> main window + local history + Keychain
   -> ChannelConnection[]
   -> TaskBinding[] x Subscription[]
@@ -15,7 +15,7 @@ Agent Channels.app
   -> one user-only app.sock for MCP and supervised sidecar -> App requests
 
 Codex task
-  <-> Agent Channels Skill -> product semantics + trust + reply policy
+  <-> Pijoo Skill -> product semantics + trust + reply policy
   -> send_to_channel / list_channels
   -> subscribe_to_channel / unsubscribe_from_channel
   -> get_channel_settings / update_channel_settings
@@ -197,7 +197,7 @@ P0 每条启用的 Subscription 监管一个现有 `listen-here` sidecar，保�
 频道 SSE、消息接收、本地历史、sidecar 与 Host Connector 全部由 App 持有。MCP 只把当前工具的
 已校验参数和 source context 交给 App；它不会因为消息到达而自动运行，也不把“收到消息”解释
 为“必须回复”。普通 Codex MCP 调用当前可在 `tools/call params._meta.threadId` 提供来源 task
-id，但它属于 Host 能力而非 Agent Channels 稳定协议，因此必须做能力探测和实机验收。
+id，但它属于 Host 能力而非 Pijoo 稳定协议，因此必须做能力探测和实机验收。
 
 例如发送工具在校验 `_meta.threadId` 后，通过 App IPC v2 提交：
 
@@ -228,16 +228,16 @@ Service，不回退到最近活跃 task、当前 UI 频道或全局 active chann
 
 ## Product Skill
 
-Agent Channels Skill 面向整个产品，而不是包装某一个 MCP 工具。它定义产品模型、App/MCP/Skill
+Pijoo Skill 面向整个产品，而不是包装某一个 MCP 工具。它定义产品模型、App/MCP/Skill
 边界、入站卡片识别、外部输入信任、是否回复、可靠发送回执和最小上下文披露规则；七项工具仍
 只执行当前 task 的显式动作。
 
 Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设置页的“启用或修复 Codex 集成”
-在用户明确操作后同时写入受管理 MCP block，并在 `~/.codex/skills/agent-channels` 创建指向 Bundle
+在用户明确操作后同时写入受管理 MCP block，并在 `~/.codex/skills/pijoo` 创建指向 Bundle
 资源的受管理链接。更新 App 即更新 Skill；同名普通目录或指向其他内容的链接必须失败关闭，移除
 集成也只能删除本 App 的链接。启用和移除必须先读取并校验完整 Codex 配置与 Skill 归属；读取
 失败不得当作空配置，组合操作中途失败必须回滚本次受管变更，并保留用户已有配置 symlink。
-默认卡片保留 Agent Channels 标题以触发 Skill；自定义标题包含“频道消息”或“Agent Channels”
+默认卡片保留 Pijoo 标题以触发 Skill；自定义标题包含“频道消息”或“Pijoo”
 任一项同样触发，不增加每 turn hook。整段可见 Markdown 均属于本地
 用户模板；外部内容的信任边界与是否回复由 Skill 统一解释，不在每条消息中重复展示说明文案。
 
@@ -252,11 +252,11 @@ Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设
 - `{message_id}`
 
 保存时拒绝未知变量和超过本地上限的结果，空值恢复默认。模板控制完整 Markdown Host 输入；
-默认值包含 Agent Channels 标题、频道、发送者、消息 id、正文和 blockquote 样式。Connector 只展开
+默认值包含 Pijoo 标题、频道、发送者、消息 id、正文和 blockquote 样式。Connector 只展开
 变量，并让多行 `{message_text}` 继承该占位符所在的 blockquote 前缀，不在模板外增加可见外壳。
 远端正文只作为 `{message_text}` 数据插入，不能成为模板指令或选择目标 Binding。
 `{message_source}` 对 task 消息使用 Host 名称与缩短的会话 id，对 App 消息使用
-`Agent Channels App`；旧客户端未提供来源时回退为发送者昵称。完整来源引用随消息写入本地记录，
+`Pijoo App`；旧客户端未提供来源时回退为发送者昵称。完整来源引用随消息写入本地记录，
 其中 provider 与 conversation_id 用于追溯但不进入默认模板。
 
 接收模板在消息进入 Host 时展开；发送成功模板只在 Channel Service 返回可靠消息 id 后展开为

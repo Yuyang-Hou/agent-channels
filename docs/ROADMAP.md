@@ -1,4 +1,4 @@
-# Agent Channels Roadmap
+# Pijoo Roadmap
 
 路线图按用户价值和验收门槛推进，不承诺日期。
 
@@ -10,7 +10,7 @@
 - 保持 Codex 为唯一 Connector；
 - 完成两个用户、两台设备的双向真实验收；
 - 保持 App 负责持续接收、历史和 Host 投递；MCP 只执行当前 task 的七项显式频道操作，来源查询仅在用户主动追问时读取本地记录；
-- 用产品级 Skill 让 AI 理解完整频道语义，并默认以 Agent Channels Markdown 卡片区分外部消息；
+- 用产品级 Skill 让 AI 理解完整频道语义，并默认以 Pijoo Markdown 卡片区分外部消息；
 - 创建时填写频道名称；邀请口令直接携带频道，加入者只需粘贴；用户昵称在设置中全局维护；
 - 明确 Host 不可用、授权失效、断线恢复和重复投递状态；
 - 用不依赖 Node、npm、Codex CLI、standalone daemon 或环境变量的菜单栏验收包完成闭环。
@@ -46,6 +46,6 @@ P1 不增加第二个 Host，先把 Codex 体验做完整。
 
 只有出现真实用户需求并完成目标 Host 能力验证后，才实现第二个 Connector。新增 Host
 必须明确它属于原生会话注入、Host 原生 Channel、CLI 恢复还是通知降级，不能降低
-Agent Channels 对“持续监听”和“消息驱动”的产品承诺。
+Pijoo 对“持续监听”和“消息驱动”的产品承诺。
 
 暂不建设 Connector 市场、通用 SDK、完整聊天客户端或自建模型 Runtime。

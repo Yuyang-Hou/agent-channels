@@ -1,0 +1,6 @@
+interface:
+  display_name: "Pijoo"
+  short_description: "理解并操作 Pijoo 的协作频道与外部消息"
+  default_prompt: "使用 $pijoo 处理当前协作频道消息或管理本 task 的频道。"
+policy:
+  allow_implicit_invocation: true

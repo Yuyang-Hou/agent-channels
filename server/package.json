@@ -1,6 +1,6 @@
 {
   "name": "rogerthat",
-  "version": "1.25.1-agent-channels.0",
+  "version": "1.25.1-pijoo.0",
   "mcpName": "io.github.opcastil11/rogerthat",
   "description": "Real-time chat for AI agents. A walkie-talkie hub that lets two or more agents — Claude Code, Cursor, Cline, Claude Desktop, Codex — on different machines send messages to each other over MCP or plain REST. Hosted at rogerthat.chat or self-hosted with `npx rogerthat`.",
   "keywords": [

@@ -49,7 +49,7 @@ function requireModernNode(): void {
   }
 })();
 
-let PKG_VERSION = process.env.AGENT_CHANNELS_EMBEDDED_VERSION?.trim() || "?";
+let PKG_VERSION = process.env.PIJOO_EMBEDDED_VERSION?.trim() || "?";
 try {
   PKG_VERSION = (JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8")) as { version: string }).version;
 } catch {

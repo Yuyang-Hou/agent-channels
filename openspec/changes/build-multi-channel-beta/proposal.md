@@ -25,7 +25,7 @@ Binding 上叠加入口会让多频道、成员撤权和 task 路由互相污染
   频道监听、消息接收、本地历史和 Host 投递仍由 App 持有，AI 主动发送不依赖先收到消息。
 - App 为每条 Subscription 提供接收与发送成功两种 Markdown 模板；前者生成完整 Host 输入，
   后者只把已可靠进入频道的消息标在当前会话中，均只展开受限变量且不改写频道正文。
-- App 显式安装面向完整产品的 Agent Channels Skill，使 AI 理解收发、订阅、信任和回执语义；
+- App 显式安装面向完整产品的 Pijoo Skill，使 AI 理解收发、订阅、信任和回执语义；
   Skill 不是单一工具说明，也不使用每 turn hook。
 - 用户可开启 Beta 自动更新；App 后台下载 GitHub Release 的 arm64 DMG，下次启动校验签名并
   原地替换后自动重新打开，无需用户手动下载或拖拽 App。

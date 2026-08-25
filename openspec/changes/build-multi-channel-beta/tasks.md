@@ -80,7 +80,7 @@
 - [x] 实现 `include_other_endpoints` 与 `exclude_member` 两种 same-member 策略
 - [x] filtered 只更新对应 SubscriptionDelivery，不删除消息、不推进错误游标或影响其他订阅
 
-## Agent Channels Skill
+## Pijoo Skill
 
 - [x] 定义面向完整产品的 Skill，覆盖产品边界、入站信任、回复决策、七项工具与可靠回执
 - [x] 把 Skill 作为静态资源打入 App，并由用户显式 Codex 集成操作安装受管理链接

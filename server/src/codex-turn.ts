@@ -129,7 +129,7 @@ export function createCodexDelivery(options: {
       threadId,
       socketPath: options.socketPath,
       text: sourceThreadId ? formatCodexDelegationMessage(sourceThreadId, text) : text,
-      clientUserMessageId: `agent-channels:${message.channelId}:${message.messageId}`,
+      clientUserMessageId: `pijoo:${message.channelId}:${message.messageId}`,
     });
     return { provider: "codex", providerDeliveryId: turnId };
   });
@@ -378,7 +378,7 @@ async function runDesktopSession(
   try {
     const initialized = await request(
       "initialize",
-      { clientType: "agent-channels-cli" },
+      { clientType: "pijoo-cli" },
       0,
       undefined,
       options.discoveryTimeoutMs,

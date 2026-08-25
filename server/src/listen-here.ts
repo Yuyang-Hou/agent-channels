@@ -74,12 +74,12 @@ options:
                       exact authenticated sender endpoint used by this task
   --self-member-id <id>
                       authenticated channel member used by exclude_member
-  --app-socket <p>    private Agent Channels App socket used to durably record a
+  --app-socket <p>    private Pijoo App socket used to durably record a
                       message before Host delivery (requires --subscription-id)
   --subscription-id <uuid>
                       local Subscription id paired with --app-socket
   --status-json       emit machine-readable lifecycle lines to stderr prefixed
-                      with "@agent-channels "; received events contain message
+                      with "@pijoo "; received events contain message
                       text for the local App ledger, but never channel secrets
   --inbox <file>      append each message to this file (parent dir created if
                       missing). Format controlled by --format. When messages
@@ -359,7 +359,7 @@ async function readSecretsFromStdin(
 
 function emitStatus(args: Args, state: string, details: Record<string, unknown> = {}): void {
   if (!args.statusJson) return;
-  console.error(`@agent-channels ${JSON.stringify({ state, ...details })}`);
+  console.error(`@pijoo ${JSON.stringify({ state, ...details })}`);
 }
 
 const BASE_RECONNECT_DELAY_MS = 1_000;
@@ -824,7 +824,7 @@ async function runOneConnection(
       {
         authorization: `Bearer ${args.token}`,
         "x-session-id": args.session,
-        "x-railway-debug": "agent-channels",
+        "x-railway-debug": "pijoo",
         accept: "text/event-stream",
       },
       abortSignal,

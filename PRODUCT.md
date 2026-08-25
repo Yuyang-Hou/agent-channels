@@ -1,8 +1,8 @@
-# Agent Channels（暂定名）
+# Pijoo
 
 ## 产品定义
 
-Agent Channels 让两个正在不同 AI 会话中工作的用户，把各自的会话加入同一个协作
+Pijoo 让两个正在不同 AI 会话中工作的用户，把各自的会话加入同一个协作
 频道，使消息能够进入对方的任务上下文；AI 也可以在需要时主动向频道发送消息。
 
 它不是新的聊天客户端，也不是永久在线的独立 Agent。它连接的是用户已经在使用的
@@ -42,7 +42,7 @@ AI 会话。
   -> 加入协作频道并开始监听
   -> 切换到其他工作也不影响监听
   -> 对方消息到达时，绑定会话收到一张明确标识来源的外部消息卡片
-  -> Agent Channels Skill 帮助 AI 理解频道语义、信任边界和是否需要回复
+  -> Pijoo Skill 帮助 AI 理解频道语义、信任边界和是否需要回复
   -> AI 可随时通过 MCP 操作当前 task 的频道
   -> 暂时断线后明确展示漏掉的消息，而不是静默丢失
 ```
@@ -63,7 +63,7 @@ AI 会话。
 - **Subscription**：TaskBinding 对 Channel 的显式订阅，独立保存游标、模板、策略和状态。
 - **Message**：带稳定 id、来源和顺序的协作事件。
 - **Local Message Record**：App 本机保存的消息与逐 Subscription 投递状态，不是永久云历史。
-- **Agent Channels Skill**：静态产品语义层，帮助 AI 识别入站卡片并正确使用频道动作；不持有凭证、
+- **Pijoo Skill**：静态产品语义层，帮助 AI 识别入站卡片并正确使用频道动作；不持有凭证、
   监听或动态频道状态。
 
 稳定授权与临时会话必须分开：0.3 的 `member_id` 只代表某人对某频道的 Membership，
@@ -93,7 +93,7 @@ AI 会话。
   持有，收到消息也不等于 AI 必须回复；
 - App 以 Markdown 卡片作为默认收发模板；用户可编辑标题、来源栏、正文和引用样式。发送成功模板
   只生成当前会话的工具回执，不改写频道正文；远端正文只能作为模板数据，不能选择目标 Binding；
-- App 在用户明确启用 Codex 集成时同时安装产品级 Agent Channels Skill。Skill 面向完整收发、
+- App 在用户明确启用 Codex 集成时同时安装产品级 Pijoo Skill。Skill 面向完整收发、
   订阅和安全语义，不只是 `send_to_channel` 的工具说明，也不使用每 turn hook；
 - App 更新后在设置页持续提示完全重启 ChatGPT，直到 MCP 启动上报与 App 相同的内嵌版本；
 - 菜单栏浮窗只展示总状态、打开主窗口和监听生命周期；打开时复用、反最小化并聚焦主窗口，
@@ -136,7 +136,7 @@ Codex 是 0.3 Beta 唯一支持的 Host，但频道、成员、消息、恢复�
 4. 两个真实 Codex task 的 `_meta.threadId` 分别精确匹配自身 UUID，消息不按当前 UI 或最近
    活跃 task 猜测路由；
 5. 一个 task 订阅两个频道、一个频道绑定两个 task 时不串台，游标与错误互相隔离；
-6. 自消息策略、Markdown 外部卡片与 Agent Channels Skill 在真实 turn 中生效，filtered 和空闲
+6. 自消息策略、Markdown 外部卡片与 Pijoo Skill 在真实 turn 中生效，filtered 和空闲
    消息都不产生额外 turn；
 7. 短暂断线和 App 重启不静默丢消息，unknown 结果不会自动重复投递；
 8. 成员凭证、目标 TaskBinding 和工作目录不进入模型正文或服务端；来源会话引用只作为消息审计

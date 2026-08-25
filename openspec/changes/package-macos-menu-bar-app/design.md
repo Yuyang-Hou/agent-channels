@@ -3,9 +3,9 @@
 ## Runtime Shape
 
 ```text
-Agent Channels.app (SwiftUI/AppKit)
+Pijoo.app (SwiftUI/AppKit)
   -> Keychain + local binding.json
-  -> embedded agent-channels-bridge listen-here
+  -> embedded pijoo-bridge listen-here
   -> Channel SSE -> Codex Desktop IPC -> bound task
   -> local send.sock -> Channel REST broadcast
 
@@ -47,7 +47,7 @@ ready。owner 缺失时提示用户在 ChatGPT 打开该 task 一次；协议不
 
 ## MCP Installation
 
-App 只管理带 marker 的 `[mcp_servers.agent_channels]` 配置块，并在写入前展示确认；遇到用户
+App 只管理带 marker 的 `[mcp_servers.pijoo]` 配置块，并在写入前展示确认；遇到用户
 已有同名且非本 App 管理的配置时拒绝覆盖。配置只包含 App 内嵌 sidecar 路径和非秘密
 Binding 路径。首次保存后提示重启 ChatGPT，后续频道切换不改该配置。旧 `reply-mcp` 启动参数
 仅作为已安装版本的兼容别名保留；无论使用哪个入口，`tools/list` 都只返回
@@ -80,9 +80,9 @@ App 使用 GitHub Release 公共 API 手动检查更新，不引入 updater 依�
 
 ## 视觉方向：圆头传信鸽
 
-源图：[`agent-channels-logo.png`](../../../macos/branding/agent-channels-logo.png)
+源图：[`pijoo-logo.png`](../../../macos/branding/pijoo-logo.png)
 
-- **传信鸽**：用最直接的“可靠传递消息”意象表达 Agent Channels 连接不同 AI 会话的核心价值。
+- **传信鸽**：用最直接的“可靠传递消息”意象表达 Pijoo 连接不同 AI 会话的核心价值。
 - **圆头与短圆喙**：只保留侧面头部、眼睛和喙，在 `18 × 18` 下仍能辨认，适合菜单栏软件的小尺寸场景。
 - **冷灰、钢蓝、暖白**：冷灰主体保持克制，钢蓝承担识别与可信感，暖白背景降低工具软件的距离感。
 - **彩色与单色分工**：App icon 保留柔和色彩与轻微层次；菜单栏使用同轮廓的单色 Template Image，由 macOS 自动适配明暗状态。

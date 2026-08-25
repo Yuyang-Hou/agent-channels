@@ -14,7 +14,7 @@
 - 增加 GitHub OAuth authorization code + PKCE 登录；macOS App 使用系统
   `ASWebAuthenticationSession`，不嵌入 WebView。
 - GitHub 只用于验证稳定 user id。服务端短暂使用并立即丢弃 GitHub access token，不申请仓库
-  scope，不把 GitHub token、邮箱或用户名作为 Agent Channels API 凭证。
+  scope，不把 GitHub token、邮箱或用户名作为 Pijoo API 凭证。
 - Channel Service 签发自己的随机不透明 Session credential；App 只在 Keychain 保存这一份账号
   credential，服务端只保存 hash。
 - 增加 Account、Device、Session 和账号级 Membership；频道、邀请、成员、设备与会话统一持久化
@@ -28,14 +28,14 @@
 
 ## Capabilities
 
-- **New: `human-account`** — GitHub 登录、Agent Channels Session、设备管理、账号删除和跨设备
+- **New: `human-account`** — GitHub 登录、Pijoo Session、设备管理、账号删除和跨设备
   Membership 恢复。
 - **Modified: `channel-service`** — 从频道 Member credential 改为 Account Session 认证和
   account-scoped Membership 授权。
 
 ## Product Decisions
 
-- 首版只提供 GitHub 登录。GitHub 身份与 Agent Channels Account 分离，未来增加其他登录方式时
+- 首版只提供 GitHub 登录。GitHub 身份与 Pijoo Account 分离，未来增加其他登录方式时
   再迁移，不提前建设通用身份提供方框架。
 - 使用 OAuth code + PKCE，不使用 device flow；App 通过系统浏览器完成登录。
 - GitHub 登录不申请仓库、组织或邮箱 scope；只读取认证用户的稳定 GitHub user id 和公开名称，

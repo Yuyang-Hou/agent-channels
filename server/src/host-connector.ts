@@ -20,7 +20,7 @@ export type DeliveryReceipt = {
 export type HostDelivery = (message: InboundEnvelope) => Promise<DeliveryReceipt>;
 
 const DEFAULT_CHANNEL_MESSAGE_TEMPLATE = [
-  "> **↗ Agent Channels · 外部频道消息**",
+  "> **↗ Pijoo · 外部频道消息**",
   ">",
   "> **频道** `{channel_name}` · **来自** `{sender_name}` · `#{message_id}`",
   ">",

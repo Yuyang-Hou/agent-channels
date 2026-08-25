@@ -1,4 +1,4 @@
-# Agent Channels macOS
+# Pijoo macOS
 
 原生 macOS 13+ App。0.3 Beta 使用主窗口管理多个 RogerThat 频道、Codex task、
 task-channel Subscription 和本地消息历史；菜单栏保留运行状态与快速入口。
@@ -9,23 +9,22 @@ task-channel Subscription 和本地消息历史；菜单栏保留运行状态与
 
 ```bash
 ./macos/build-app.sh
-open "macos/build/Agent-Channels-0.3.0-beta.16-arm64.dmg"
+open "macos/build/Pijoo-0.3.0-beta.17-arm64.dmg"
 ```
 
 构建脚本默认使用 `xcrun --sdk macosx` 返回的 SDK。需要指定 SDK 时，可传绝对路径或
-`xcrun` 可识别的 SDK 名称；`AGENT_CHANNELS_SDK` 优先于 `SDKROOT`：
+`xcrun` 可识别的 SDK 名称；`PIJOO_SDK` 优先于 `SDKROOT`：
 
 ```bash
 SDKROOT="$(xcrun --sdk macosx --show-sdk-path)" ./macos/build-app.sh
-AGENT_CHANNELS_SDK=/path/to/MacOSX.sdk ./macos/build-app.sh
+PIJOO_SDK=/path/to/MacOSX.sdk ./macos/build-app.sh
 ```
 
-构建机安装固定 `Agent Channels Beta Signing` 身份时脚本会精确使用该证书；验收分发构建使用
-`AGENT_CHANNELS_REQUIRE_SIGNING=1 ./macos/build-app.sh`，身份缺失时直接失败。普通源码构建在
-身份缺失时回退 ad-hoc，也可用 `AGENT_CHANNELS_SIGN_IDENTITY=-` 显式选择 ad-hoc。脚本不会
-自动选用钥匙串中的 Developer ID。
+普通源码构建默认尝试旧内测身份 `Agent Channels Beta Signing`，缺失时回退 ad-hoc；也可用
+`PIJOO_SIGN_IDENTITY=-` 显式选择 ad-hoc。正式分发必须显式设置 Developer ID 身份并使用
+`PIJOO_REQUIRE_SIGNING=1 ./macos/build-app.sh`，身份缺失时直接失败。脚本不会自动选择其他身份。
 
-把 `Agent Channels.app` 拖入 Applications 后启动。不要直接从 DMG 运行，否则卸载 DMG 后
+把 `Pijoo.app` 拖入 Applications 后启动。不要直接从 DMG 运行，否则卸载 DMG 后
 固定 MCP 与 Skill 路径会失效；App 也会阻止从非 Applications 路径启用 Codex 集成和登录启动。
 
 当前包未公证。传到另一台 Mac 后若 Gatekeeper 拦截，请先核对交付方提供的 SHA-256，
@@ -46,7 +45,7 @@ Mac 上新建频道、成员和 task 绑定，不复用 0.2 配置。
 5. 完成 App → App、App → task、task → App 和 task → task 收发；task 调用
    `send_to_channel(message)` 时必须按来源 task 的默认 Subscription 路由，不能使用当前选中的
    频道或最近活跃 task 兜底。
-6. 确认默认入站 turn 和可靠发送回执分别显示 Agent Channels 收到/已发送卡片；修改两种模板后，
+6. 确认默认入站 turn 和可靠发送回执分别显示 Pijoo 收到/已发送卡片；修改两种模板后，
    标题、来源栏、正文和引用样式均使用用户保存的内容，且发送模板不改写频道正文。
 7. 重启 App，确认两个频道的本地历史、未读位置和 Subscription 独立恢复；一个 Subscription
    失败或等待人工确认时，其他 Subscription 仍继续运行。
@@ -71,15 +70,15 @@ Host 与安全检查通过前，不发布稳定版，也不声明生产就绪。
 ## 本机数据
 
 - 0.3 多频道、task 与 Subscription 状态：
-  `~/Library/Application Support/Agent Channels/state-v2.json`
+  `~/Library/Application Support/Pijoo/state-v2.json`
 - 各频道本地消息历史：同目录 `messages/*.jsonl`
 - 各成员独立凭证：macOS Keychain；本地状态文件只保存凭证引用
 - MCP 本机 App 操作入口：同目录 `send.sock`（目录 `0700`、socket `0600`、仅同 UID）；MCP
   只提交各工具参数与来源 task 上下文，凭证、网络请求、监听和历史都留在 App
 - AI 发送配置：用户确认后，只维护 `~/.codex/config.toml` 中
-  `Agent Channels managed MCP` 标记区块
+  `Pijoo managed MCP` 标记区块
 - 产品 Skill：App Bundle 内静态资源；用户确认后维护
-  `~/.codex/skills/agent-channels` 到已安装 App 的受管理链接
+  `~/.codex/skills/pijoo` 到已安装 App 的受管理链接
 
 App 不安装 Codex CLI、不启动 standalone daemon，也不会设置或清除
 `CODEX_APP_SERVER_USE_LOCAL_DAEMON`。

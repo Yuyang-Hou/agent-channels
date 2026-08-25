@@ -71,7 +71,7 @@ describe("Codex task bridge", () => {
       text: "# API\r\n\r\n```http\r\nGET /v1/items\r\n```\r\n{sender_name}",
     }, "# {sender_name} 从 {message_source} 发到 {channel_name}\n\n{message_text}\n\n编号 {message_id}");
     expect(custom).toBe("# backend 从 订单服务排障 发到 frontend\n\n# API\n\n```http\nGET /v1/items\n```\n{sender_name}\n\n编号 42");
-    expect(custom).not.toContain("Agent Channels · 外部频道消息");
+    expect(custom).not.toContain("Pijoo · 外部频道消息");
     expect(custom).not.toContain("> ");
 
     const defaultRendered = formatChannelMessage({
@@ -80,7 +80,7 @@ describe("Codex task bridge", () => {
       from: "backend",
       text: "# API\n\n```http\nGET /v1/items\n```",
     });
-    expect(defaultRendered).toContain("> **↗ Agent Channels · 外部频道消息**");
+    expect(defaultRendered).toContain("> **↗ Pijoo · 外部频道消息**");
     expect(defaultRendered).toContain("> **频道** `frontend` · **来自** `backend` · `#43`");
     expect(defaultRendered).toContain("> # API\n> \n> ```http\n> GET /v1/items\n> ```");
     expect(formatChannelMessage({
@@ -219,7 +219,7 @@ describe("Codex task bridge", () => {
           const params = message.params as {
             turnStart?: { request?: { clientUserMessageId?: string; input?: Array<{ text?: string }> } };
           };
-          expect(params.turnStart?.request?.clientUserMessageId).toBe("agent-channels:test-channel:7");
+          expect(params.turnStart?.request?.clientUserMessageId).toBe("pijoo:test-channel:7");
           turnText = params.turnStart?.request?.input?.[0]?.text ?? "";
           socket.write(frame({
             type: "response",
@@ -335,9 +335,9 @@ describe("Codex task bridge", () => {
       "thread-owner-discovery",
       "thread-follower-steer-turn",
     ]);
-    expect(steerParams.clientUserMessageId).toBe("agent-channels:test-channel:8");
+    expect(steerParams.clientUserMessageId).toBe("pijoo:test-channel:8");
     expect(steerParams.restoreMessage).toMatchObject({
-      id: "agent-channels:test-channel:8",
+      id: "pijoo:test-channel:8",
       context: { workspaceRoots: [] },
     });
   });

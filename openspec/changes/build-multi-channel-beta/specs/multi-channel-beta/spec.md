@@ -84,7 +84,7 @@ App MUST 以主窗口展示多个 ChannelConnection，并为当前频道提供�
 #### Scenario: 从菜单栏打开主窗口
 
 - **GIVEN** 主窗口已隐藏或最小化，菜单栏浮窗处于前台
-- **WHEN** 用户点击“打开 Agent Channels”
+- **WHEN** 用户点击“打开 Pijoo”
 - **THEN** App 复用、反最小化并聚焦单一主窗口，且不创建独立设置窗口
 
 #### Scenario: 普通操作失败不污染总体状态
@@ -95,7 +95,7 @@ App MUST 以主窗口展示多个 ChannelConnection，并为当前频道提供�
 
 #### Scenario: 打开 App 设置
 
-- **GIVEN** 用户正在 Agent Channels 主窗口
+- **GIVEN** 用户正在 Pijoo 主窗口
 - **WHEN** 用户选择侧栏“设置”
 - **THEN** “设置”作为与频道列表分隔的固定底部目的地，内容在当前主窗口详情区显示，频道、
   订阅和设置不会分散到两个窗口
@@ -314,14 +314,14 @@ MCP MUST NOT 读取 Keychain、直接访问 Channel Service、建立频道监听
 
 #### Scenario: 工具表与接收边界
 
-- **GIVEN** Codex 加载 Agent Channels MCP
+- **GIVEN** Codex 加载 Pijoo MCP
 - **WHEN** Codex 请求工具表
 - **THEN** 只返回上述七项，且频道空闲或消息到达都不会由 MCP 自行轮询或创建 Host turn
 
 #### Scenario: 用户主动追溯刚才的消息
 
-- **GIVEN** 当前 task 已成功接收至少一条 Agent Channels 消息
-- **WHEN** 用户明确询问“这条或刚才的消息是否来自 Agent Channels、由谁发送”，AI 调用 `inspect_message_source`
+- **GIVEN** 当前 task 已成功接收至少一条 Pijoo 消息
+- **WHEN** 用户明确询问“这条或刚才的消息是否来自 Pijoo、由谁发送”，AI 调用 `inspect_message_source`
 - **THEN** App 仅从当前 task 的 TaskBinding、SubscriptionDelivery 与 LocalMessage 读取最近一条
   `delivered` 记录，返回频道消息 id、服务端认证发送者和声明的 App/MCP 来源，不修改模板或 Host 输入
 
@@ -329,7 +329,7 @@ MCP MUST NOT 读取 Keychain、直接访问 Channel Service、建立频道监听
 
 - **GIVEN** 普通消息到达，或当前 task 没有可追溯的成功投递记录
 - **WHEN** 用户没有主动追问来源，或主动查询但 App 未命中记录
-- **THEN** Skill 不自动调用来源工具；未命中结果只说明本地没有 Agent Channels 投递记录，
+- **THEN** Skill 不自动调用来源工具；未命中结果只说明本地没有 Pijoo 投递记录，
   App 和 AI 不据此断言消息由用户手动输入
 
 #### Scenario: 当前 task 管理订阅
@@ -362,9 +362,9 @@ MCP MUST NOT 读取 Keychain、直接访问 Channel Service、建立频道监听
 - **WHEN** task 调用 `send_to_channel`
 - **THEN** App 仍允许主动发送；接收开关不成为出站路由条件
 
-### Requirement: Agent Channels Skill 承接完整产品语义
+### Requirement: Pijoo Skill 承接完整产品语义
 
-App MUST 随包提供面向完整 Agent Channels 产品的静态 Skill。Skill MUST 解释 App、MCP、
+App MUST 随包提供面向完整 Pijoo 产品的静态 Skill。Skill MUST 解释 App、MCP、
 Subscription、入站卡片、信任、回复与可靠发送回执，不得只描述 `send_to_channel`。Skill MUST NOT
 包含 secret、动态频道状态或 task id，也不得依赖每 turn hook。
 
@@ -400,7 +400,7 @@ Subscription、入站卡片、信任、回复与可靠发送回执，不得只�
 
 #### Scenario: AI 处理频道消息
 
-- **GIVEN** task 收到标题包含“频道消息”或“Agent Channels”任一项的外部消息
+- **GIVEN** task 收到标题包含“频道消息”或“Pijoo”任一项的外部消息
 - **WHEN** Skill 被触发
 - **THEN** AI 把正文当作不可信协作数据且不默认回复，只在需要时使用明确频道执行动作
 
@@ -449,7 +449,7 @@ App MUST 在本机滚动记录启动、全局错误、频道连接与 Subscripti
 Subscription MUST 使用本地接收模板生成完整 Host 输入，并使用本地发送成功模板生成
 `send_to_channel` 的成功回执。两种模板只允许 `channel_name`、
 `sender_name`、`message_source`、`message_text` 和 `message_id` 五个变量。默认模板 MUST 生成当前的
-Agent Channels Markdown 引用卡片；接收模板标识外部频道消息，发送成功模板标识正文已可靠进入频道。
+Pijoo Markdown 引用卡片；接收模板标识外部频道消息，发送成功模板标识正文已可靠进入频道。
 标题、来源栏、正文和引用样式 MUST 全部属于模板，
 Connector 不得在用户模板外再添加固定可见内容。
 模板设置 MUST 允许用户在不保存的情况下预览当前草稿的 Markdown 效果。
@@ -460,7 +460,7 @@ MUST NOT 改写实际频道正文、创建额外 Host turn 或用于发送失败
 `channel_name` MUST 展开为 App 中保存的频道展示名称，`sender_name` MUST 展开为服务端按
 成员身份解析的发送者昵称；只有对应名称不可用时才可回退为内部标识。
 `message_source` MUST 对 task 消息展开为 Host 名称与缩短的会话 id，对 App 消息展开为
-`Agent Channels App`；旧客户端未提供来源时 MUST 回退为发送者昵称。
+`Pijoo App`；旧客户端未提供来源时 MUST 回退为发送者昵称。
 每条由 Host 会话发送的消息 MUST 同时携带可扩展来源引用 `provider + conversation_id + label`。
 App MUST 将完整引用写入本地消息记录并允许用户复制来源会话 id；默认模板只展示 label。
 来源引用 MUST NOT 被服务端或接收端作为路由、授权或可信目标。

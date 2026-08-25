@@ -263,8 +263,8 @@ describe("rogerthat listen-here", () => {
     await listener;
 
     const line = errors.mock.calls.map(([entry]) => String(entry))
-      .find((entry) => entry.startsWith("@agent-channels ") && entry.includes('"state":"received"'))!;
-    expect(JSON.parse(line.slice("@agent-channels ".length))).toMatchObject({
+      .find((entry) => entry.startsWith("@pijoo ") && entry.includes('"state":"received"'))!;
+    expect(JSON.parse(line.slice("@pijoo ".length))).toMatchObject({
       state: "received",
       message: {
         channel: ctx.channelId,
@@ -619,8 +619,8 @@ describe("rogerthat listen-here", () => {
     expect(requests[1]).toBe(`/api/channels/cursor-test/stream?since=${messageId}`);
     expect(errors.mock.calls.flat().join("\n")).toContain("connection error");
     const statusLines = errors.mock.calls.map(([line]) => String(line))
-      .filter((line) => line.startsWith("@agent-channels "))
-      .map((line) => JSON.parse(line.slice("@agent-channels ".length)) as Record<string, unknown>);
+      .filter((line) => line.startsWith("@pijoo "))
+      .map((line) => JSON.parse(line.slice("@pijoo ".length)) as Record<string, unknown>);
     expect(statusLines.find((event) => event.state === "error")).toMatchObject({
       kind: "connection",
     });

@@ -1,7 +1,7 @@
 schema: spec-driven
 
 context: |
-  Product: Agent Channels (working name), a product that lets users connect their existing AI conversations through collaboration channels.
+  Product: Pijoo, a product that lets users connect their existing AI conversations through collaboration channels.
   Current phase: package the validated P0 Codex path as the first local macOS product; Codex remains the only validated Host Connector.
   Product authority: PRODUCT.md.
   Development status authority: docs/STATUS.md.
