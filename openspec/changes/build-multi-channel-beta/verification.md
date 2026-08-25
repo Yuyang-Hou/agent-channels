@@ -1,9 +1,8 @@
 # Verification
 
-Status: 0.3.0-beta.17 prerelease published. 0.3.0-beta.18 is a fixed-internal-signed local candidate with
-the initial setup gate, stable sidebar add entry, quieter contextual guidance and local development launch flow;
-automated and packaged-artifact gates pass. Notarization, publication, clean-install, two-machine, real-Host and
-security inspection remain pending.
+Status: 0.3.0-beta.18 prerelease published with the initial setup gate, stable sidebar add entry, quieter
+contextual guidance and local development launch flow. Automated, Developer ID, notarization, public-asset and
+Gatekeeper gates pass. Clean-install, two-machine, real-Host and security inspection remain pending.
 
 ## Post-candidate Working Tree
 
@@ -25,7 +24,7 @@ security inspection remain pending.
 - 双击频道详情标题与现有编辑按钮复用同一改名流程。
 - `npm test` 通过 11 个文件 / 97 项测试；TypeScript typecheck、Swift 编译与本机 self-test、
   `openspec validate --strict --all` 和 `git diff --check` 通过。
-- 本节后续的 beta.18 记录对应这些工作区修改；未提交、未公证、未安装、未推送或发布。
+- 本节后续的 beta.18 记录对应提交 `bf499d8` 及已发布的公证资产；未在本机安装。
 
 ## Next Beta Local Candidate
 
@@ -233,14 +232,15 @@ security inspection remain pending.
   a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.16` with all seven
   task-scoped tools. It is not notarized, installed, pushed or published.
 
-## 2026-08-25 Beta.18 Local Package
+## 2026-08-25 Beta.18 Published Prerelease
 
-- `macos/build/Pijoo-0.3.0-beta.18-arm64.dmg` is 28,570,763 bytes with SHA-256
-  `71a304c97d6895e03ef60345c78b3a0a28dd8bebd78ce1560bf70d74a31a88af`; `hdiutil verify` passes.
+- `macos/build/Pijoo-0.3.0-beta.18-arm64.dmg` is 28,571,929 bytes with SHA-256
+  `52b8294a3e9b1b759f5deec2f7531abbc86536fbecd589fa6abbe77da063177e`; `hdiutil verify` passes.
 - The mounted DMG contains release version `0.3.0-beta.18`, bundle build `18`, the exact bundled Pijoo Skill,
-  a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.18`.
+  a deep/strict-valid Developer ID signature and MCP `serverInfo.version` `0.3.0-beta.18`.
 - All 11 server test files / 97 tests, TypeScript typecheck, Swift App and updater self-tests, strict OpenSpec
-  validation and diff checks pass. It is not notarized, installed, committed, pushed or published.
+  validation and diff checks pass. Notarization `dbff2a02-57a3-4666-bb97-48fccabd3368` is Accepted; the stapled
+  DMG and mounted App pass Gatekeeper, and the public GitHub asset was downloaded and reverified.
 
 ## Live Service Gate
 
@@ -288,7 +288,8 @@ tasks. Do not reuse or import 0.2 data.
 
 ## Release Gate
 
-GitHub prerelease `v0.3.0-beta.2` is public, non-draft and contains the 28,677,748-byte arm64 DMG whose GitHub
-digest matches the SHA-256 above. Pre-launch distribution remains Beta-only. Until the real-Host and security
-checks pass, the fixed-internal-signed, non-notarized beta.8 package remains an acceptance build: no stable
-release and no production-ready claim. Existing 0.2 Release records remain historical facts.
+GitHub prerelease `v0.3.0-beta.18` is public, non-draft and contains the 28,571,929-byte notarized arm64 DMG;
+its GitHub digest and downloaded SHA-256 are both
+`52b8294a3e9b1b759f5deec2f7531abbc86536fbecd589fa6abbe77da063177e`. Distribution remains Beta-only;
+until the real-Host and security checks pass, no stable or production-ready claim is made. Existing older
+Release records remain historical facts.

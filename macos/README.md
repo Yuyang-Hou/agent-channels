@@ -20,7 +20,7 @@ task-channel Subscription 和本地消息历史；菜单栏保留运行状态与
 
 ```bash
 ./macos/build-app.sh
-open "macos/build/Pijoo-0.3.0-beta.17-arm64.dmg"
+open "macos/build/Pijoo-0.3.0-beta.18-arm64.dmg"
 ```
 
 构建脚本默认使用 `xcrun --sdk macosx` 返回的 SDK。需要指定 SDK 时，可传绝对路径或
@@ -38,7 +38,7 @@ PIJOO_SDK=/path/to/MacOSX.sdk ./macos/build-app.sh
 把 `Pijoo.app` 拖入 Applications 后启动。不要直接从 DMG 运行，否则卸载 DMG 后
 固定 MCP 与 Skill 路径会失效；App 也会阻止从非 Applications 路径启用 Codex 集成和登录启动。
 
-正式 `0.3.0-beta.17` 包已使用 Developer ID 签名并通过 Apple 公证；若 Gatekeeper 仍拦截，
+正式 `0.3.0-beta.18` 包已使用 Developer ID 签名并通过 Apple 公证；若 Gatekeeper 仍拦截，
 请先核对发布页 SHA-256，不要关闭 Gatekeeper 或执行全局绕过命令。
 
 ## 0.3 双机验收
@@ -73,7 +73,7 @@ Bundle ID、版本、完整代码签名和当前 App 的 designated requirement�
 
 App 图标使用 E3 品牌稿；菜单栏使用同一识别特征的单色 SVG，并由 macOS 作为模板图标渲染。
 
-[`v0.3.0-beta.17`](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.17)
+[`v0.3.0-beta.18`](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.18)
 已作为 Developer ID 签名并公证的 GitHub prerelease 发布。预上线分发只使用 Beta 标签；首次从旧
 ad-hoc 包升级时可能需要授权一次钥匙串访问；同一 Developer ID 的后续 Beta 不应重复询问。双机真实
 Host 与安全检查通过前，不发布稳定版，也不声明生产就绪。
