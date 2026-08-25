@@ -16,7 +16,17 @@ SKILL_SOURCE="$ROOT_DIR/skills/pijoo"
 DEFAULT_SIGN_IDENTITY="7D4A076571734A0E816D5C522FF9A7286D1C5A50"
 REQUESTED_SIGN_IDENTITY="${PIJOO_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
 REQUIRE_SIGNING="${PIJOO_REQUIRE_SIGNING:-0}"
+APP_ONLY="${PIJOO_APP_ONLY:-0}"
+DEVELOPMENT="${PIJOO_DEVELOPMENT:-0}"
+SKIP_SELF_TESTS="${PIJOO_SKIP_SELF_TESTS:-0}"
 RELEASE_VERSION="${PIJOO_RELEASE_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :PijooReleaseVersion' "$INFO_PLIST")}"
+for flag in "$APP_ONLY" "$DEVELOPMENT" "$SKIP_SELF_TESTS"; do
+  [[ "$flag" == "0" || "$flag" == "1" ]] || { echo "Build flags must be 0 or 1" >&2; exit 2; }
+done
+if [[ "$APP_ONLY" == "0" && ("$DEVELOPMENT" == "1" || "$SKIP_SELF_TESTS" == "1") ]]; then
+  echo "Development mode and skipped self-tests require PIJOO_APP_ONLY=1" >&2
+  exit 2
+fi
 if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
   echo "Invalid release version: $RELEASE_VERSION" >&2
   exit 2
@@ -76,36 +86,42 @@ else
   SIGN_IDENTITY="-"
 fi
 
-rm -rf "$APP" "$STAGING" "$DMG" "$ICONSET" "$BUILD_DIR/pijoo-self-test" "$BUILD_DIR/pijoo-updater-self-test"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$STAGING" "$ICONSET" "$CLANG_MODULE_CACHE_PATH" "$SWIFT_MODULECACHE_PATH"
+rm -rf "$APP" "$ICONSET" "$BUILD_DIR/pijoo-self-test" "$BUILD_DIR/pijoo-updater-self-test"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$ICONSET" "$CLANG_MODULE_CACHE_PATH" "$SWIFT_MODULECACHE_PATH"
+if [[ "$APP_ONLY" == "0" ]]; then
+  rm -rf "$STAGING" "$DMG"
+  mkdir -p "$STAGING"
+fi
 
-echo "==> Running focused Swift self-test"
-swiftc \
-  -swift-version 5 \
-  -parse-as-library \
-  -module-cache-path "$SWIFT_MODULECACHE_PATH" \
-  -D SELF_TEST \
-  -target arm64-apple-macos13.0 \
-  -sdk "$SDK" \
-  -framework AppKit \
-  -framework Security \
-  -framework ServiceManagement \
-  -framework SwiftUI \
-  "$SCRIPT_DIR/PijooApp.swift" \
-  -o "$BUILD_DIR/pijoo-self-test"
-"$BUILD_DIR/pijoo-self-test"
+if [[ "$SKIP_SELF_TESTS" == "0" ]]; then
+  echo "==> Running focused Swift self-test"
+  swiftc \
+    -swift-version 5 \
+    -parse-as-library \
+    -module-cache-path "$SWIFT_MODULECACHE_PATH" \
+    -D SELF_TEST \
+    -target arm64-apple-macos13.0 \
+    -sdk "$SDK" \
+    -framework AppKit \
+    -framework Security \
+    -framework ServiceManagement \
+    -framework SwiftUI \
+    "$SCRIPT_DIR/PijooApp.swift" \
+    -o "$BUILD_DIR/pijoo-self-test"
+  "$BUILD_DIR/pijoo-self-test"
 
-echo "==> Running update helper self-test"
-swiftc \
-  -O \
-  -swift-version 5 \
-  -parse-as-library \
-  -module-cache-path "$SWIFT_MODULECACHE_PATH" \
-  -target arm64-apple-macos13.0 \
-  -sdk "$SDK" \
-  "$SCRIPT_DIR/UpdateHelper.swift" \
-  -o "$BUILD_DIR/pijoo-updater-self-test"
-"$BUILD_DIR/pijoo-updater-self-test" --self-test
+  echo "==> Running update helper self-test"
+  swiftc \
+    -O \
+    -swift-version 5 \
+    -parse-as-library \
+    -module-cache-path "$SWIFT_MODULECACHE_PATH" \
+    -target arm64-apple-macos13.0 \
+    -sdk "$SDK" \
+    "$SCRIPT_DIR/UpdateHelper.swift" \
+    -o "$BUILD_DIR/pijoo-updater-self-test"
+  "$BUILD_DIR/pijoo-updater-self-test" --self-test
+fi
 
 echo "==> Compiling RogerThat sidecar"
 bun build --compile --target=bun-darwin-arm64 \
@@ -164,6 +180,9 @@ ditto "$SKILL_SOURCE" "$RESOURCES_DIR/skills/pijoo"
 cp "$INFO_PLIST" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :PijooReleaseVersion $RELEASE_VERSION" "$CONTENTS/Info.plist"
+if [[ "$DEVELOPMENT" == "1" ]]; then
+  /usr/libexec/PlistBuddy -c "Add :PijooDevelopmentBuild bool true" "$CONTENTS/Info.plist"
+fi
 chmod 755 "$MACOS_DIR/Pijoo" "$MACOS_DIR/rogerthat-sidecar" "$MACOS_DIR/pijoo-updater"
 
 echo "==> Signing with identity: $SIGN_IDENTITY"
@@ -181,6 +200,12 @@ codesign "${SIGN_ARGS[@]}" "$APP"
 codesign --verify --deep --strict "$APP"
 codesign -d -r- "$APP" 2>&1 | sed -n 's/^designated => /Designated requirement: /p'
 codesign -dv --verbose=4 "$APP" 2>&1 | sed -n '/^Authority=/p; /^TeamIdentifier=/p'
+
+if [[ "$APP_ONLY" == "1" ]]; then
+  echo "Built: $APP"
+  echo "Note: App-only build; no DMG was created or changed."
+  exit 0
+fi
 
 ditto "$APP" "$STAGING/Pijoo.app"
 ln -s /Applications "$STAGING/Applications"

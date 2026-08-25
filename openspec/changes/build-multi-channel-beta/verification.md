@@ -1,18 +1,31 @@
 # Verification
 
-Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.16 local candidate adds the product Skill, editable
-Markdown receive and sent-message cards, replay recovery, on-demand conversation search with corrected overlay stacking, member identity recovery, client log export and a fixed internal signing
-identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.16
-publication remain pending.
+Status: 0.3.0-beta.17 prerelease published. 0.3.0-beta.18 is a fixed-internal-signed local candidate with
+the initial setup gate, stable sidebar add entry, quieter contextual guidance and local development launch flow;
+automated and packaged-artifact gates pass. Notarization, publication, clean-install, two-machine, real-Host and
+security inspection remain pending.
 
 ## Post-candidate Working Tree
 
+- 首次使用仅展示名字和 AI 集成；全局昵称非空且 Codex MCP 与 Skill 均已配置后才进入频道工作区。
+- 首次设置门槛覆盖昵称缺失、集成缺失和两项完成三种状态；Swift 编译、内置 self-test 与严格
+  OpenSpec 校验通过。
+- `macos/run-dev.sh` 已构建并真实启动固定路径的开发 App，主窗口显示首次设置门槛；App-only
+  模式未改动已有 beta.17 DMG，其 SHA-256 仍为
+  `78c0fbdbea58e195eba002406fd2ffd27661a9a8e4b30866190c88c9033b054a`。
+- 开发集成修复仅重定向经过 bundle id 与固定 Resources 路径校验的旧 Pijoo Skill；self-test
+  覆盖成功重定向、显式恢复和既有外来链接拒绝。
+- 侧栏添加频道已收敛为原生 `+`；成员页移除重复常驻说明并把身份边界留在操作确认中，转发页
+  只保留弱化的 Host 支持范围。本地真实渲染已确认三处视觉结果；`+` 的 VoiceOver 标签已补入
+  源码，但最终辅助功能树复查因本机界面读取超时尚未完成。
+- 开发启动脚本已改用真实 bundle id `dev.pijoo.menubar`，并在构建前清理遗留的同路径开发进程；
+  本轮确认只运行一个最新开发实例。
 - 添加频道弹窗已改为创建时只填频道名称、加入时只填邀请口令；“我的昵称”在设置中全局维护，
   App 的所有 join/send 路径显式使用该昵称，服务端持久化并随邀请返回频道名称。
 - 双击频道详情标题与现有编辑按钮复用同一改名流程。
-- `npm test` 通过 11 个文件 / 92 项测试；TypeScript typecheck、Swift 编译与本机 self-test、
+- `npm test` 通过 11 个文件 / 97 项测试；TypeScript typecheck、Swift 编译与本机 self-test、
   `openspec validate --strict --all` 和 `git diff --check` 通过。
-- 下方 beta.8 DMG 早于这些工作区修改；本轮没有重新构建、签名或发布 DMG。
+- 本节后续的 beta.18 记录对应这些工作区修改；未提交、未公证、未安装、未推送或发布。
 
 ## Next Beta Local Candidate
 
@@ -219,6 +232,15 @@ publication remain pending.
 - The mounted DMG contains release version `0.3.0-beta.16`, bundle build `16`, the exact bundled Skill,
   a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.16` with all seven
   task-scoped tools. It is not notarized, installed, pushed or published.
+
+## 2026-08-25 Beta.18 Local Package
+
+- `macos/build/Pijoo-0.3.0-beta.18-arm64.dmg` is 28,570,763 bytes with SHA-256
+  `71a304c97d6895e03ef60345c78b3a0a28dd8bebd78ce1560bf70d74a31a88af`; `hdiutil verify` passes.
+- The mounted DMG contains release version `0.3.0-beta.18`, bundle build `18`, the exact bundled Pijoo Skill,
+  a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.18`.
+- All 11 server test files / 97 tests, TypeScript typecheck, Swift App and updater self-tests, strict OpenSpec
+  validation and diff checks pass. It is not notarized, installed, committed, pushed or published.
 
 ## Live Service Gate
 

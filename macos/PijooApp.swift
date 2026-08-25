@@ -89,6 +89,10 @@ private func requiresCodexRestart(configured: Bool, appVersion: String, loadedMC
     configured && loadedMCPVersion != appVersion
 }
 
+private func initialSetupRequired(nickname: String, codexConfigured: Bool) -> Bool {
+    nickname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !codexConfigured
+}
+
 enum SelfMessagePolicy: String, Codable, CaseIterable, Identifiable {
     case excludeMember = "exclude_member"
     case includeOtherEndpoints = "include_other_endpoints"
@@ -615,8 +619,12 @@ enum AppPaths {
     static let codexConfig = codexDirectory.appendingPathComponent("config.toml")
     static let codexSkills = codexDirectory.appendingPathComponent("skills", isDirectory: true)
     static let agentChannelsSkill = codexSkills.appendingPathComponent("pijoo", isDirectory: true)
+    static var isDevelopmentBuild: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "PijooDevelopmentBuild") as? Bool == true
+    }
 
     static var appIsInstalled: Bool {
+        if isDevelopmentBuild { return true }
         let app = Bundle.main.bundleURL.standardizedFileURL.path
         let userApplications = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Applications", isDirectory: true).path + "/"
@@ -738,8 +746,9 @@ enum PijooSkillInstaller {
 
     static func install(
         source: URL = bundledSkill,
-        destination: URL = AppPaths.agentChannelsSkill
-    ) throws {
+        destination: URL = AppPaths.agentChannelsSkill,
+        allowRetargetFromBundleIdentifier: String? = nil
+    ) throws -> URL? {
         guard FileManager.default.fileExists(atPath: source.appendingPathComponent("SKILL.md").path) else {
             throw AppFailure("App 安装包缺少 Pijoo Skill，请重新安装")
         }
@@ -747,16 +756,25 @@ enum PijooSkillInstaller {
             guard isSymbolicLink(destination) else {
                 throw AppFailure("~/.codex/skills/pijoo 已存在且不由本 App 管理，请先手动处理")
             }
-            guard try resolvedLinkTarget(destination).standardizedFileURL == source.standardizedFileURL else {
+            let target = try resolvedLinkTarget(destination).standardizedFileURL
+            if target == source.standardizedFileURL { return nil }
+            guard let bundleIdentifier = allowRetargetFromBundleIdentifier,
+                  isBundledSkill(target, bundleIdentifier: bundleIdentifier) else {
                 throw AppFailure("~/.codex/skills/pijoo 指向其他内容，未覆盖")
             }
-            return
+            try replaceLink(destination, from: target, to: source)
+            return target
         }
         try FileManager.default.createDirectory(
             at: destination.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
         try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: source)
+        return nil
+    }
+
+    static func restoreLink(destination: URL, current: URL, previous: URL) throws {
+        try replaceLink(destination, from: current.standardizedFileURL, to: previous)
     }
 
     static func remove(
@@ -789,6 +807,34 @@ enum PijooSkillInstaller {
         return lstat(url.path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFLNK
     }
 
+    private static func isBundledSkill(_ target: URL, bundleIdentifier: String) -> Bool {
+        let bundle = target
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        guard bundle.pathExtension == "app",
+              target == bundle.appendingPathComponent("Contents/Resources/skills/pijoo").standardizedFileURL,
+              FileManager.default.fileExists(atPath: target.appendingPathComponent("SKILL.md").path),
+              let info = NSDictionary(contentsOf: bundle.appendingPathComponent("Contents/Info.plist")),
+              info["CFBundleIdentifier"] as? String == bundleIdentifier else { return false }
+        return true
+    }
+
+    private static func replaceLink(_ destination: URL, from previous: URL, to replacement: URL) throws {
+        guard isSymbolicLink(destination),
+              try resolvedLinkTarget(destination).standardizedFileURL == previous.standardizedFileURL else {
+            throw AppFailure("~/.codex/skills/pijoo 在修复期间发生变化，未覆盖")
+        }
+        try FileManager.default.removeItem(at: destination)
+        do {
+            try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: replacement)
+        } catch {
+            try? FileManager.default.createSymbolicLink(at: destination, withDestinationURL: previous)
+            throw error
+        }
+    }
+
     private static func resolvedLinkTarget(_ destination: URL) throws -> URL {
         let raw = try FileManager.default.destinationOfSymbolicLink(atPath: destination.path)
         return raw.hasPrefix("/")
@@ -802,7 +848,8 @@ enum CodexIntegrationInstaller {
         configURL: URL,
         block: String,
         skillSource: URL = PijooSkillInstaller.bundledSkill,
-        skillDestination: URL = AppPaths.agentChannelsSkill
+        skillDestination: URL = AppPaths.agentChannelsSkill,
+        allowSkillRetargetFromBundleIdentifier: String? = nil
     ) throws {
         let existing = try CodexConfigEditor.reading(configURL) ?? ""
         let updated = try CodexConfigEditor.installing(block: block, into: existing)
@@ -810,11 +857,22 @@ enum CodexIntegrationInstaller {
             source: skillSource,
             destination: skillDestination
         )
+        var previousSkillTarget: URL?
         do {
-            try PijooSkillInstaller.install(source: skillSource, destination: skillDestination)
+            previousSkillTarget = try PijooSkillInstaller.install(
+                source: skillSource,
+                destination: skillDestination,
+                allowRetargetFromBundleIdentifier: allowSkillRetargetFromBundleIdentifier
+            )
             if updated != existing { try CodexConfigEditor.writing(updated, to: configURL) }
         } catch {
-            if !skillLinkAlreadyExisted {
+            if let previousSkillTarget {
+                try? PijooSkillInstaller.restoreLink(
+                    destination: skillDestination,
+                    current: skillSource,
+                    previous: previousSkillTarget
+                )
+            } else if !skillLinkAlreadyExisted {
                 try? PijooSkillInstaller.remove(source: skillSource, destination: skillDestination)
             }
             throw error
@@ -1715,7 +1773,9 @@ extension AppModel {
         guard let profile = selectedChannel, profile.role == "owner", member.memberID != profile.memberID else { return }
         let alert = NSAlert()
         alert.messageText = ban ? "封禁成员 \(member.name)？" : "移除成员 \(member.name)？"
-        alert.informativeText = "该成员的现有凭证、Session 和消息流会立即失效。"
+        alert.informativeText = ban
+            ? "该成员的现有凭证、Session 和消息流会立即失效；对方仍可持新邀请创建新成员。"
+            : "该成员的现有凭证、Session 和消息流会立即失效。"
         alert.addButton(withTitle: ban ? "封禁" : "移除")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -2156,6 +2216,7 @@ final class AppModel: ObservableObject {
     @Published var busy = false
     @Published var launchAtLogin = false
     @Published var codexIntegrationStatus = "未启用"
+    @Published private(set) var codexIntegrationConfigured = false
     @Published var codexIntegrationNeedsRestart = false
     @Published var loadedCodexMCPVersion = UserDefaults.standard.string(forKey: loadedCodexMCPVersionKey)
     @Published var updateStatus = "未检查"
@@ -2250,6 +2311,9 @@ final class AppModel: ObservableObject {
     var menuIcon: String { lastError.isEmpty ? "paperplane.circle" : "exclamationmark.triangle.fill" }
     var runningListenerCount: Int { listeners.count }
     var enabledSubscriptionCount: Int { state.subscriptions.filter(\.enabled).count }
+    var requiresInitialSetup: Bool {
+        initialSetupRequired(nickname: state.defaultCallsign, codexConfigured: codexIntegrationConfigured)
+    }
 
     func selectChannel(_ id: UUID?) {
         selectedChannelID = id
@@ -3418,8 +3482,9 @@ extension AppModel {
         let raw = (try? String(contentsOf: AppPaths.codexConfig, encoding: .utf8)) ?? ""
         let mcp = raw.contains(managedConfigStart) && raw.contains(AppPaths.state.path)
         let skill = PijooSkillInstaller.isInstalled()
+        codexIntegrationConfigured = mcp && skill
         codexIntegrationNeedsRestart = requiresCodexRestart(
-            configured: mcp && skill,
+            configured: codexIntegrationConfigured,
             appVersion: currentVersion,
             loadedMCPVersion: loadedCodexMCPVersion
         )
@@ -3461,7 +3526,13 @@ extension AppModel {
             persistState()
             try FileManager.default.createDirectory(at: AppPaths.codexDirectory, withIntermediateDirectories: true)
             let block = CodexConfigEditor.managedBlock(sidecar: Sidecar.executable.path, binding: AppPaths.state.path)
-            try CodexIntegrationInstaller.install(configURL: AppPaths.codexConfig, block: block)
+            try CodexIntegrationInstaller.install(
+                configURL: AppPaths.codexConfig,
+                block: block,
+                allowSkillRetargetFromBundleIdentifier: AppPaths.isDevelopmentBuild
+                    ? Bundle.main.bundleIdentifier
+                    : nil
+            )
             loadedCodexMCPVersion = nil
             UserDefaults.standard.removeObject(forKey: loadedCodexMCPVersionKey)
             UserDefaults.standard.set(currentVersion, forKey: shownCodexRestartVersionKey)
@@ -3777,9 +3848,17 @@ private struct MainWindowView: View {
     }
 
     var body: some View {
+        if model.requiresInitialSetup {
+            PijooSettingsView(model: model, initialSetup: true)
+        } else {
+            channelWorkspace
+        }
+    }
+
+    private var channelWorkspace: some View {
         NavigationSplitView {
             List(selection: destination) {
-                Section("频道") {
+                Section {
                     ForEach(model.state.channels) { channel in
                         HStack {
                             Circle()
@@ -3804,6 +3883,22 @@ private struct MainWindowView: View {
                         }
                         .tag(MainDestination.channel(channel.id))
                     }
+                } header: {
+                    HStack {
+                        Text("频道")
+                        Spacer()
+                        Button {
+                            showingSettings = false
+                            model.showAddChannel = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .padding(3)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("添加频道")
+                        .accessibilityLabel("添加频道")
+                    }
+                    .accessibilityElement(children: .contain)
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -3831,14 +3926,6 @@ private struct MainWindowView: View {
                 .padding(8)
             }
             .navigationTitle("Pijoo")
-            .toolbar {
-                Button {
-                    showingSettings = false
-                    model.showAddChannel = true
-                } label: {
-                    Label("添加频道", systemImage: "plus")
-                }
-            }
         } detail: {
             if showingSettings {
                 PijooSettingsView(model: model)
@@ -4292,15 +4379,13 @@ private struct ChannelMembersView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("撤销邀请只阻止后续加入；移除或封禁成员会撤销其当前成员凭证。没有账号体系时，同一自然人仍可持新邀请加入。")
-                .font(.caption).foregroundStyle(.secondary)
-                .padding(12)
-            Divider()
             List {
                 if channel.role == "owner" {
                     Section("邀请") {
                         if model.invitations.isEmpty {
-                            Text("暂无邀请；从窗口右上角创建。").foregroundStyle(.secondary)
+                            Text("暂无邀请")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
                         } else {
                             ForEach(model.invitations) { invitation in
                                 HStack(spacing: 10) {
@@ -4425,8 +4510,8 @@ private struct ChannelSubscriptionsView: View {
                         .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
                 .zIndex(1)
-                Text("当前支持 ChatGPT Codex。可按本地会话标题搜索，也可直接粘贴 ID；绑定时会再次验证会话是否可投递。")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text("支持 ChatGPT Codex")
+                    .font(.caption2).foregroundStyle(.tertiary)
             }
             .padding(16)
             .zIndex(1)
@@ -4656,13 +4741,18 @@ private struct EmptyStateView<Actions: View>: View {
 
 private struct PijooSettingsView: View {
     @ObservedObject var model: AppModel
+    var initialSetup = false
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("设置").font(.title2.bold())
-                Spacer()
+            VStack(alignment: .leading, spacing: 6) {
+                Text(initialSetup ? "开始使用 Pijoo" : "设置").font(.title2.bold())
+                if initialSetup {
+                    Text("请先设置名字并启用 AI 集成，完成后会自动进入频道。")
+                        .foregroundStyle(.secondary)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding()
             Divider()
             Form {
@@ -4693,43 +4783,47 @@ private struct PijooSettingsView: View {
                     }
                     HStack {
                         Button("启用或修复 Codex 集成") { model.enableCodexIntegration() }
-                        Button("移除 Codex 集成", role: .destructive) { model.removeCodexIntegration() }
+                        if !initialSetup {
+                            Button("移除 Codex 集成", role: .destructive) { model.removeCodexIntegration() }
+                        }
                     }
                     Text("MCP 提供当前会话的频道动作，Skill 负责识别外部消息和协作规则；频道凭证仍只保存在 App Keychain。配置后需完全重启 ChatGPT。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Section("App") {
-                    Toggle("登录时启动", isOn: Binding(
-                        get: { model.launchAtLogin },
-                        set: { model.setLaunchAtLogin($0) }
-                    ))
-                    Toggle("自动检查并下载 Beta 更新", isOn: Binding(
-                        get: { model.automaticUpdateChecks },
-                        set: { model.setAutomaticUpdateChecks($0) }
-                    ))
-                    HStack {
-                        Text("版本 \(model.currentVersion)")
-                        Spacer()
-                        Text(model.updateStatus).foregroundStyle(.secondary)
-                        Button("检查并下载 Beta 更新…") { Task { await model.checkBetaUpdate() } }
-                    }
-                }
-                Section("本机数据") {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("客户端日志")
-                            Text("最多保留约 2 MB；不记录频道正文、邀请口令或成员凭证。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                if !initialSetup {
+                    Section("App") {
+                        Toggle("登录时启动", isOn: Binding(
+                            get: { model.launchAtLogin },
+                            set: { model.setLaunchAtLogin($0) }
+                        ))
+                        Toggle("自动检查并下载 Beta 更新", isOn: Binding(
+                            get: { model.automaticUpdateChecks },
+                            set: { model.setAutomaticUpdateChecks($0) }
+                        ))
+                        HStack {
+                            Text("版本 \(model.currentVersion)")
+                            Spacer()
+                            Text(model.updateStatus).foregroundStyle(.secondary)
+                            Button("检查并下载 Beta 更新…") { Task { await model.checkBetaUpdate() } }
                         }
-                        Spacer()
-                        Button("导出客户端日志…") { model.exportClientLog() }
                     }
-                    if model.oldBetaDataDetected {
-                        Text("检测到旧 0.2 数据；0.3 保持隔离且不会迁移或删除。")
-                            .foregroundStyle(.orange)
+                    Section("本机数据") {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("客户端日志")
+                                Text("最多保留约 2 MB；不记录频道正文、邀请口令或成员凭证。")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button("导出客户端日志…") { model.exportClientLog() }
+                        }
+                        if model.oldBetaDataDetected {
+                            Text("检测到旧 0.2 数据；0.3 保持隔离且不会迁移或删除。")
+                                .foregroundStyle(.orange)
+                        }
+                        Button("移除全部 0.3 Beta 本机配置…", role: .destructive) { model.removeAllV2Data() }
                     }
-                    Button("移除全部 0.3 Beta 本机配置…", role: .destructive) { model.removeAllV2Data() }
                 }
             }
             .formStyle(.grouped)
@@ -4817,6 +4911,9 @@ private struct PijooV2SelfTest {
         precondition(requiresCodexRestart(configured: true, appVersion: "beta.16", loadedMCPVersion: "beta.15"))
         precondition(!requiresCodexRestart(configured: true, appVersion: "beta.16", loadedMCPVersion: "beta.16"))
         precondition(!requiresCodexRestart(configured: false, appVersion: "beta.16", loadedMCPVersion: nil))
+        precondition(initialSetupRequired(nickname: "", codexConfigured: true))
+        precondition(initialSetupRequired(nickname: "侯宇洋", codexConfigured: false))
+        precondition(!initialSetupRequired(nickname: "侯宇洋", codexConfigured: true))
         let sentTemplate = try validateMessageTemplate(
             "> **{channel_name}** · {message_source} · #{message_id}\n>\n> {message_text}",
             defaultTemplate: defaultSentMessageTemplate
@@ -5016,6 +5113,46 @@ private struct PijooV2SelfTest {
         let removedConfig = try CodexConfigEditor.reading(configURL)
         precondition(removedConfig == "model = \"gpt-5\"\n")
         precondition(!PijooSkillInstaller.isManagedLink(source: skillSource, destination: skillDestination))
+        let previousApp = socketDirectory.appendingPathComponent("Previous Pijoo.app", isDirectory: true)
+        let previousSkill = previousApp.appendingPathComponent("Contents/Resources/skills/pijoo", isDirectory: true)
+        try FileManager.default.createDirectory(at: previousSkill, withIntermediateDirectories: true)
+        try "---\nname: pijoo\n---\n".write(
+            to: previousSkill.appendingPathComponent("SKILL.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let previousInfo = try PropertyListSerialization.data(
+            fromPropertyList: ["CFBundleIdentifier": "dev.pijoo.menubar"],
+            format: .xml,
+            options: 0
+        )
+        try previousInfo.write(to: previousApp.appendingPathComponent("Contents/Info.plist"))
+        try FileManager.default.createSymbolicLink(at: skillDestination, withDestinationURL: previousSkill)
+        let retargeted = try PijooSkillInstaller.install(
+            source: skillSource,
+            destination: skillDestination,
+            allowRetargetFromBundleIdentifier: "dev.pijoo.menubar"
+        )
+        precondition(retargeted?.standardizedFileURL == previousSkill.standardizedFileURL)
+        precondition(PijooSkillInstaller.isInstalled(source: skillSource, destination: skillDestination))
+        try PijooSkillInstaller.restoreLink(
+            destination: skillDestination,
+            current: skillSource,
+            previous: previousSkill
+        )
+        try CodexIntegrationInstaller.install(
+            configURL: configURL,
+            block: integrationBlock,
+            skillSource: skillSource,
+            skillDestination: skillDestination,
+            allowSkillRetargetFromBundleIdentifier: "dev.pijoo.menubar"
+        )
+        precondition(PijooSkillInstaller.isInstalled(source: skillSource, destination: skillDestination))
+        try CodexIntegrationInstaller.remove(
+            configURL: configURL,
+            skillSource: skillSource,
+            skillDestination: skillDestination
+        )
         let linkedConfig = socketDirectory.appendingPathComponent("linked-config.toml")
         try "model = \"gpt-5\"\n".write(to: linkedConfig, atomically: true, encoding: .utf8)
         try FileManager.default.removeItem(at: configURL)

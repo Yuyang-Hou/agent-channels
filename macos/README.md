@@ -7,6 +7,17 @@ task-channel Subscription 和本地消息历史；菜单栏保留运行状态与
 
 要求 Apple Silicon、Xcode Command Line Tools 和 Bun：
 
+本地开发预览直接运行：
+
+```bash
+./macos/run-dev.sh
+```
+
+它会关闭正在运行的 Pijoo，只构建并启动 `macos/build/Pijoo.app`，不创建或改动 DMG。开发 App
+可以显式启用 AI 集成；配置会指向这个固定的本地构建路径。
+
+发布包构建：
+
 ```bash
 ./macos/build-app.sh
 open "macos/build/Pijoo-0.3.0-beta.17-arm64.dmg"

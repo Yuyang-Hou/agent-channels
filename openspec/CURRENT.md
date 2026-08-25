@@ -12,7 +12,9 @@
 4. [`changes/rename-product-pijoo`](./changes/rename-product-pijoo/)：把工作名称全局统一为
    `Pijoo`，并采用 `pijoo.dev` 对应的 `dev.pijoo` 技术命名空间；
 5. [`changes/release-pijoo-beta-17`](./changes/release-pijoo-beta-17/)：从 `main` 构建、
-   Developer ID 签名、公证并发布 `0.3.0-beta.17` Apple Silicon 正式 Beta。
+   Developer ID 签名、公证并发布 `0.3.0-beta.17` Apple Silicon 正式 Beta；
+6. [`changes/release-pijoo-beta-18`](./changes/release-pijoo-beta-18/)：从当前 `main` 的确定提交构建、
+   Developer ID 签名、公证并发布 `0.3.0-beta.18` Apple Silicon 正式 Beta。
 
 已完成设计、尚未进入实现的 change：
 
@@ -33,7 +35,7 @@ IPC Connector 已完成。0.2 的发送凭证与断线状态修复继续作为�
 4. [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
 5. [`../docs/OPEN_QUESTIONS.md`](../docs/OPEN_QUESTIONS.md)
 
-当前只执行上述五个活动 change；账号 change 仅作为下一阶段设计。当前不建设通用插件框架、其他 Host Connector、独立模型
+当前只执行上述六个活动 change；账号 change 仅作为下一阶段设计。当前不建设通用插件框架、其他 Host Connector、独立模型
 Runtime 或完整聊天客户端。已完成的 Codex 验证记录保留在
 [`changes/archive/2026-08-19-add-codex-thread-bridge`](./changes/archive/2026-08-19-add-codex-thread-bridge/)。
 

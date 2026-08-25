@@ -21,6 +21,8 @@
 ## macOS Main Window
 
 - [x] 以主窗口实现频道侧栏、当前频道时间线/发送框、成员与 task 订阅详情
+- [x] 首次使用必须先设置全局昵称并配置 Codex MCP 与 Pijoo Skill，再进入频道工作区
+- [x] 提供不生成 DMG、可直接启动并显式配置集成的本地开发 App 入口
 - [x] 实现多个 ChannelConnection 的创建、邀请加入、退出、选择、未读和独立状态
 - [x] 实现简单 App 文本发送，可靠区分 pending、accepted、failed 和 unknown
 - [x] 消息到达先写 LocalMessage `received`，再更新每条 SubscriptionDelivery
