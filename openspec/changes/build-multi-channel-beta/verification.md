@@ -124,6 +124,12 @@ publication remain pending.
 - All 11 server test files / 95 tests, TypeScript typecheck/build, Swift warnings-as-errors typecheck and focused
   self-test, strict OpenSpec validation and diff checks pass. No App package was built, installed or published.
 
+## 2026-08-25 On-demand Conversation Search
+
+- “转发到会话”不再预载最近 30 条会话；只有非空关键词才会搜索全部未归档用户主会话索引，结果仍排除 subagent/reviewer。
+- 匹配结果以搜索框下方按内容高度收缩的浮层展示，整行点选即绑定，不再挤压下方页面布局。
+- Swift warnings-as-errors typecheck、OpenSpec strict validation 与 diff checks 通过；未构建、安装或发布 App 包。
+
 ## 2026-08-24 Configurable Invitations
 
 - Owner invitation creation accepts an optional 64-character label, 1–100 uses and 1–720 hours in the App;

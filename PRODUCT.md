@@ -78,7 +78,7 @@ AI 会话。
 - 原生 macOS 单一主窗口管理多个频道、简单文本时间线、发送、未读、成员、task 订阅与 App 设置；
 - owner 与每个成员使用独立凭证，owner 可以移除和封禁成员；
 - 本机分别管理多个 TaskBinding 与 task-channel Subscription；
-- 添加会话时可按当前 Host 的本地标题或 id 搜索点选，也可直接输入 id/链接；标题只用于当次
+- 添加会话时不预载最近会话列表；用户可按当前 Host 的全部本地会话标题或 id 搜索，并从不改变页面布局的下拉结果中点选，也可直接输入 id/链接；标题只用于当次
   搜索结果，Binding 只保存 `provider + conversation_id`，绑定前始终执行 Host preflight；
 - 一个 task 可以订阅多个频道，一个频道也可以绑定多个 task，游标和失败状态互相隔离；
 - 真实普通消息触发绑定会话，状态消息和空闲连接不触发；
