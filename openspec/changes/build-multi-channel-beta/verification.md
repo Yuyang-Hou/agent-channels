@@ -1,8 +1,8 @@
 # Verification
 
-Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.14 local candidate adds the product Skill, editable
-Markdown external-message card, replay recovery, on-demand conversation search with corrected overlay stacking, member identity recovery, client log export and a fixed internal signing
-identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.14
+Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.15 local candidate adds the product Skill, editable
+Markdown receive and sent-message cards, replay recovery, on-demand conversation search with corrected overlay stacking, member identity recovery, client log export and a fixed internal signing
+identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.15
 publication remain pending.
 
 ## Post-candidate Working Tree
@@ -187,6 +187,16 @@ publication remain pending.
   unknown sends do not render it, and the channel payload remains the original message text.
 - All 11 server test files / 96 tests, TypeScript typecheck, Swift warnings-as-errors typecheck, the focused
   macOS self-test, strict OpenSpec validation (4/4) and diff checks pass. No App package was built or installed.
+
+## 2026-08-25 Beta.15 Local Package
+
+- Feature commit `22941fc` adds the editable sent-message template and reliable receipt card without changing
+  the channel payload or self-message filtering.
+- `macos/build/Agent-Channels-0.3.0-beta.15-arm64.dmg` is 28,520,209 bytes with SHA-256
+  `bbceb4002521a9fbd203f9a252648590646c2d510f218e610b0e2928c95866dd`; `hdiutil verify` passes.
+- The mounted DMG contains release version `0.3.0-beta.15`, bundle build `15`, the exact bundled Skill,
+  a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.15` with all seven
+  tools including `sent_message_template`. It is not notarized, installed, pushed or published.
 
 ## Live Service Gate
 

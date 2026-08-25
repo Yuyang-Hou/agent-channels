@@ -30,12 +30,12 @@
 
 ## macOS 0.3 Beta 验收包
 
-已发布版本为 `0.3.0-beta.2`，当前本地候选为 `0.3.0-beta.14`；安装包内嵌自包含 Bridge，
+已发布版本为 `0.3.0-beta.2`，当前本地候选为 `0.3.0-beta.15`；安装包内嵌自包含 Bridge，
 不要求用户安装 Node、npm 或 Codex CLI。[v0.3.0-beta.2 GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.2)；也可从源码构建：
 
 ```bash
 ./macos/build-app.sh
-open "macos/build/Agent-Channels-0.3.0-beta.14-arm64.dmg"
+open "macos/build/Agent-Channels-0.3.0-beta.15-arm64.dmg"
 ```
 
 0.3 不迁移 0.2 数据。把 App 拖入 Applications 后，在主窗口新建或用 `ac2:` 邀请加入频道，
