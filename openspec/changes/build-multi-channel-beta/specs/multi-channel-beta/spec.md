@@ -202,6 +202,19 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** body stream 因网络或代理错误异常结束
 - **THEN** Runtime 使用本连接最后成功处理的 message id 重连，不退回连接开始前的游标
 
+#### Scenario: Subscription 连接短暂中断
+
+- **GIVEN** 已启用的 Subscription 因网络或代理错误开始自动重连
+- **WHEN** 连接在 60 秒内恢复
+- **THEN** App 仅在对应 Subscription 展示重连状态，不改变菜单栏总体状态或图标；持续中断达到
+  60 秒时才升级为全局连接异常，并在恢复后清除
+
+#### Scenario: Railway SSE 定期轮换
+
+- **GIVEN** 频道消息流或 Subscription 已在 Railway 上健康连接接近 15 分钟请求上限
+- **WHEN** Railway 关闭该 SSE 请求
+- **THEN** 客户端保留游标、把退避恢复为 1 秒并自动续接，将该次关闭记录为正常轮换而非全局异常
+
 ### Requirement: App 可以直接收发简单文本消息
 
 用户 MUST 可以在主窗口向当前频道发送文本，并看到来自 App 或 task endpoint 的频道消息及
@@ -415,7 +428,9 @@ designated requirement；任一校验或替换失败时 MUST 保留旧 App 并�
 App MUST 在本机滚动记录启动、全局错误、频道连接与 Subscription 监听异常，并在设置页提供
 导出入口。日志 MUST 限制本机占用，不得记录频道消息正文、邀请口令、成员凭证或完整 Host
 会话内容。由 SwiftUI 生命周期或 URLSession 主动取消的刷新 MUST 视为正常控制流，不得写入
-全局故障状态。
+全局故障状态。连接诊断 MUST 区分握手与已连接流、记录连接时长、重连原因与退避，并在可用时
+记录底层错误码及 Railway Request ID、Edge 和 Upstream Zone；所有字段 MUST 清理换行且不得包含
+请求 URL、频道凭证或消息正文。
 
 #### Scenario: 页面刷新被取消
 

@@ -56,7 +56,8 @@ private func compactTaskKey(_ raw: String) -> String? {
 private func bridgeRecoveryClearsError(kind: String?, state: String) -> Bool {
     (state == "joined" && ["join", "session", "rejoin"].contains(kind)) ||
         (state == "connected" && kind == "connection") ||
-        (state == "delivered" && (kind == "connection" || kind == "delivery"))
+        (state == "delivered" && (kind == "connection" || kind == "delivery")) ||
+        (state == "stopped" && kind == "connection")
 }
 
 private func isPendingBridgeDelivery(_ kind: String?) -> Bool {
@@ -65,6 +66,17 @@ private func isPendingBridgeDelivery(_ kind: String?) -> Bool {
 
 private func bridgeErrorShouldReplace(current: String?, incoming: String?) -> Bool {
     !isPendingBridgeDelivery(current) || isPendingBridgeDelivery(incoming)
+}
+
+private func bridgeErrorAffectsGlobalHealthImmediately(_ kind: String?) -> Bool {
+    kind != "connection"
+}
+
+private func clientLogField(_ value: String) -> String {
+    String(value.replacingOccurrences(of: "\t", with: " ")
+        .replacingOccurrences(of: "\r", with: " ")
+        .replacingOccurrences(of: "\n", with: " ")
+        .prefix(200))
 }
 
 private func isCancellationError(_ error: Error) -> Bool {
@@ -2163,6 +2175,7 @@ final class AppModel: ObservableObject {
     private var listenerGenerations: [UUID: Int] = [:]
     private var bridgeErrorKinds: [UUID: String] = [:]
     private var bridgeErrorMessages: [UUID: String] = [:]
+    private var bridgeConnectionEscalations: [UUID: UUID] = [:]
     private var presentedBridgeError: String?
     private var feedTasks: [UUID: Task<Void, Never>] = [:]
     private var localSendServer: LocalSendServer?
@@ -2933,6 +2946,7 @@ extension AppModel {
 
     func stopListener(_ id: UUID) {
         listenerGenerations[id, default: 0] += 1
+        clearRecoveredBridgeError(id, state: "stopped")
         guard let listener = listeners[id] else {
             listenerStatus[id] = "已暂停"
             return
@@ -3025,6 +3039,7 @@ extension AppModel {
     private func clearRecoveredBridgeError(_ id: UUID, state: String) {
         guard bridgeRecoveryClearsError(kind: bridgeErrorKinds[id], state: state) else { return }
         let displayed = presentedBridgeError
+        bridgeConnectionEscalations.removeValue(forKey: id)
         bridgeErrorKinds.removeValue(forKey: id)
         bridgeErrorMessages.removeValue(forKey: id)
         guard lastError == displayed else {
@@ -3033,6 +3048,21 @@ extension AppModel {
         }
         presentedBridgeError = bridgeErrorMessages.values.first
         lastError = presentedBridgeError ?? ""
+    }
+
+    private func scheduleBridgeConnectionEscalation(_ id: UUID) {
+        guard bridgeConnectionEscalations[id] == nil else { return }
+        let token = UUID()
+        bridgeConnectionEscalations[id] = token
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 60_000_000_000)
+            guard let self,
+                  self.bridgeConnectionEscalations[id] == token,
+                  self.bridgeErrorKinds[id] == "connection",
+                  let message = self.bridgeErrorMessages[id] else { return }
+            self.presentedBridgeError = message
+            self.lastError = message
+        }
     }
 
     private func consumeListenerStderr(_ data: Data, id: UUID) {
@@ -3048,21 +3078,36 @@ extension AppModel {
             clearRecoveredBridgeError(id, state: state)
             switch state {
             case "joined", "connecting": listenerStatus[id] = "正在连接…"
-            case "connected": listenerStatus[id] = "正在接收"
-            case "reconnecting": listenerStatus[id] = "正在重连…"
+            case "connected":
+                listenerStatus[id] = "正在接收"
+                if let diagnostic = event["diagnostic"] as? String, !diagnostic.isEmpty {
+                    ClientLog.record("info", "listener_connected", detail: clientLogField(diagnostic))
+                }
+            case "reconnecting":
+                listenerStatus[id] = "正在重连…"
+                if let diagnostic = event["diagnostic"] as? String, !diagnostic.isEmpty {
+                    let level = event["reason"] as? String == "railway_request_limit" ? "info" : "warning"
+                    ClientLog.record(level, "listener_reconnecting", detail: clientLogField(diagnostic))
+                }
             case "delivered": listenerStatus[id] = "已转发到会话 #\(event["messageId"] ?? "")"
             case "filtered": listenerStatus[id] = "已过滤自消息"
             case "error":
                 let detail = (event["error"] as? String) ?? (event["kind"] as? String) ?? "未知错误"
                 listenerStatus[id] = "异常：\(detail)"
                 let kind = (event["kind"] as? String) ?? "unknown"
-                ClientLog.record("error", "listener_error", detail: "kind=\(kind) \(detail)")
+                let diagnostic = (event["diagnostic"] as? String).map { " \(clientLogField($0))" } ?? ""
+                ClientLog.record("error", "listener_error", detail: "kind=\(kind) \(detail)\(diagnostic)")
                 if bridgeErrorShouldReplace(current: bridgeErrorKinds[id], incoming: kind) {
                     let message = "订阅异常：\(detail)"
                     bridgeErrorKinds[id] = kind
                     bridgeErrorMessages[id] = message
-                    presentedBridgeError = message
-                    lastError = message
+                    if bridgeErrorAffectsGlobalHealthImmediately(kind) {
+                        bridgeConnectionEscalations.removeValue(forKey: id)
+                        presentedBridgeError = message
+                        lastError = message
+                    } else {
+                        scheduleBridgeConnectionEscalation(id)
+                    }
                 }
                 if (event["status"] as? NSNumber)?.intValue == 401,
                    let channelID = self.state.subscriptions.first(where: { $0.id == id })?.channelID {
@@ -3234,6 +3279,8 @@ extension AppModel {
         var backoff: UInt64 = 1_000_000_000
         while !Task.isCancelled,
               let profile = state.channels.first(where: { $0.id == channelID }) {
+            var connectedAt: Date?
+            var streamMetadata = ""
             do {
                 guard let credential = try KeychainStore.get(service: keychainService, account: profile.credentialAccount),
                       !credential.isEmpty else { throw AppFailure("Keychain 中没有频道成员凭证") }
@@ -3257,6 +3304,7 @@ extension AppModel {
                 var request = URLRequest(url: base.appendingPathComponent("stream"))
                 request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
                 request.setValue(session, forHTTPHeaderField: "X-Session-Id")
+                request.setValue("agent-channels", forHTTPHeaderField: "X-Railway-Debug")
                 request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                 let (bytes, response) = try await URLSession.shared.bytes(for: request)
                 guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
@@ -3264,7 +3312,20 @@ extension AppModel {
                     if status == 401 { throw ChannelAuthorizationFailure(message: "频道成员权限已失效") }
                     throw AppFailure("频道消息流连接失败（HTTP \(status)）")
                 }
+                streamMetadata = [
+                    ("request_id", http.value(forHTTPHeaderField: "X-Railway-Request-Id")),
+                    ("railway_edge", http.value(forHTTPHeaderField: "X-Railway-Edge")),
+                    ("railway_zone", http.value(forHTTPHeaderField: "X-Railway-Upstream-Zone")),
+                ].compactMap { key, value in
+                    value.map { "\(key)=\(clientLogField($0))" }
+                }.joined(separator: " ")
+                connectedAt = Date()
                 channelStatus[channelID] = "已连接"
+                ClientLog.record(
+                    "info",
+                    "channel_feed_connected",
+                    detail: "stage=connected\(streamMetadata.isEmpty ? "" : " \(streamMetadata)")"
+                )
                 backoff = 1_000_000_000
                 var event = ""
                 var dataLines: [String] = []
@@ -3297,8 +3358,28 @@ extension AppModel {
                 return
             } catch {
                 if Task.isCancelled { return }
-                channelStatus[channelID] = "正在重连：\(error.localizedDescription)"
-                ClientLog.record("warning", "channel_feed_reconnecting", detail: error.localizedDescription)
+                let connectedMs = connectedAt.map { max(0, Int(Date().timeIntervalSince($0) * 1_000)) }
+                let expectedRotation = connectedMs.map { $0 >= 14 * 60 * 1_000 } == true &&
+                    !streamMetadata.isEmpty
+                let reason = expectedRotation ? "railway_request_limit" : "connection_error"
+                let nsError = error as NSError
+                let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+                let detail = [
+                    "reason=\(reason)",
+                    "stage=\(connectedAt == nil ? "handshake" : "stream")",
+                    connectedMs.map { "connected_ms=\($0)" },
+                    streamMetadata.isEmpty ? nil : streamMetadata,
+                    expectedRotation ? nil : "error_domain=\(clientLogField(nsError.domain))",
+                    expectedRotation ? nil : "error_code=\(nsError.code)",
+                    expectedRotation ? nil : underlyingError.map { "cause_domain=\(clientLogField($0.domain))" },
+                    expectedRotation ? nil : underlyingError.map { "cause_code=\($0.code)" },
+                ].compactMap { $0 }.joined(separator: " ")
+                channelStatus[channelID] = expectedRotation ? "正在续接…" : "正在重连：\(error.localizedDescription)"
+                ClientLog.record(
+                    expectedRotation ? "info" : "warning",
+                    expectedRotation ? "channel_feed_rotating" : "channel_feed_reconnecting",
+                    detail: detail
+                )
             }
             try? await Task.sleep(nanoseconds: backoff)
             backoff = min(30_000_000_000, backoff * 3)
@@ -4780,11 +4861,15 @@ private struct AgentChannelsV2SelfTest {
         precondition(advancedDeliveryCursor(10, through: 8) == 10)
         precondition(advancedDeliveryCursor(10, through: 12) == 12)
         precondition(bridgeRecoveryClearsError(kind: "connection", state: "connected"))
+        precondition(bridgeRecoveryClearsError(kind: "connection", state: "stopped"))
         precondition(bridgeRecoveryClearsError(kind: "delivery", state: "delivered"))
         precondition(!bridgeRecoveryClearsError(kind: "delivery", state: "connected"))
         precondition(!bridgeRecoveryClearsError(kind: "delivery_outcome_unknown", state: "connected"))
         precondition(!bridgeErrorShouldReplace(current: "delivery", incoming: "connection"))
         precondition(bridgeErrorShouldReplace(current: "connection", incoming: "delivery"))
+        precondition(!bridgeErrorAffectsGlobalHealthImmediately("connection"))
+        precondition(bridgeErrorAffectsGlobalHealthImmediately("delivery"))
+        precondition(clientLogField("a\tb\nc") == "a b c")
         precondition(isCancellationError(CancellationError()))
         precondition(isCancellationError(URLError(.cancelled)))
         precondition(!isCancellationError(URLError(.timedOut)))

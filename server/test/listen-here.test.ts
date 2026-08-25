@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
-import { runListenHere } from "../src/listen-here.js";
+import { planReconnect, runListenHere } from "../src/listen-here.js";
 
 type ServerCtx = {
   server: ServerType;
@@ -557,6 +557,19 @@ describe("rogerthat listen-here", () => {
     expect(result.code).toBe(1);
   });
 
+  it("resets retry delay after a healthy stream and recognizes Railway rotation", () => {
+    expect(planReconnect(60_000, 15 * 60_000, true, "stream_error")).toEqual({
+      waitMs: 1_000,
+      nextBackoffMs: 3_000,
+      expectedRotation: true,
+    });
+    expect(planReconnect(3_000, 25, true, "stream_error")).toEqual({
+      waitMs: 3_000,
+      nextBackoffMs: 9_000,
+      expectedRotation: false,
+    });
+  });
+
   it("reconnects from the latest delivered message after the SSE body fails", async () => {
     const messageId = 1_787_600_000_001;
     const requests: string[] = [];
@@ -567,6 +580,8 @@ describe("rogerthat listen-here", () => {
           "content-type": "text/event-stream",
           "cache-control": "no-cache",
           connection: "keep-alive",
+          "x-railway-request-id": "request-test",
+          "x-railway-edge": "edge-test",
         });
         response.write(`event: message\ndata: ${JSON.stringify({
           id: messageId,
@@ -593,6 +608,7 @@ describe("rogerthat listen-here", () => {
         "--token", "test-token",
         "--session", "test-session",
         "--origin", `http://127.0.0.1:${address.port}`,
+        "--status-json",
         "--quiet",
       ],
       3500,
@@ -602,6 +618,19 @@ describe("rogerthat listen-here", () => {
     expect(requests).toHaveLength(2);
     expect(requests[1]).toBe(`/api/channels/cursor-test/stream?since=${messageId}`);
     expect(errors.mock.calls.flat().join("\n")).toContain("connection error");
+    const statusLines = errors.mock.calls.map(([line]) => String(line))
+      .filter((line) => line.startsWith("@agent-channels "))
+      .map((line) => JSON.parse(line.slice("@agent-channels ".length)) as Record<string, unknown>);
+    expect(statusLines.find((event) => event.state === "error")).toMatchObject({
+      kind: "connection",
+    });
+    expect(String(statusLines.find((event) => event.state === "error")?.diagnostic)).toContain(
+      "request_id=request-test",
+    );
+    expect(statusLines.find((event) => event.state === "reconnecting")).toMatchObject({
+      reason: "stream_error",
+      delayMs: 1_000,
+    });
     errors.mockRestore();
     await new Promise<void>((resolve) => streamServer.close(() => resolve()));
   });

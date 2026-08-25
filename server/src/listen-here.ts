@@ -12,9 +12,9 @@
 // the bootstrap MCP tool, gets back a one-line `receiver_command`, runs it
 // detached via Bash, and lets the loop sit there waiting.
 //
-// Reconnect: exponential backoff (1s/3s/9s/27s, capped at 60s). On each reconnect
-// the last seen message id is sent as `?since=` so the server replays anything
-// that piled up while we were away.
+// Reconnect: exponential backoff (1s/3s/9s/27s, capped at 60s), reset after a
+// healthy stream. On each reconnect the last seen message id is sent as `?since=`
+// so the server replays anything that piled up while we were away.
 
 import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -360,6 +360,65 @@ async function readSecretsFromStdin(
 function emitStatus(args: Args, state: string, details: Record<string, unknown> = {}): void {
   if (!args.statusJson) return;
   console.error(`@agent-channels ${JSON.stringify({ state, ...details })}`);
+}
+
+const BASE_RECONNECT_DELAY_MS = 1_000;
+const HEALTHY_STREAM_MS = 60_000;
+const RAILWAY_STREAM_ROTATION_MS = 14 * 60_000;
+
+function headerValue(response: HttpResponse, name: string): string | undefined {
+  const value = response.headers[name];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function errorDiagnosticFields(error: unknown): Record<string, unknown> {
+  const record = error && typeof error === "object" ? error as Record<string, unknown> : undefined;
+  const cause = record?.cause && typeof record.cause === "object"
+    ? record.cause as Record<string, unknown>
+    : undefined;
+  return {
+    errorCode: record?.code,
+    causeCode: cause?.code,
+    syscall: record?.syscall ?? cause?.syscall,
+  };
+}
+
+function formatConnectionDiagnostic(fields: Record<string, unknown>): string {
+  const keys: Array<[string, string]> = [
+    ["reason", "reason"],
+    ["stage", "stage"],
+    ["connectedMs", "connected_ms"],
+    ["delayMs", "delay_ms"],
+    ["errorCode", "error_code"],
+    ["causeCode", "cause_code"],
+    ["syscall", "syscall"],
+    ["requestId", "request_id"],
+    ["railwayEdge", "railway_edge"],
+    ["railwayZone", "railway_zone"],
+  ];
+  return keys.flatMap(([key, label]) => {
+    const value = fields[key];
+    if (typeof value !== "string" && typeof value !== "number") return [];
+    const safe = String(value).replace(/[\t\r\n]+/g, " ").trim().slice(0, 200);
+    return safe ? [`${label}=${safe}`] : [];
+  }).join(" ");
+}
+
+export function planReconnect(
+  backoffMs: number,
+  connectedMs: number | undefined,
+  railway: boolean,
+  reason: string,
+): { waitMs: number; nextBackoffMs: number; expectedRotation: boolean } {
+  const waitMs = connectedMs !== undefined && connectedMs >= HEALTHY_STREAM_MS
+    ? BASE_RECONNECT_DELAY_MS
+    : backoffMs;
+  return {
+    waitMs,
+    nextBackoffMs: Math.min(60_000, Math.floor(waitMs * 3)),
+    expectedRotation: railway && connectedMs !== undefined && connectedMs >= RAILWAY_STREAM_ROTATION_MS &&
+      (reason === "stream_error" || reason === "stream_closed"),
+  };
 }
 
 /** Mirror of the channel.ts Attachment shape on the wire. data_base64 is the
@@ -751,6 +810,10 @@ async function runOneConnection(
   lastId: number | undefined;
   reason: "aborted" | "ended" | "delivery-uncertain";
   statusError?: number;
+  connectedMs?: number;
+  railway?: boolean;
+  reconnectReason?: string;
+  diagnostics?: Record<string, unknown>;
 }> {
   const url = new URL(`${args.origin.replace(/\/$/, "")}/api/channels/${args.channel}/stream`);
   if (sinceCursor !== undefined) url.searchParams.set("since", String(sinceCursor));
@@ -761,6 +824,7 @@ async function runOneConnection(
       {
         authorization: `Bearer ${args.token}`,
         "x-session-id": args.session,
+        "x-railway-debug": "agent-channels",
         accept: "text/event-stream",
       },
       abortSignal,
@@ -773,8 +837,15 @@ async function runOneConnection(
   if (status < 200 || status >= 300) {
     // Drain so the socket is freed.
     res.resume();
-    return { lastId: sinceCursor, reason: "ended", statusError: status };
+    return { lastId: sinceCursor, reason: "ended", statusError: status, reconnectReason: "http_status" };
   }
+  const connectedAt = Date.now();
+  const diagnostics = {
+    requestId: headerValue(res, "x-railway-request-id"),
+    railwayEdge: headerValue(res, "x-railway-edge"),
+    railwayZone: headerValue(res, "x-railway-upstream-zone"),
+  };
+  const railway = Boolean(diagnostics.requestId || diagnostics.railwayEdge || diagnostics.railwayZone);
   // SSE handshake accepted → the relay is genuinely attached and will receive
   // phone messages from here on. Announce it in the inbox so the agent's Monitor
   // confirms "listening" without a manual selftest, and the operator's phone
@@ -783,15 +854,30 @@ async function runOneConnection(
     args,
     `● connected — listening on ${args.channel} as session ${(args.session ?? "").slice(0, 8)}…`,
   );
-  emitStatus(args, "connected", { channel: args.channel });
+  emitStatus(args, "connected", {
+    channel: args.channel,
+    diagnostic: formatConnectionDiagnostic({ stage: "connected", ...diagnostics }),
+  });
   let lastId = sinceCursor;
+  const finish = (
+    reason: "aborted" | "ended" | "delivery-uncertain",
+    reconnectReason?: string,
+    extraDiagnostics: Record<string, unknown> = {},
+  ) => ({
+    lastId,
+    reason,
+    connectedMs: Date.now() - connectedAt,
+    railway,
+    reconnectReason,
+    diagnostics: { ...diagnostics, ...extraDiagnostics },
+  });
   // If the operator aborts mid-stream, destroy() the response to unblock the
   // for-await on it.
   const onAbort = () => res.destroy();
   abortSignal.addEventListener("abort", onAbort, { once: true });
   try {
     for await (const block of readSseBlocks(res)) {
-      if (abortSignal.aborted) return { lastId, reason: "aborted" };
+      if (abortSignal.aborted) return finish("aborted");
       const parsed = parseSseBlock(block);
       if (!parsed) continue;
       if (parsed.event === "message") {
@@ -811,7 +897,7 @@ async function runOneConnection(
             );
             emitStatus(args, "error", { kind: "delivery_outcome_unknown", messageId: msg.id });
             res.destroy();
-            return { lastId, reason: "delivery-uncertain" };
+            return finish("delivery-uncertain");
           }
           // The SSE server has already advanced its delivery cursor. Resume from
           // immediately before this message so a busy Host task cannot lose it.
@@ -819,7 +905,7 @@ async function runOneConnection(
           console.error(`[listen-here] delivery error for message ${msg.id}:`, (err as Error).message);
           emitStatus(args, "error", { kind: "delivery", messageId: msg.id, error: (err as Error).message });
           res.destroy();
-          return { lastId, reason: "ended" };
+          return finish("ended", "delivery_error");
         }
       } else if (parsed.event === "error") {
         console.error(`[listen-here] server error:`, parsed.data);
@@ -827,14 +913,31 @@ async function runOneConnection(
       // "hello" event ignored — we don't need the initial channel metadata
     }
   } catch (err) {
-    if (abortSignal.aborted) return { lastId, reason: "aborted" };
-    console.error(`[listen-here] connection error:`, (err as Error).message);
-    emitStatus(args, "error", { kind: "connection", error: (err as Error).message });
-    return { lastId, reason: "ended" };
+    if (abortSignal.aborted) return finish("aborted");
+    const connectedMs = Date.now() - connectedAt;
+    const extraDiagnostics = errorDiagnosticFields(err);
+    const expectedRotation = planReconnect(1_000, connectedMs, railway, "stream_error").expectedRotation;
+    const reconnectReason = expectedRotation ? "railway_request_limit" : "stream_error";
+    const diagnostic = formatConnectionDiagnostic({
+      reason: reconnectReason,
+      stage: "stream",
+      connectedMs,
+      ...diagnostics,
+      ...extraDiagnostics,
+    });
+    if (expectedRotation) {
+      console.error(`[listen-here] Railway SSE request limit reached; reconnecting`);
+    } else {
+      console.error(`[listen-here] connection error:`, (err as Error).message);
+      emitStatus(args, "error", { kind: "connection", error: (err as Error).message, diagnostic });
+    }
+    return finish("ended", reconnectReason, extraDiagnostics);
   } finally {
     abortSignal.removeEventListener("abort", onAbort);
   }
-  return { lastId, reason: "ended" };
+  const connectedMs = Date.now() - connectedAt;
+  const expectedRotation = planReconnect(1_000, connectedMs, railway, "stream_closed").expectedRotation;
+  return finish("ended", expectedRotation ? "railway_request_limit" : "stream_closed");
 }
 
 /** Auto-join the channel with an identity_key to obtain a session_id, so the
@@ -980,7 +1083,7 @@ export async function runListenHere(
   }
   emitStatus(args, "connecting", { channel: args.channel });
   let cursor = args.since;
-  let backoffMs = 1000;
+  let backoffMs = BASE_RECONNECT_DELAY_MS;
   while (!ac.signal.aborted) {
     let result;
     try {
@@ -991,8 +1094,18 @@ export async function runListenHere(
         return 0;
       }
       console.error(`[listen-here] connection error:`, (err as Error).message);
-      emitStatus(args, "error", { kind: "connection", error: (err as Error).message });
-      result = { lastId: cursor, reason: "ended" as const };
+      const diagnostics = { stage: "handshake", ...errorDiagnosticFields(err) };
+      emitStatus(args, "error", {
+        kind: "connection",
+        error: (err as Error).message,
+        diagnostic: formatConnectionDiagnostic({ reason: "handshake_error", ...diagnostics }),
+      });
+      result = {
+        lastId: cursor,
+        reason: "ended" as const,
+        reconnectReason: "handshake_error",
+        diagnostics,
+      };
     }
     if (result.lastId !== undefined) cursor = result.lastId;
     if (result.reason === "aborted") {
@@ -1046,12 +1159,32 @@ export async function runListenHere(
       cleanup();
       return 0;
     }
-    const wait = backoffMs;
-    backoffMs = Math.min(60_000, Math.floor(backoffMs * 3));
+    const plan = planReconnect(
+      backoffMs,
+      result.connectedMs,
+      result.railway === true,
+      result.reconnectReason ?? "stream_closed",
+    );
+    const wait = plan.waitMs;
+    backoffMs = plan.nextBackoffMs;
+    const reconnectReason = plan.expectedRotation
+      ? "railway_request_limit"
+      : result.reconnectReason ?? "stream_closed";
+    const diagnostic = formatConnectionDiagnostic({
+      reason: reconnectReason,
+      connectedMs: result.connectedMs,
+      delayMs: wait,
+      ...result.diagnostics,
+    });
     if (!args.quiet) {
       console.error(`[listen-here] reconnecting in ${wait}ms (cursor=${cursor ?? "none"})`);
     }
-    emitStatus(args, "reconnecting", { delayMs: wait, cursor: cursor ?? null });
+    emitStatus(args, "reconnecting", {
+      delayMs: wait,
+      cursor: cursor ?? null,
+      reason: reconnectReason,
+      diagnostic,
+    });
     await new Promise<void>((resolve) => {
       const t = setTimeout(resolve, wait);
       ac.signal.addEventListener(
