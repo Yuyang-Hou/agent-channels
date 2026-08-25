@@ -167,13 +167,17 @@ cp "$INFO_PLIST" "$CONTENTS/Info.plist"
 chmod 755 "$MACOS_DIR/Pijoo" "$MACOS_DIR/rogerthat-sidecar" "$MACOS_DIR/pijoo-updater"
 
 echo "==> Signing with identity: $SIGN_IDENTITY"
-codesign --force --sign "$SIGN_IDENTITY" \
+SIGN_ARGS=(--force --sign "$SIGN_IDENTITY")
+if [[ "$SIGN_IDENTITY" != "-" ]]; then
+  SIGN_ARGS+=(--options runtime --timestamp)
+fi
+codesign "${SIGN_ARGS[@]}" \
   --identifier dev.pijoo.rogerthat-sidecar \
   "$MACOS_DIR/rogerthat-sidecar"
-codesign --force --sign "$SIGN_IDENTITY" \
+codesign "${SIGN_ARGS[@]}" \
   --identifier dev.pijoo.updater \
   "$MACOS_DIR/pijoo-updater"
-codesign --force --sign "$SIGN_IDENTITY" "$APP"
+codesign "${SIGN_ARGS[@]}" "$APP"
 codesign --verify --deep --strict "$APP"
 codesign -d -r- "$APP" 2>&1 | sed -n 's/^designated => /Designated requirement: /p'
 codesign -dv --verbose=4 "$APP" 2>&1 | sed -n '/^Authority=/p; /^TeamIdentifier=/p'
