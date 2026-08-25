@@ -239,7 +239,7 @@ Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设
 
 ## Templates And Self-Message Policy
 
-每条 Subscription 选择一个本地 DeliveryTemplate。模板只支持以下变量：
+每条 Subscription 选择本地接收模板和发送成功模板。两者只支持以下变量：
 
 - `{channel_name}`
 - `{sender_name}`
@@ -254,6 +254,10 @@ Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设
 `{message_source}` 对 task 消息使用 Host 名称与缩短的会话 id，对 App 消息使用
 `Agent Channels App`；旧客户端未提供来源时回退为发送者昵称。完整来源引用随消息写入本地记录，
 其中 provider 与 conversation_id 用于追溯但不进入默认模板。
+
+接收模板在消息进入 Host 时展开；发送成功模板只在 Channel Service 返回可靠消息 id 后展开为
+`send_to_channel` 的工具回执，让当前会话可见哪些正文已经进入频道。它不改写频道 payload、
+不制造自回声 turn，失败或 unknown 仍沿用可靠发送状态机。
 
 精确 `sender_endpoint_id == subscription.task_endpoint_id` 的消息永远过滤，避免 task 自回声循环。
 每条 Subscription 另有 `same_member_policy`：

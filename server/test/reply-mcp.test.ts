@@ -93,6 +93,7 @@ describe("channel MCP", () => {
       inputSchema: {
         required: ["channel"],
         properties: {
+          sent_message_template: { type: "string" },
           self_message_policy: {
             enum: ["include_other_endpoints", "exclude_member"],
           },
@@ -138,7 +139,12 @@ describe("channel MCP", () => {
   it("takes the current task from protected call metadata and delegates protocol-v2 sends", async () => {
     const requestApp = vi.fn(async (): Promise<LocalAppResult> => ({
       ok: true,
-      result: { id: "42", callsign: "frontend", channel: "api-work" },
+      result: {
+        id: "42",
+        callsign: "frontend",
+        channel: "api-work",
+        message: "> **↗ Agent Channels · 已发送到频道**\n>\n> API is ready",
+      },
     }));
     const handle = createReplyMcpHandler({ requestApp });
 
@@ -155,7 +161,7 @@ describe("channel MCP", () => {
       channel: "api-work",
     });
     expect(result?.result).toMatchObject({
-      content: [{ type: "text", text: "sent message #42 on api-work to all as frontend" }],
+      content: [{ type: "text", text: "> **↗ Agent Channels · 已发送到频道**\n>\n> API is ready" }],
       structuredContent: { id: "42", callsign: "frontend", channel: "api-work" },
     });
   });
@@ -190,6 +196,7 @@ describe("channel MCP", () => {
     await handle(toolCall("update_channel_settings", {
       channel: "frontend",
       template: "服务端说：{{message}}",
+      sent_message_template: "已发到频道：{message_text}",
       self_message_policy: "include_other_endpoints",
       default_send: true,
     }));
@@ -207,6 +214,7 @@ describe("channel MCP", () => {
         channel: "frontend",
         settings: {
           template: "服务端说：{{message}}",
+          sent_message_template: "已发到频道：{message_text}",
           self_message_policy: "include_other_endpoints",
           default_send: true,
         },

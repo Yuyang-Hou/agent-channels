@@ -83,15 +83,16 @@ AI 会话。
 - 一个 task 可以订阅多个频道，一个频道也可以绑定多个 task，游标和失败状态互相隔离；
 - 真实普通消息触发绑定会话，状态消息和空闲连接不触发；
 - App 收到消息先写本地历史，再逐 Subscription 更新 filtered、delivered、failed 或 unknown；
-- 每条 Subscription 使用受限模板，并明确是否接收同一成员其他 endpoint 的消息；
+- 每条 Subscription 使用受限的接收模板和发送成功模板，让当前会话同时识别收到的频道消息与
+  已可靠进入频道的消息，并明确是否接收同一成员其他 endpoint 的消息；
 - 本机 MCP 暴露 `send_to_channel`、`list_channels`、`subscribe_to_channel`、
   `unsubscribe_from_channel`、`get_channel_settings`、`update_channel_settings` 和
   `inspect_message_source` 七个 task-scoped 工具；所有调用都必须通过 Codex `_meta.threadId`
   精确匹配 TaskBinding；来源查询只在用户主动追问时读取当前 task 最近一条成功投递的本地记录；
 - AI 可以随时主动发送，不需要先收到消息；频道监听、消息接收、本地历史和 Host 投递仍由 App
   持有，收到消息也不等于 AI 必须回复；
-- App 以当前 Markdown 外部消息卡片作为默认完整模板；用户可编辑标题、来源栏、正文和引用样式，
-  远端正文只能作为模板数据，不能选择目标 Binding；
+- App 以 Markdown 卡片作为默认收发模板；用户可编辑标题、来源栏、正文和引用样式。发送成功模板
+  只生成当前会话的工具回执，不改写频道正文；远端正文只能作为模板数据，不能选择目标 Binding；
 - App 在用户明确启用 Codex 集成时同时安装产品级 Agent Channels Skill。Skill 面向完整收发、
   订阅和安全语义，不只是 `send_to_channel` 的工具说明，也不使用每 turn hook；
 - 菜单栏浮窗只展示总状态、打开主窗口和监听生命周期；打开时复用、反最小化并聚焦主窗口，

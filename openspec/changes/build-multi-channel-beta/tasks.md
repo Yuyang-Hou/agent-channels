@@ -73,6 +73,7 @@
 - [x] 消息保留可扩展 `provider + conversation_id + label` 来源引用并提供来源会话 id 复制入口
 - [x] 模板编辑区使用 macOS 原生 Markdown 渲染提供未保存草稿预览
 - [x] Connector 仅展开用户模板，多行正文继承占位符的 blockquote 前缀，不再额外包裹固定卡片
+- [x] 每条 Subscription 增加发送成功模板，以可靠消息 id 展开回执且不改写频道正文
 - [x] 实现精确来源 endpoint 永不回投的安全不变量
 - [x] 实现 `include_other_endpoints` 与 `exclude_member` 两种 same-member 策略
 - [x] filtered 只更新对应 SubscriptionDelivery，不删除消息、不推进错误游标或影响其他订阅

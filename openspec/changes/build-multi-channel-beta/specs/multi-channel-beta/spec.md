@@ -417,13 +417,18 @@ App MUST 在本机滚动记录启动、全局错误、频道连接与 Subscripti
 - **WHEN** 用户在设置页选择“导出客户端日志”并指定文件
 - **THEN** App 按时间顺序导出单个日志文件，保留本机原日志且不包含频道正文或凭证
 
-### Requirement: 每条 Subscription 使用可编辑的完整消息模板
+### Requirement: 每条 Subscription 使用可编辑的收发消息模板
 
-Subscription MUST 使用本地模板生成完整 Host 输入，模板只允许 `channel_name`、
+Subscription MUST 使用本地接收模板生成完整 Host 输入，并使用本地发送成功模板生成
+`send_to_channel` 的成功回执。两种模板只允许 `channel_name`、
 `sender_name`、`message_source`、`message_text` 和 `message_id` 五个变量。默认模板 MUST 生成当前的
-Agent Channels Markdown 引用卡片；标题、来源栏、正文和引用样式 MUST 全部属于模板，
+Agent Channels Markdown 引用卡片；接收模板标识外部频道消息，发送成功模板标识正文已可靠进入频道。
+标题、来源栏、正文和引用样式 MUST 全部属于模板，
 Connector 不得在用户模板外再添加固定可见内容。
 模板设置 MUST 允许用户在不保存的情况下预览当前草稿的 Markdown 效果。
+
+发送成功模板 MUST 只在 Channel Service 返回可靠消息 id 后作为 MCP 工具回执返回当前会话，
+MUST NOT 改写实际频道正文、创建额外 Host turn 或用于发送失败/结果未知的请求。
 
 `channel_name` MUST 展开为 App 中保存的频道展示名称，`sender_name` MUST 展开为服务端按
 成员身份解析的发送者昵称；只有对应名称不可用时才可回退为内部标识。
@@ -438,6 +443,18 @@ App MUST 将完整引用写入本地消息记录并允许用户复制来源会�
 - **GIVEN** Subscription 使用默认完整卡片模板
 - **WHEN** 用户修改标题、来源栏、正文或 Markdown 结构并保存
 - **THEN** Connector 仅展开变量并将结果作为完整 Host 输入，不额外包裹固定卡片
+
+#### Scenario: 展示发送成功标志
+
+- **GIVEN** 当前会话为 Subscription 配置了发送成功模板
+- **WHEN** `send_to_channel` 获得 Channel Service 的可靠消息 id
+- **THEN** MCP 使用频道展示名称、发送者、当前会话来源、原始正文和消息 id 展开模板并作为成功回执返回；频道中仍保存原始正文
+
+#### Scenario: 发送结果不确定
+
+- **GIVEN** 当前会话已配置发送成功模板
+- **WHEN** `send_to_channel` 明确失败或发送结果未知
+- **THEN** MCP 不渲染成功模板，继续返回原有失败或未知状态且不自动重试
 
 - **GIVEN** 用户编辑 Subscription 完整消息模板
 - **WHEN** 模板为空、超过上限或包含未知变量

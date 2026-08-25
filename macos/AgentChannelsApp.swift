@@ -23,6 +23,13 @@ private let defaultMessageTemplate = """
 >
 > {message_text}
 """
+private let defaultSentMessageTemplate = """
+> **↗ Agent Channels · 已发送到频道**
+>
+> **频道** `{channel_name}` · `#{message_id}`
+>
+> {message_text}
+"""
 
 private func compactTaskKey(_ raw: String) -> String? {
     guard let uuid = UUID(uuidString: raw) else { return nil }
@@ -135,6 +142,7 @@ struct ChannelSubscription: Codable, Equatable, Identifiable {
     var taskID: UUID
     var enabled: Bool
     var template: String
+    var sentMessageTemplate: String? = nil
     var selfMessagePolicy: SelfMessagePolicy
     var defaultSend: Bool
     var lastDeliveredMessageID: Int64?
@@ -507,6 +515,71 @@ struct AppFailure: LocalizedError {
     var errorDescription: String? { message }
 }
 
+private let messageTemplateVariables = Set([
+    "{channel_name}", "{sender_name}", "{message_source}", "{message_text}", "{message_id}",
+])
+
+private func validateMessageTemplate(_ raw: String, defaultTemplate: String) throws -> String {
+    let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.isEmpty { return defaultTemplate }
+    guard value.count <= 2_000 else { throw AppFailure("消息模板不能超过 2000 字符") }
+    let expression = try NSRegularExpression(pattern: #"\{[^{}]+\}"#)
+    let range = NSRange(value.startIndex..., in: value)
+    for match in expression.matches(in: value, range: range) {
+        guard let tokenRange = Range(match.range, in: value),
+              messageTemplateVariables.contains(String(value[tokenRange])) else {
+            throw AppFailure("模板只支持 {channel_name}、{sender_name}、{message_source}、{message_text}、{message_id}")
+        }
+    }
+    return value
+}
+
+private func renderMessageTemplate(
+    _ template: String,
+    channelName: String,
+    senderName: String,
+    messageSource: String,
+    messageText: String,
+    messageID: String
+) -> String {
+    func normalized(_ value: String) -> String {
+        value.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+    }
+    func safeInline(_ value: String) -> String {
+        normalized(value).replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "`", with: "ˋ")
+    }
+    let source = normalized(template)
+    let values = [
+        "{channel_name}": safeInline(channelName),
+        "{sender_name}": safeInline(senderName),
+        "{message_source}": safeInline(messageSource),
+        "{message_text}": normalized(messageText),
+        "{message_id}": messageID,
+    ]
+    let expression = try! NSRegularExpression(
+        pattern: #"\{(?:channel_name|sender_name|message_source|message_text|message_id)\}"#
+    )
+    let quotePrefix = try! NSRegularExpression(pattern: #"^(?:[ \t]*>[ \t]?)+$"#)
+    let sourceString = source as NSString
+    let rendered = NSMutableString(string: source)
+    for match in expression.matches(in: source, range: NSRange(location: 0, length: sourceString.length)).reversed() {
+        let token = sourceString.substring(with: match.range)
+        let lineStart = sourceString.range(of: "\n", options: .backwards, range: NSRange(location: 0, length: match.range.location))
+        let prefixStart = lineStart.location == NSNotFound ? 0 : NSMaxRange(lineStart)
+        let prefixRange = NSRange(location: prefixStart, length: match.range.location - prefixStart)
+        let prefix = sourceString.substring(with: prefixRange)
+        let continuation = quotePrefix.firstMatch(
+            in: prefix,
+            range: NSRange(location: 0, length: (prefix as NSString).length)
+        ) == nil ? "" : prefix
+        rendered.replaceCharacters(
+            in: match.range,
+            with: values[token, default: token].replacingOccurrences(of: "\n", with: "\n\(continuation)")
+        )
+    }
+    return rendered as String
+}
+
 enum AppPaths {
     static let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Agent Channels", isDirectory: true)
@@ -756,11 +829,13 @@ private struct LocalSource: Codable {
 
 private struct LocalSettingsPatch: Codable {
     let template: String?
+    let sentMessageTemplate: String?
     let selfMessagePolicy: SelfMessagePolicy?
     let defaultSend: Bool?
 
     enum CodingKeys: String, CodingKey {
         case template
+        case sentMessageTemplate = "sent_message_template"
         case selfMessagePolicy = "self_message_policy"
         case defaultSend = "default_send"
     }
@@ -860,11 +935,13 @@ private struct LocalSubscriptionSummary: Encodable {
     let channel: String
     let receiveEnabled: Bool
     let template: String
+    let sentMessageTemplate: String
     let selfMessagePolicy: SelfMessagePolicy
     let defaultSend: Bool
 
     enum CodingKeys: String, CodingKey {
         case channel, template
+        case sentMessageTemplate = "sent_message_template"
         case receiveEnabled = "receive_enabled"
         case selfMessagePolicy = "self_message_policy"
         case defaultSend = "default_send"
@@ -898,8 +975,8 @@ private struct LocalOperationResult: Encodable {
         self.message = message
     }
 
-    static func send(id: String, callsign: String, channel: String) -> LocalOperationResult {
-        LocalOperationResult(id: id, callsign: callsign, channel: channel)
+    static func send(id: String, callsign: String, channel: String, message: String) -> LocalOperationResult {
+        LocalOperationResult(id: id, callsign: callsign, channel: channel, message: message)
     }
 }
 
@@ -2316,7 +2393,20 @@ extension AppModel {
                             label: taskLabel(task.id)
                         )
                     ))
-                    return .success(.send(id: receipt.id, callsign: receipt.callsign, channel: profile.channel))
+                    let confirmation = renderMessageTemplate(
+                        subscription.sentMessageTemplate ?? defaultSentMessageTemplate,
+                        channelName: profile.displayName,
+                        senderName: state.defaultCallsign,
+                        messageSource: taskLabel(task.id),
+                        messageText: message,
+                        messageID: receipt.id
+                    )
+                    return .success(.send(
+                        id: receipt.id,
+                        callsign: receipt.callsign,
+                        channel: profile.channel,
+                        message: confirmation
+                    ))
                 } catch let error as ChannelSendFailure {
                     switch error {
                     case .definitive(let text): return .failure(text)
@@ -2470,9 +2560,18 @@ extension AppModel {
 
     func setSubscriptionTemplate(_ id: UUID, template: String) {
         do {
-            let value = try validatedTemplate(template)
+            let value = try validateMessageTemplate(template, defaultTemplate: defaultMessageTemplate)
             updateSubscription(id) { $0.template = value }
             restartListenerIfNeeded(id)
+        } catch {
+            fail(error)
+        }
+    }
+
+    func setSubscriptionSentMessageTemplate(_ id: UUID, template: String) {
+        do {
+            let value = try validateMessageTemplate(template, defaultTemplate: defaultSentMessageTemplate)
+            updateSubscription(id) { $0.sentMessageTemplate = value }
         } catch {
             fail(error)
         }
@@ -2612,6 +2711,7 @@ extension AppModel {
                     taskID: task.id,
                     enabled: true,
                     template: defaultMessageTemplate,
+                    sentMessageTemplate: defaultSentMessageTemplate,
                     selfMessagePolicy: .includeOtherEndpoints,
                     defaultSend: !hasDefault,
                     lastDeliveredMessageID: baseline,
@@ -2638,6 +2738,7 @@ extension AppModel {
             channel: profile.channel,
             receiveEnabled: subscription.enabled,
             template: subscription.template,
+            sentMessageTemplate: subscription.sentMessageTemplate ?? defaultSentMessageTemplate,
             selfMessagePolicy: subscription.selfMessagePolicy,
             defaultSend: subscription.defaultSend
         )
@@ -2651,11 +2752,17 @@ extension AppModel {
 
     private func applySettings(_ patch: LocalSettingsPatch?, to id: UUID) throws {
         guard let patch else { throw AppFailure("settings are required") }
-        let template = try patch.template.map(validatedTemplate)
+        let template = try patch.template.map {
+            try validateMessageTemplate($0, defaultTemplate: defaultMessageTemplate)
+        }
+        let sentMessageTemplate = try patch.sentMessageTemplate.map {
+            try validateMessageTemplate($0, defaultTemplate: defaultSentMessageTemplate)
+        }
         guard let index = state.subscriptions.firstIndex(where: { $0.id == id }) else {
             throw AppFailure("订阅不存在")
         }
         if let template { state.subscriptions[index].template = template }
+        if let sentMessageTemplate { state.subscriptions[index].sentMessageTemplate = sentMessageTemplate }
         if let policy = patch.selfMessagePolicy { state.subscriptions[index].selfMessagePolicy = policy }
         if let defaultSend = patch.defaultSend {
             if defaultSend {
@@ -2670,20 +2777,6 @@ extension AppModel {
         persistState()
     }
 
-    private func validatedTemplate(_ raw: String) throws -> String {
-        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.isEmpty { return defaultMessageTemplate }
-        guard value.count <= 2_000 else { throw AppFailure("消息模板不能超过 2000 字符") }
-        let allowed = Set(["{channel_name}", "{sender_name}", "{message_source}", "{message_text}", "{message_id}"])
-        let expression = try NSRegularExpression(pattern: #"\{[^{}]+\}"#)
-        let range = NSRange(value.startIndex..., in: value)
-        for match in expression.matches(in: value, range: range) {
-            guard let tokenRange = Range(match.range, in: value), allowed.contains(String(value[tokenRange])) else {
-                throw AppFailure("模板只支持 {channel_name}、{sender_name}、{message_source}、{message_text}、{message_id}")
-            }
-        }
-        return value
-    }
 }
 
 extension AppModel {
@@ -4205,8 +4298,10 @@ private struct SubscriptionCard: View {
     @ObservedObject var model: AppModel
     let subscriptionID: UUID
     @State private var templateDraft = ""
+    @State private var sentMessageTemplateDraft = ""
     @State private var isExpanded = false
     @State private var isPreviewingTemplate = false
+    @State private var isEditingSentMessageTemplate = false
 
     private var subscription: ChannelSubscription? {
         model.state.subscriptions.first { $0.id == subscriptionID }
@@ -4220,10 +4315,21 @@ private struct SubscriptionCard: View {
     }
 
     private var templatePreview: AttributedString {
-        (try? AttributedString(
-            markdown: templateDraft,
+        let draft = isEditingSentMessageTemplate ? sentMessageTemplateDraft : templateDraft
+        return (try? AttributedString(
+            markdown: draft,
             options: .init(interpretedSyntax: .full)
-        )) ?? AttributedString(templateDraft)
+        )) ?? AttributedString(draft)
+    }
+
+    private var activeTemplateDraft: Binding<String> {
+        Binding(
+            get: { isEditingSentMessageTemplate ? sentMessageTemplateDraft : templateDraft },
+            set: {
+                if isEditingSentMessageTemplate { sentMessageTemplateDraft = $0 }
+                else { templateDraft = $0 }
+            }
+        )
     }
 
     var body: some View {
@@ -4312,6 +4418,13 @@ private struct SubscriptionCard: View {
                         }
                         HStack {
                             Text("会话消息模板").font(.caption.bold())
+                            Picker("消息方向", selection: $isEditingSentMessageTemplate) {
+                                Text("收到频道消息").tag(false)
+                                Text("发送成功").tag(true)
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .fixedSize()
                             Spacer()
                             Picker("模板显示模式", selection: $isPreviewingTemplate) {
                                 Text("编辑").tag(false)
@@ -4330,21 +4443,32 @@ private struct SubscriptionCard: View {
                                         .textSelection(.enabled)
                                 }
                             } else {
-                                TextEditor(text: $templateDraft)
+                                TextEditor(text: activeTemplateDraft)
                                     .font(.system(.body, design: .monospaced))
                             }
                         }
                         .frame(height: 130)
                         .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
-                        Text("整段 Markdown 均可编辑；当前内容只是默认模板。")
+                        Text(isEditingSentMessageTemplate
+                            ? "发送成功后作为频道标志返回当前会话，不改写频道正文。"
+                            : "收到频道消息时，整段 Markdown 作为会话输入。")
                             .font(.caption2).foregroundStyle(.secondary)
                         Text("变量：{channel_name} {sender_name} {message_source} {message_text} {message_id}")
                             .font(.caption2).foregroundStyle(.secondary)
                         HStack {
                             Button("停止转发到此会话", role: .destructive) { model.removeSubscription(subscription.id) }
                             Spacer()
-                            Button("恢复默认") { templateDraft = defaultMessageTemplate }
-                            Button("保存模板") { model.setSubscriptionTemplate(subscription.id, template: templateDraft) }
+                            Button("恢复默认") {
+                                if isEditingSentMessageTemplate { sentMessageTemplateDraft = defaultSentMessageTemplate }
+                                else { templateDraft = defaultMessageTemplate }
+                            }
+                            Button("保存模板") {
+                                if isEditingSentMessageTemplate {
+                                    model.setSubscriptionSentMessageTemplate(subscription.id, template: sentMessageTemplateDraft)
+                                } else {
+                                    model.setSubscriptionTemplate(subscription.id, template: templateDraft)
+                                }
+                            }
                                 .buttonStyle(.borderedProminent)
                         }
                     }
@@ -4353,7 +4477,10 @@ private struct SubscriptionCard: View {
                     .padding(.bottom, 4)
                 }
             }
-            .onAppear { templateDraft = subscription.template }
+            .onAppear {
+                templateDraft = subscription.template
+                sentMessageTemplateDraft = subscription.sentMessageTemplate ?? defaultSentMessageTemplate
+            }
         }
     }
 }
@@ -4519,6 +4646,25 @@ private struct AgentChannelsV2SelfTest {
         precondition(request.message == "hello")
         let inspectRequest = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"inspect_message_source","source":{"provider":"codex","conversationId":"01900000-0000-7000-8000-000000000001"}}"#.utf8))
         precondition(inspectRequest.operation == "inspect_message_source")
+        let sentTemplate = try validateMessageTemplate(
+            "> **{channel_name}** · {message_source} · #{message_id}\n>\n> {message_text}",
+            defaultTemplate: defaultSentMessageTemplate
+        )
+        let sentConfirmation = renderMessageTemplate(
+            sentTemplate,
+            channelName: "API `联调`",
+            senderName: "frontend",
+            messageSource: "ChatGPT Codex · 01900000…",
+            messageText: "第一行\n{channel_name}",
+            messageID: "42"
+        )
+        precondition(sentConfirmation == "> **API ˋ联调ˋ** · ChatGPT Codex · 01900000… · #42\n>\n> 第一行\n> {channel_name}")
+        let resetSentTemplate = try validateMessageTemplate("  ", defaultTemplate: defaultSentMessageTemplate)
+        precondition(resetSentTemplate == defaultSentMessageTemplate)
+        do {
+            _ = try validateMessageTemplate("{unknown}", defaultTemplate: defaultSentMessageTemplate)
+            preconditionFailure("unknown sent-message template variable was accepted")
+        } catch {}
         do {
             _ = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"send","source":{"provider":"codex","conversationId":"bad"},"message":"hello"}"#.utf8))
             preconditionFailure("invalid source was accepted")

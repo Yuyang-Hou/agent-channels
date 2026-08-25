@@ -179,6 +179,15 @@ publication remain pending.
   strict OpenSpec validation and diff checks pass. The rebuilt App was not installed or exercised through the
   real UI in this source-only change.
 
+## 2026-08-25 Sent Message Templates
+
+- Each Subscription now stores an editable sent-message template beside its receive template and reuses the
+  same five variables, validation rules, Markdown preview and single-pass blockquote rendering.
+- A reliable `send_to_channel` receipt renders the sent-message card back into the source task. Failed or
+  unknown sends do not render it, and the channel payload remains the original message text.
+- All 11 server test files / 96 tests, TypeScript typecheck, Swift warnings-as-errors typecheck, the focused
+  macOS self-test, strict OpenSpec validation (4/4) and diff checks pass. No App package was built or installed.
+
 ## Live Service Gate
 
 - Railway production deployment `2531a50f-116b-4d8c-9f30-e01af302137d` is `SUCCESS`; `/healthz` passed before cutover.
@@ -204,8 +213,9 @@ tasks. Do not reuse or import 0.2 data.
    task as an implicit route; task sends must also work before either task receives a message.
 5. In a new task, verify the installed Skill explains App-only creation, invitation, member, history and
    TaskBinding flows; it must not invent MCP tools or poll for messages.
-6. Verify the default template and a custom template in real turns. Verify exact task self-send creates no
-   echo turn and both same-member policies behave independently.
+6. Verify the default and a custom receive template plus the default and a custom sent-message template in
+   real turns. Verify sent cards appear only after reliable receipts, channel payloads remain unwrapped,
+   exact task self-send creates no echo turn and both same-member policies behave independently.
 7. Remove one online member, then prove its existing stream closes and old credential cannot send or
    reconnect. Repeat with ban and unban while another member remains online.
 8. Interrupt one Subscription's network and make another Host unavailable; prove errors, cursors and

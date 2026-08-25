@@ -36,6 +36,7 @@ export type ConversationSource = {
 
 export type ChannelSettingsPatch = {
   template?: string;
+  sent_message_template?: string;
   self_message_policy?: "include_other_endpoints" | "exclude_member";
   default_send?: boolean;
 };
@@ -209,12 +210,13 @@ const GET_SETTINGS_TOOL = {
 const UPDATE_SETTINGS_TOOL = {
   name: "update_channel_settings",
   description:
-    "Update the current Codex task's local settings for a channel. Its own endpoint echo is always excluded. include_other_endpoints receives this member's other endpoints; exclude_member excludes every endpoint owned by this member. Omitted settings remain unchanged; an empty template clears it.",
+    "Update the current Codex task's local settings for a channel. template formats received channel messages; sent_message_template formats successful send receipts shown in this task. Its own endpoint echo is always excluded. include_other_endpoints receives this member's other endpoints; exclude_member excludes every endpoint owned by this member. Omitted settings remain unchanged; an empty template restores its default.",
   inputSchema: {
     type: "object",
     properties: {
       channel: channelProperty,
       template: { type: "string", maxLength: MAX_TEMPLATE_LENGTH },
+      sent_message_template: { type: "string", maxLength: MAX_TEMPLATE_LENGTH },
       self_message_policy: {
         type: "string",
         enum: ["include_other_endpoints", "exclude_member"],
@@ -224,6 +226,7 @@ const UPDATE_SETTINGS_TOOL = {
     required: ["channel"],
     anyOf: [
       { required: ["template"] },
+      { required: ["sent_message_template"] },
       { required: ["self_message_policy"] },
       { required: ["default_send"] },
     ],
@@ -427,7 +430,7 @@ function buildLocalRequest(
         channel: channelArgument(args, true)!,
       };
     case "update_channel_settings": {
-      assertOnlyKeys(args, ["channel", "template", "self_message_policy", "default_send"]);
+      assertOnlyKeys(args, ["channel", "template", "sent_message_template", "self_message_policy", "default_send"]);
       const settings: ChannelSettingsPatch = {};
       if (args.template !== undefined) {
         if (typeof args.template !== "string") throw new ExplicitToolError("template must be a string");
@@ -435,6 +438,15 @@ function buildLocalRequest(
           throw new ExplicitToolError(`template exceeds ${MAX_TEMPLATE_LENGTH} characters`);
         }
         settings.template = args.template;
+      }
+      if (args.sent_message_template !== undefined) {
+        if (typeof args.sent_message_template !== "string") {
+          throw new ExplicitToolError("sent_message_template must be a string");
+        }
+        if (args.sent_message_template.length > MAX_TEMPLATE_LENGTH) {
+          throw new ExplicitToolError(`sent_message_template exceeds ${MAX_TEMPLATE_LENGTH} characters`);
+        }
+        settings.sent_message_template = args.sent_message_template;
       }
       if (args.self_message_policy !== undefined) {
         if (args.self_message_policy !== "include_other_endpoints"
@@ -476,10 +488,14 @@ function successfulToolResult(tool: string, result: Record<string, unknown>): Re
       || typeof callsign !== "string" || !callsign) {
       throw new Error("Agent Channels app returned an incompatible send receipt");
     }
-    const channel = typeof result.channel === "string" && result.channel
-      ? ` on ${result.channel}`
-      : "";
-    text = `sent message #${id}${channel} to all as ${callsign}`;
+    if (typeof result.message === "string" && result.message) {
+      text = result.message;
+    } else {
+      const channel = typeof result.channel === "string" && result.channel
+        ? ` on ${result.channel}`
+        : "";
+      text = `sent message #${id}${channel} to all as ${callsign}`;
+    }
   } else if (typeof result.message === "string" && result.message) {
     text = result.message;
   } else {
