@@ -267,7 +267,13 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 
 - **GIVEN** 用户进入“转发到会话”且当前 Host 支持会话发现
 - **WHEN** 用户按标题或 id 搜索，或直接输入会话 id/链接
-- **THEN** App 不自动展示最近会话，仅在用户输入非空关键词后从全部未归档用户主会话索引中匹配，并排除 subagent/reviewer；匹配项在搜索框下方按内容高度展开为浮层，整行点选即绑定且不改变页面布局；用户也可直接发起绑定，创建 Subscription 前执行 Host preflight，搜索标题不写入 Binding
+- **THEN** App 不自动展示最近会话，仅在用户输入非空关键词后从全部未归档用户主会话索引中匹配，并排除 subagent/reviewer；匹配项在搜索框下方以不透出底层内容的系统实色浮层按内容高度展开，整行点选即绑定且不改变页面布局；用户也可直接发起绑定，创建 Subscription 前执行 Host preflight，搜索标题不写入 Binding
+
+#### Scenario: 服务端成员身份重建后恢复监听
+
+- **GIVEN** 本机 ChannelConnection 保存的旧 `member_id` 与当前凭证在服务端鉴权得到的 Member 不同
+- **WHEN** App 为发送、频道流或 Subscription 监听调用 join，并收到非空的服务端 `member_id + endpoint_id`
+- **THEN** App 原子更新本机 `member_id` 后继续启动监听，仍使用服务端 endpoint 身份执行精确自回声过滤；缺失 endpoint 身份时保持失败关闭
 
 #### Scenario: 重启恢复
 
@@ -391,6 +397,25 @@ designated requirement；任一校验或替换失败时 MUST 保留旧 App 并�
 - **GIVEN** DMG 中 App 的身份、版本或签名不符合要求，或目标目录无法替换
 - **WHEN** 更新助手尝试安装
 - **THEN** 旧 App 保持可用，待安装标记被清除，App 重新打开并展示失败原因
+
+### Requirement: 可导出的客户端诊断日志
+
+App MUST 在本机滚动记录启动、全局错误、频道连接与 Subscription 监听异常，并在设置页提供
+导出入口。日志 MUST 限制本机占用，不得记录频道消息正文、邀请口令、成员凭证或完整 Host
+会话内容。由 SwiftUI 生命周期或 URLSession 主动取消的刷新 MUST 视为正常控制流，不得写入
+全局故障状态。
+
+#### Scenario: 页面刷新被取消
+
+- **GIVEN** 成员或邀请页面正在刷新
+- **WHEN** 用户切换频道、离开页面或关闭窗口导致异步任务取消
+- **THEN** App 静默结束该次刷新，不显示“刷新失败：已取消”且不记录为客户端错误
+
+#### Scenario: 导出客户端日志
+
+- **GIVEN** App 已产生当前及上一段滚动客户端日志
+- **WHEN** 用户在设置页选择“导出客户端日志”并指定文件
+- **THEN** App 按时间顺序导出单个日志文件，保留本机原日志且不包含频道正文或凭证
 
 ### Requirement: 每条 Subscription 使用可编辑的完整消息模板
 

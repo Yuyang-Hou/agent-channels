@@ -5,6 +5,7 @@ import Foundation
 import Security
 import ServiceManagement
 import SwiftUI
+import UniformTypeIdentifiers
 
 private let defaultOrigin = "https://rogerthat-production-fff6.up.railway.app"
 private let keychainService = "com.agentchannels.channel"
@@ -57,6 +58,12 @@ private func bridgeErrorShouldReplace(current: String?, incoming: String?) -> Bo
     !isPendingBridgeDelivery(current) || isPendingBridgeDelivery(incoming)
 }
 
+private func isCancellationError(_ error: Error) -> Bool {
+    if error is CancellationError { return true }
+    let nsError = error as NSError
+    return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+}
+
 enum SelfMessagePolicy: String, Codable, CaseIterable, Identifiable {
     case excludeMember = "exclude_member"
     case includeOtherEndpoints = "include_other_endpoints"
@@ -80,6 +87,16 @@ struct ChannelProfile: Codable, Equatable, Identifiable {
     var role: String
     var credentialAccount: String
     var lastViewedMessageID: Int64?
+}
+
+private func reconciledChannelProfile(
+    _ profile: ChannelProfile,
+    authenticatedMemberID: String
+) throws -> ChannelProfile {
+    guard !authenticatedMemberID.isEmpty else { throw AppFailure("服务端未返回可信成员身份") }
+    var reconciled = profile
+    reconciled.memberID = authenticatedMemberID
+    return reconciled
 }
 
 struct TaskBinding: Codable, Equatable, Identifiable {
@@ -497,6 +514,7 @@ enum AppPaths {
     static let legacyBinding = support.appendingPathComponent("binding.json")
     static let sendSocket = support.appendingPathComponent("send.sock")
     static let messages = support.appendingPathComponent("messages", isDirectory: true)
+    static let logs = support.appendingPathComponent("logs", isDirectory: true)
     static let updates = support.appendingPathComponent("updates", isDirectory: true)
     static let pendingUpdateDMG = updates.appendingPathComponent("pending-update.dmg")
     static let pendingUpdate = updates.appendingPathComponent("pending-update.json")
@@ -519,6 +537,87 @@ enum AppPaths {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: support.path)
         try FileManager.default.createDirectory(at: messages, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: messages.path)
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: logs.path)
+    }
+}
+
+enum ClientLog {
+    private static let queue = DispatchQueue(label: "com.agentchannels.client-log")
+    private static let maxBytes = 1_000_000
+
+    static func record(
+        _ level: String,
+        _ event: String,
+        detail: String? = nil,
+        directory: URL = AppPaths.logs
+    ) {
+        let date = Date()
+        queue.async {
+            try? append(level: level, event: event, detail: detail, date: date, directory: directory)
+        }
+    }
+
+    static func export(to destination: URL, directory: URL = AppPaths.logs) throws {
+        try queue.sync {
+            var data = Data()
+            for url in [previousURL(directory), currentURL(directory)]
+                where FileManager.default.fileExists(atPath: url.path) {
+                data.append(try Data(contentsOf: url))
+            }
+            if data.isEmpty {
+                data = Data("No Agent Channels client log entries.\n".utf8)
+            }
+            try data.write(to: destination, options: .atomic)
+        }
+    }
+
+    private static func append(
+        level: String,
+        event: String,
+        detail: String?,
+        date: Date,
+        directory: URL
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let cleanDetail = detail?
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+        let line = [
+            ISO8601DateFormatter().string(from: date),
+            level.uppercased(),
+            event,
+            cleanDetail,
+        ].compactMap { $0 }.joined(separator: "\t") + "\n"
+        let data = Data(line.utf8)
+        let current = currentURL(directory)
+        let existingBytes = ((try? FileManager.default.attributesOfItem(atPath: current.path)[.size]) as? NSNumber)?.intValue ?? 0
+        if existingBytes + data.count > maxBytes {
+            let previous = previousURL(directory)
+            if FileManager.default.fileExists(atPath: previous.path) { try FileManager.default.removeItem(at: previous) }
+            if FileManager.default.fileExists(atPath: current.path) { try FileManager.default.moveItem(at: current, to: previous) }
+        }
+        if !FileManager.default.fileExists(atPath: current.path) {
+            _ = FileManager.default.createFile(atPath: current.path, contents: nil, attributes: [.posixPermissions: 0o600])
+        }
+        let handle = try FileHandle(forWritingTo: current)
+        defer { try? handle.close() }
+        try handle.seekToEnd()
+        try handle.write(contentsOf: data)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: current.path)
+    }
+
+    private static func currentURL(_ directory: URL) -> URL {
+        directory.appendingPathComponent("client.log")
+    }
+
+    private static func previousURL(_ directory: URL) -> URL {
+        directory.appendingPathComponent("client.previous.log")
     }
 }
 
@@ -1390,6 +1489,7 @@ extension AppModel {
                 from: JSONSerialization.data(withJSONObject: raw)
             )
         } catch {
+            guard !isCancellationError(error), !Task.isCancelled else { return }
             guard selectedChannelID == profile.id else { return }
             lastError = "刷新邀请失败：\(error.localizedDescription)"
         }
@@ -1478,6 +1578,7 @@ extension AppModel {
             }
             lastError = ""
         } catch {
+            guard !isCancellationError(error), !Task.isCancelled else { return }
             guard selectedChannelID == profile.id else { return }
             lastError = "刷新消息失败：\(error.localizedDescription)"
         }
@@ -1495,6 +1596,7 @@ extension AppModel {
             let data = try JSONSerialization.data(withJSONObject: raw)
             members = try JSONDecoder().decode([ChannelMember].self, from: data)
         } catch {
+            guard !isCancellationError(error), !Task.isCancelled else { return }
             guard selectedChannelID == profile.id else { return }
             lastError = "刷新成员失败：\(error.localizedDescription)"
         }
@@ -1606,10 +1708,15 @@ extension AppModel {
         } catch {
             throw ChannelSendFailure.definitive("频道加入失败：\(error.localizedDescription)")
         }
-        guard let session = join["session_id"] as? String,
-              let memberID = join["member_id"] as? String,
-              let endpointID = join["endpoint_id"] as? String else {
+        guard let session = join["session_id"] as? String, !session.isEmpty,
+              let memberID = join["member_id"] as? String, !memberID.isEmpty,
+              let endpointID = join["endpoint_id"] as? String, !endpointID.isEmpty else {
             throw ChannelSendFailure.definitive("频道加入响应缺少 session/member/endpoint")
+        }
+        do {
+            _ = try reconcileChannelMemberIdentity(profile, authenticatedMemberID: memberID)
+        } catch {
+            throw ChannelSendFailure.definitive("频道身份同步失败：\(error.localizedDescription)")
         }
         do {
             var sourceJSON: [String: Any] = ["provider": source.provider]
@@ -1930,7 +2037,13 @@ final class AppModel: ObservableObject {
     @Published var invitations: [ChannelInvite] = []
     @Published var listenerStatus: [UUID: String] = [:]
     @Published var channelStatus: [UUID: String] = [:]
-    @Published var lastError = ""
+    @Published var lastError = "" {
+        didSet {
+            if !lastError.isEmpty, lastError != oldValue {
+                ClientLog.record("error", "ui_error", detail: lastError)
+            }
+        }
+    }
     @Published var busy = false
     @Published var launchAtLogin = false
     @Published var codexIntegrationStatus = "未启用"
@@ -1964,6 +2077,11 @@ final class AppModel: ObservableObject {
         selectedChannelID = state.selectedChannelID ?? state.channels.first?.id
         draftNickname = state.defaultCallsign
         launchAtLogin = SMAppService.mainApp.status == .enabled
+        ClientLog.record(
+            "info",
+            "app_started",
+            detail: "version=\(currentVersion) os=\(ProcessInfo.processInfo.operatingSystemVersionString)"
+        )
         persistState()
         refreshCodexIntegrationStatus()
         refreshSelectedChannel()
@@ -2070,6 +2188,26 @@ final class AppModel: ObservableObject {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(state).write(to: AppPaths.state, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: AppPaths.state.path)
+    }
+
+    private func reconcileChannelMemberIdentity(
+        _ profile: ChannelProfile,
+        authenticatedMemberID: String
+    ) throws -> ChannelProfile {
+        guard let index = state.channels.firstIndex(where: { $0.id == profile.id }) else {
+            throw AppFailure("频道本机配置不存在")
+        }
+        let previous = state.channels[index]
+        let reconciled = try reconciledChannelProfile(previous, authenticatedMemberID: authenticatedMemberID)
+        guard reconciled != previous else { return previous }
+        state.channels[index] = reconciled
+        do {
+            try persistStateOrThrow()
+        } catch {
+            state.channels[index] = previous
+            throw error
+        }
+        return reconciled
     }
 
     func unreadCount(_ channelID: UUID) -> Int {
@@ -2595,26 +2733,30 @@ extension AppModel {
                 body: ["callsign": txEndpoint, "name": state.defaultCallsign]
             )
             guard listenerCanStart(id, generation: generation) else { return }
-            guard txJoin["member_id"] as? String == profile.memberID,
+            guard let authenticatedMemberID = txJoin["member_id"] as? String, !authenticatedMemberID.isEmpty,
                   let txEndpointID = txJoin["endpoint_id"] as? String, !txEndpointID.isEmpty else {
                 throw AppFailure("服务端未返回可信 task endpoint 身份")
             }
+            let reconciledProfile = try reconcileChannelMemberIdentity(
+                profile,
+                authenticatedMemberID: authenticatedMemberID
+            )
             process.executableURL = Sidecar.executable
             var arguments = [
                 "listen-here",
                 "--origin", profile.origin,
                 "--channel", profile.channel,
-                "--identity-key", endpointCallsign(profile, conversationID: task.conversationID, kind: "r"),
+                "--identity-key", endpointCallsign(reconciledProfile, conversationID: task.conversationID, kind: "r"),
                 "--host-provider", task.provider,
                 "--host-conversation", task.conversationID,
                 "--secrets-stdin",
                 "--status-json",
                 "--quiet",
-                "--channel-name", profile.displayName,
+                "--channel-name", reconciledProfile.displayName,
                 "--message-template", subscription.template,
                 "--self-message-policy", subscription.selfMessagePolicy.rawValue,
                 "--self-endpoint-id", txEndpointID,
-                "--self-member-id", profile.memberID,
+                "--self-member-id", reconciledProfile.memberID,
                 "--app-socket", AppPaths.sendSocket.path,
                 "--subscription-id", subscription.id.uuidString.lowercased(),
             ]
@@ -2657,6 +2799,7 @@ extension AppModel {
         } catch {
             guard listenerGenerations[id, default: 0] == generation else { return }
             listenerStatus[id] = "不可用：\(error.localizedDescription)"
+            ClientLog.record("error", "listener_start_failed", detail: error.localizedDescription)
             scheduleListenerRestart(id)
         }
     }
@@ -2752,6 +2895,7 @@ extension AppModel {
         let enabled = state.subscriptions.first(where: { $0.id == id })?.enabled == true
         if enabled {
             listenerStatus[id] = "已断开，等待重连"
+            ClientLog.record("warning", "listener_terminated")
             scheduleListenerRestart(id)
         } else if listenerStatus[id] == nil {
             listenerStatus[id] = "已停止"
@@ -2792,6 +2936,7 @@ extension AppModel {
                 let detail = (event["error"] as? String) ?? (event["kind"] as? String) ?? "未知错误"
                 listenerStatus[id] = "异常：\(detail)"
                 let kind = (event["kind"] as? String) ?? "unknown"
+                ClientLog.record("error", "listener_error", detail: "kind=\(kind) \(detail)")
                 if bridgeErrorShouldReplace(current: bridgeErrorKinds[id], incoming: kind) {
                     let message = "订阅异常：\(detail)"
                     bridgeErrorKinds[id] = kind
@@ -2979,8 +3124,16 @@ extension AppModel {
                     bearer: credential,
                     body: ["callsign": endpoint, "name": state.defaultCallsign]
                 )
-                guard let session = join["session_id"] as? String else { throw AppFailure("频道加入响应缺少 session_id") }
-                let base = try channelBaseURL(profile)
+                guard let session = join["session_id"] as? String, !session.isEmpty,
+                      let authenticatedMemberID = join["member_id"] as? String, !authenticatedMemberID.isEmpty,
+                      (join["endpoint_id"] as? String)?.isEmpty == false else {
+                    throw AppFailure("频道加入响应缺少 session/member/endpoint")
+                }
+                let reconciledProfile = try reconcileChannelMemberIdentity(
+                    profile,
+                    authenticatedMemberID: authenticatedMemberID
+                )
+                let base = try channelBaseURL(reconciledProfile)
                 var request = URLRequest(url: base.appendingPathComponent("stream"))
                 request.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization")
                 request.setValue(session, forHTTPHeaderField: "X-Session-Id")
@@ -2999,7 +3152,7 @@ extension AppModel {
                     if Task.isCancelled { return }
                     if line.isEmpty {
                         if event == "message", !dataLines.isEmpty {
-                            handleFeedData(dataLines.joined(separator: "\n"), profile: profile)
+                            handleFeedData(dataLines.joined(separator: "\n"), profile: reconciledProfile)
                         } else if event == "error", !dataLines.isEmpty {
                             let raw = dataLines.joined(separator: "\n")
                             let data = raw.data(using: .utf8)
@@ -3025,6 +3178,7 @@ extension AppModel {
             } catch {
                 if Task.isCancelled { return }
                 channelStatus[channelID] = "正在重连：\(error.localizedDescription)"
+                ClientLog.record("warning", "channel_feed_reconnecting", detail: error.localizedDescription)
             }
             try? await Task.sleep(nanoseconds: backoff)
             backoff = min(30_000_000_000, backoff * 3)
@@ -3211,6 +3365,7 @@ extension AppModel {
     }
 
     func shutdown() {
+        ClientLog.record("info", "app_shutdown")
         for id in Set(listeners.keys).union(startingListeners) { stopListener(id) }
         for task in feedTasks.values { task.cancel() }
         feedTasks.removeAll()
@@ -3219,7 +3374,26 @@ extension AppModel {
     }
 
     fileprivate func fail(_ error: Error) {
+        guard !isCancellationError(error) else { return }
+        ClientLog.record("error", "operation_failed", detail: error.localizedDescription)
         showNotice(title: "Agent Channels", message: error.localizedDescription)
+    }
+
+    func exportClientLog() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.canCreateDirectories = true
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        panel.nameFieldStringValue = "Agent-Channels-client-\(formatter.string(from: Date())).log"
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        do {
+            ClientLog.record("info", "client_log_exported")
+            try ClientLog.export(to: destination)
+            showNotice(title: "客户端日志已导出", message: destination.path)
+        } catch {
+            fail(AppFailure("导出客户端日志失败：\(error.localizedDescription)"))
+        }
     }
 
     fileprivate func showNotice(title: String, message: String) {
@@ -3985,7 +4159,7 @@ private struct ChannelSubscriptionsView: View {
                                     }
                                 }
                                 .frame(height: min(CGFloat(model.conversationSearchResults.count) * 48, 210))
-                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+                                .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
                                 .overlay { RoundedRectangle(cornerRadius: 7).stroke(.separator) }
                                 .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
                                 .offset(y: 30)
@@ -3994,7 +4168,7 @@ private struct ChannelSubscriptionsView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(10)
-                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
+                                    .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
                                     .overlay { RoundedRectangle(cornerRadius: 7).stroke(.separator) }
                                     .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
                                     .offset(y: 30)
@@ -4248,6 +4422,16 @@ private struct AgentChannelsSettingsView: View {
                     }
                 }
                 Section("本机数据") {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("客户端日志")
+                            Text("最多保留约 2 MB；不记录频道正文、邀请口令或成员凭证。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("导出客户端日志…") { model.exportClientLog() }
+                    }
                     if model.oldBetaDataDetected {
                         Text("检测到旧 0.2 数据；0.3 保持隔离且不会迁移或删除。")
                             .foregroundStyle(.orange)
@@ -4319,6 +4503,12 @@ private struct AgentChannelsV2SelfTest {
         )
         precondition(alreadyJoinedChannel([joinedChannel], invitation: invitation))
         precondition(!alreadyJoinedChannel([], invitation: invitation))
+        let reconciledChannel = try reconciledChannelProfile(joinedChannel, authenticatedMemberID: "server-member")
+        precondition(reconciledChannel.memberID == "server-member" && reconciledChannel.callsign == joinedChannel.callsign)
+        do {
+            _ = try reconciledChannelProfile(joinedChannel, authenticatedMemberID: "")
+            preconditionFailure("empty authenticated member id was accepted")
+        } catch {}
         let block = CodexConfigEditor.managedBlock(sidecar: "/Applications/Agent Channels.app/Contents/MacOS/rogerthat-sidecar", binding: "/tmp/state-v2.json")
         let installed = try CodexConfigEditor.installing(block: block, into: "model = \"gpt-5\"\n")
         precondition(installed.contains(managedConfigStart))
@@ -4354,6 +4544,9 @@ private struct AgentChannelsV2SelfTest {
         precondition(!bridgeRecoveryClearsError(kind: "delivery_outcome_unknown", state: "connected"))
         precondition(!bridgeErrorShouldReplace(current: "delivery", incoming: "connection"))
         precondition(bridgeErrorShouldReplace(current: "connection", incoming: "delivery"))
+        precondition(isCancellationError(CancellationError()))
+        precondition(isCancellationError(URLError(.cancelled)))
+        precondition(!isCancellationError(URLError(.timedOut)))
 
         let subscriptionID = UUID()
         let channelID = UUID()
@@ -4449,6 +4642,12 @@ private struct AgentChannelsV2SelfTest {
         let socketDirectory = URL(fileURLWithPath: "/private/tmp/ac-v2-\(getpid())", isDirectory: true)
         try FileManager.default.createDirectory(at: socketDirectory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: socketDirectory) }
+        let logDirectory = socketDirectory.appendingPathComponent("logs", isDirectory: true)
+        let exportedLog = socketDirectory.appendingPathComponent("exported.log")
+        ClientLog.record("error", "self_test", detail: "line one\nline two", directory: logDirectory)
+        try ClientLog.export(to: exportedLog, directory: logDirectory)
+        let exportedLogText = try String(contentsOf: exportedLog, encoding: .utf8)
+        precondition(exportedLogText.contains("ERROR\tself_test\tline one line two"))
         let configURL = socketDirectory.appendingPathComponent("config.toml")
         let missingConfig = try CodexConfigEditor.reading(configURL)
         precondition(missingConfig == nil)
