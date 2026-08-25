@@ -50,10 +50,11 @@ Mac 上新建频道、成员和 task 绑定，不复用 0.2 配置。
    由邀请自动配置。
 2. 两端各通过标题搜索点选或直接输入 id/链接，添加至少两个已在 ChatGPT Desktop 打开过的
    task，并创建 task-channel Subscription；至少覆盖“一个 task 订阅两个频道”和“一个频道订阅两个 task”。
-3. 为每条 Subscription 设置接收模板、发送成功模板、自消息策略和是否作为该 task 的默认发送目标，然后启用监听。
+3. 为每条 Subscription 设置接收范围（所有消息/仅@我）、接收模板、发送成功模板、自消息策略
+   和是否作为该 task 的默认发送目标，然后启用监听。
 4. 在设置中点击“启用或修复 Codex 集成”，然后完全退出并重启 ChatGPT；该步骤会同时安装
    MCP 与产品级 Skill。
-5. 完成 App → App、App → task、task → App 和 task → task 收发；task 调用
+5. 分别用不@、@所有人和@两名成员完成 App → App、App → task、task → App 和 task → task 收发；task 调用
    `send_to_channel(message)` 时必须按来源 task 的默认 Subscription 路由，不能使用当前选中的
    频道或最近活跃 task 兜底。
 6. 确认默认入站 turn 和可靠发送回执分别显示 Pijoo 收到/已发送卡片；修改两种模板后，

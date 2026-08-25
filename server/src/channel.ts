@@ -52,6 +52,13 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
  *  a minute" acks so the other side's UI can show a loading indicator. */
 export type MessageKind = "message" | "status";
 
+export type MessageMention =
+  | { kind: "all" }
+  | {
+    kind: "members";
+    members: Array<{ member_id: string; member_name: string }>;
+  };
+
 export type Message = {
   id: number;
   from: string;
@@ -66,6 +73,8 @@ export type Message = {
   to: string;
   text: string;
   at: number;
+  /** Optional channel attention metadata. It never changes message routing. */
+  mention?: MessageMention;
   /** Optional. Omitted on the wire = "message". See MessageKind. */
   kind?: MessageKind;
   /** Optional. Omitted on the wire = "default". Receivers interpret. */
@@ -489,6 +498,7 @@ export class Channel {
     attachments?: Attachment[],
     kind?: MessageKind,
     messageSource?: MessageSource,
+    mention?: MessageMention,
   ): Message {
     this.ensureJoined(sessionId);
     const from = this.callsignBySession.get(sessionId)!;
@@ -545,6 +555,7 @@ export class Channel {
       at: now,
     };
     if (messageSource) msg.source = messageSource;
+    if (mention) msg.mention = mention;
     if (isStatus) msg.kind = "status";
     // Only attach `priority` when explicitly non-default — keeps the wire format
     // backward-compatible for consumers that don't know about priorities.

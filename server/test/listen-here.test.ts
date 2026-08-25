@@ -96,6 +96,7 @@ async function sendFromBeta(
   to = "alpha",
   priority?: "min" | "low" | "default" | "high" | "urgent",
   suggestedReplies?: string[],
+  mentions?: string[],
 ): Promise<void> {
   await fetch(`${ctx.origin}/api/channels/${ctx.channelId}/send`, {
     method: "POST",
@@ -109,6 +110,7 @@ async function sendFromBeta(
       text,
       ...(priority ? { priority } : {}),
       ...(suggestedReplies ? { suggested_replies: suggestedReplies } : {}),
+      ...(mentions ? { mentions } : {}),
     }),
   });
 }
@@ -300,6 +302,42 @@ describe("rogerthat listen-here", () => {
     await listener;
     expect(messageLineCount(inbox)).toBe(0);
     expect(errors.mock.calls.some(([line]) => String(line).includes('"state":"received"'))).toBe(true);
+    errors.mockRestore();
+  });
+
+  it("mentions_only filters unmentioned messages but accepts another endpoint mentioning this member", async () => {
+    const inbox = join(ctx.tmp, "rr-mentions-only.jsonl");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const listener = runListener(
+      [
+        "--channel", ctx.channelId,
+        "--token", ctx.channelToken,
+        "--session", ctx.alphaSession,
+        "--origin", ctx.origin,
+        "--receive-scope", "mentions_only",
+        "--self-member-id", ctx.betaMemberId,
+        "--status-json",
+        "--inbox", inbox,
+        "--quiet",
+      ],
+      2000,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    await sendFromBeta(ctx, "background");
+    await waitFor(() => errors.mock.calls.some(([line]) => String(line).includes("mention_not_matched")));
+    expect(messageLineCount(inbox)).toBe(0);
+
+    await sendFromBeta(ctx, "please handle", "alpha", undefined, undefined, [ctx.betaMemberId]);
+    await waitFor(() => messageLineCount(inbox) === 1);
+    process.emit("SIGINT");
+    await listener;
+    expect(JSON.parse(readFileSync(inbox, "utf8"))).toMatchObject({
+      text: "please handle",
+      mention: {
+        kind: "members",
+        members: [{ member_id: ctx.betaMemberId }],
+      },
+    });
     errors.mockRestore();
   });
 

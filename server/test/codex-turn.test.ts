@@ -69,8 +69,12 @@ describe("Codex task bridge", () => {
       from: "backend",
       sourceLabel: "订单服务排障",
       text: "# API\r\n\r\n```http\r\nGET /v1/items\r\n```\r\n{sender_name}",
-    }, "# {sender_name} 从 {message_source} 发到 {channel_name}\n\n{message_text}\n\n编号 {message_id}");
-    expect(custom).toBe("# backend 从 订单服务排障 发到 frontend\n\n# API\n\n```http\nGET /v1/items\n```\n{sender_name}\n\n编号 42");
+      mention: {
+        kind: "members",
+        members: [{ member_id: "member-a", member_name: "张三" }, { member_id: "member-b", member_name: "李四" }],
+      },
+    }, "# {sender_name} 从 {message_source} 发到 {channel_name}\n\n{mentions}\n\n{message_text}\n\n编号 {message_id}");
+    expect(custom).toBe("# backend 从 订单服务排障 发到 frontend\n\n@张三、@李四\n\n# API\n\n```http\nGET /v1/items\n```\n{sender_name}\n\n编号 42");
     expect(custom).not.toContain("Pijoo · 外部频道消息");
     expect(custom).not.toContain("> ");
 
@@ -81,7 +85,7 @@ describe("Codex task bridge", () => {
       text: "# API\n\n```http\nGET /v1/items\n```",
     });
     expect(defaultRendered).toContain("> **↗ Pijoo · 外部频道消息**");
-    expect(defaultRendered).toContain("> **频道** `frontend` · **来自** `backend` · `#43`");
+    expect(defaultRendered).toContain("> **频道** `frontend` · **来自** `backend` · **提醒** 无 · `#43`");
     expect(defaultRendered).toContain("> # API\n> \n> ```http\n> GET /v1/items\n> ```");
     expect(formatChannelMessage({
       channel: "frontend",
@@ -260,7 +264,7 @@ describe("Codex task bridge", () => {
     ]);
     expect(probeRejected).toBe(true);
     expect(startTarget).toBe(ownerId);
-    expect(turnText).toContain("> **频道** `产品协助` · **来自** `backend` · `#7`");
+    expect(turnText).toContain("> **频道** `产品协助` · **来自** `backend` · **提醒** 无 · `#7`");
     expect(turnText).toContain("> API is /v1");
     expect(turnText).not.toContain("reply_ref");
     expect(turnText).not.toContain("reply_to_message");

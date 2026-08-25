@@ -99,6 +99,7 @@ async function send(
   credential: string,
   sessionId: string,
   message: string,
+  mentions?: string[],
 ): Promise<Response> {
   return instance.request(`/api/channels/${channelId}/send`, {
     method: "POST",
@@ -107,7 +108,7 @@ async function send(
       "x-session-id": sessionId,
       "content-type": "application/json",
     },
-    body: JSON.stringify({ to: "all", message }),
+    body: JSON.stringify({ to: "all", message, ...(mentions ? { mentions } : {}) }),
   });
 }
 
@@ -539,6 +540,77 @@ describe("managed channel members", () => {
         },
       ],
     });
+  });
+
+  it("stores validated multi-member mention snapshots without changing broadcast routing", async () => {
+    const instance = app();
+    const channel = await createChannel(instance);
+    const first = await inviteMember(instance, channel, "张三");
+    const second = await inviteMember(instance, channel, "李四");
+    const owner = await joinDetails(instance, channel.id, channel.ownerCredential, "owner_mentions");
+
+    const sent = await send(
+      instance,
+      channel.id,
+      channel.ownerCredential,
+      owner.sessionId,
+      "请一起看",
+      [first.id, second.id],
+    );
+    expect(sent.status).toBe(200);
+    expect(await sent.json()).toMatchObject({
+      to: "all",
+      mention: {
+        kind: "members",
+        members: [
+          { member_id: first.id, member_name: "张三" },
+          { member_id: second.id, member_name: "李四" },
+        ],
+      },
+    });
+
+    const history = await instance.request(`/api/channels/${channel.id}/history?limit=1`, {
+      headers: { authorization: `Bearer ${channel.ownerCredential}` },
+    });
+    expect(await history.json()).toMatchObject({
+      history: [{ mention: { kind: "members", members: [{ member_id: first.id }, { member_id: second.id }] } }],
+    });
+
+    for (const mentions of [[], [first.id, first.id], ["all", first.id], Array(101).fill(first.id)]) {
+      const rejected = await send(
+        instance,
+        channel.id,
+        channel.ownerCredential,
+        owner.sessionId,
+        "invalid",
+        mentions,
+      );
+      expect(rejected.status).toBe(400);
+    }
+
+    const removed = await instance.request(`/api/channels/${channel.id}/members/${first.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${channel.ownerCredential}` },
+    });
+    expect(removed.status).toBe(200);
+    expect((await send(
+      instance,
+      channel.id,
+      channel.ownerCredential,
+      owner.sessionId,
+      "stale",
+      [first.id],
+    )).status).toBe(400);
+
+    const all = await send(
+      instance,
+      channel.id,
+      channel.ownerCredential,
+      owner.sessionId,
+      "everyone",
+      ["all"],
+    );
+    expect(await all.json()).toMatchObject({ mention: { kind: "all" } });
   });
 
   it("keeps callsign and source binding atomic when a session id is reused", async () => {

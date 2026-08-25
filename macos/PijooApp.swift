@@ -21,14 +21,14 @@ private let maxLocalSendFrameBytes = 64 * 1024
 private let defaultMessageTemplate = """
 > **↗ Pijoo · 外部频道消息**
 >
-> **频道** `{channel_name}` · **来自** `{sender_name}` · `#{message_id}`
+> **频道** `{channel_name}` · **来自** `{sender_name}` · **提醒** {mentions} · `#{message_id}`
 >
 > {message_text}
 """
 private let defaultSentMessageTemplate = """
 > **↗ Pijoo · 已发送到频道**
 >
-> **频道** `{channel_name}` · `#{message_id}`
+> **频道** `{channel_name}` · **提醒** {mentions} · `#{message_id}`
 >
 > {message_text}
 """
@@ -106,6 +106,14 @@ enum SelfMessagePolicy: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum ReceiveScope: String, Codable, CaseIterable, Identifiable {
+    case allMessages = "all_messages"
+    case mentionsOnly = "mentions_only"
+
+    var id: String { rawValue }
+    var title: String { self == .allMessages ? "所有消息" : "仅 @我的消息" }
+}
+
 struct ChannelProfile: Codable, Equatable, Identifiable {
     let id: UUID
     var origin: String
@@ -166,6 +174,7 @@ struct ChannelSubscription: Codable, Equatable, Identifiable {
     var template: String
     var sentMessageTemplate: String? = nil
     var selfMessagePolicy: SelfMessagePolicy
+    var receiveScope: ReceiveScope? = nil
     var defaultSend: Bool
     var lastDeliveredMessageID: Int64?
     var lastDeliveredAt: Double?
@@ -185,6 +194,25 @@ struct AppStateV2: Codable, Equatable {
 enum MessageDirection: String, Codable { case inbound, outbound }
 enum MessageDeliveryState: String, Codable {
     case pending, received, attempting, filtered, delivered, skipped, accepted, failed, unknown
+}
+
+struct MentionedMember: Codable, Equatable {
+    var memberID: String
+    var memberName: String
+
+    enum CodingKeys: String, CodingKey {
+        case memberID = "member_id"
+        case memberName = "member_name"
+    }
+}
+
+struct MessageMention: Codable, Equatable {
+    var kind: String
+    var members: [MentionedMember]? = nil
+
+    var displayText: String {
+        kind == "all" ? "@所有人" : (members ?? []).map { "@\($0.memberName)" }.joined(separator: "、")
+    }
 }
 
 struct MessageSourceReference: Codable, Equatable {
@@ -210,6 +238,7 @@ struct ChannelMessageRecord: Codable, Equatable, Identifiable {
     var senderMemberID: String? = nil
     var senderEndpointID: String? = nil
     var source: MessageSourceReference? = nil
+    var mention: MessageMention? = nil
 
     var id: String { "\(channelID.uuidString):\(messageID)" }
 }
@@ -538,7 +567,7 @@ struct AppFailure: LocalizedError {
 }
 
 private let messageTemplateVariables = Set([
-    "{channel_name}", "{sender_name}", "{message_source}", "{message_text}", "{message_id}",
+    "{channel_name}", "{sender_name}", "{message_source}", "{message_text}", "{message_id}", "{mentions}",
 ])
 
 private func validateMessageTemplate(_ raw: String, defaultTemplate: String) throws -> String {
@@ -550,7 +579,7 @@ private func validateMessageTemplate(_ raw: String, defaultTemplate: String) thr
     for match in expression.matches(in: value, range: range) {
         guard let tokenRange = Range(match.range, in: value),
               messageTemplateVariables.contains(String(value[tokenRange])) else {
-            throw AppFailure("模板只支持 {channel_name}、{sender_name}、{message_source}、{message_text}、{message_id}")
+            throw AppFailure("模板只支持 {channel_name}、{sender_name}、{message_source}、{message_text}、{message_id}、{mentions}")
         }
     }
     return value
@@ -562,7 +591,8 @@ private func renderMessageTemplate(
     senderName: String,
     messageSource: String,
     messageText: String,
-    messageID: String
+    messageID: String,
+    mentions: String = "无"
 ) -> String {
     func normalized(_ value: String) -> String {
         value.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
@@ -577,9 +607,10 @@ private func renderMessageTemplate(
         "{message_source}": safeInline(messageSource),
         "{message_text}": normalized(messageText),
         "{message_id}": messageID,
+        "{mentions}": safeInline(mentions),
     ]
     let expression = try! NSRegularExpression(
-        pattern: #"\{(?:channel_name|sender_name|message_source|message_text|message_id)\}"#
+        pattern: #"\{(?:channel_name|sender_name|message_source|message_text|message_id|mentions)\}"#
     )
     let quotePrefix = try! NSRegularExpression(pattern: #"^(?:[ \t]*>[ \t]?)+$"#)
     let sourceString = source as NSString
@@ -907,12 +938,14 @@ private struct LocalSettingsPatch: Codable {
     let template: String?
     let sentMessageTemplate: String?
     let selfMessagePolicy: SelfMessagePolicy?
+    let receiveScope: ReceiveScope?
     let defaultSend: Bool?
 
     enum CodingKeys: String, CodingKey {
         case template
         case sentMessageTemplate = "sent_message_template"
         case selfMessagePolicy = "self_message_policy"
+        case receiveScope = "receive_scope"
         case defaultSend = "default_send"
     }
 }
@@ -930,9 +963,10 @@ private struct LocalSidecarEvent: Codable {
     let senderEndpointID: String?
     let senderName: String?
     let source: MessageSourceReference?
+    let mention: MessageMention?
 
     enum CodingKeys: String, CodingKey {
-        case id, from, to, text, at, state, error, source
+        case id, from, to, text, at, state, error, source, mention
         case senderMemberID = "sender_member_id"
         case senderEndpointID = "sender_endpoint_id"
         case senderName = "sender_name"
@@ -946,12 +980,13 @@ private struct LocalSendRequest: Decodable {
     let clientVersion: String?
     let channel: String?
     let message: String?
+    let mentions: [String]?
     let settings: LocalSettingsPatch?
     let subscriptionID: String?
     let event: LocalSidecarEvent?
 
     enum CodingKeys: String, CodingKey {
-        case version, operation, source, channel, message, settings, event
+        case version, operation, source, channel, message, mentions, settings, event
         case clientVersion = "client_version"
         case subscriptionID = "subscription_id"
     }
@@ -991,6 +1026,14 @@ private struct LocalSendRequest: Decodable {
             guard message.utf16.count <= maxChannelMessageLength else {
                 throw AppFailure("message exceeds \(maxChannelMessageLength) characters")
             }
+            if let mentions = request.mentions {
+                guard !mentions.isEmpty, mentions.count <= 100,
+                      mentions.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+                      Set(mentions).count == mentions.count,
+                      !mentions.contains("all") || mentions == ["all"] else {
+                    throw AppFailure("mentions must contain 1-100 unique member ids, or only all")
+                }
+            }
         }
         if ["subscribe", "unsubscribe", "get_settings", "update_settings"].contains(request.operation),
            request.channel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
@@ -1027,6 +1070,7 @@ private struct LocalSubscriptionSummary: Encodable {
     let template: String
     let sentMessageTemplate: String
     let selfMessagePolicy: SelfMessagePolicy
+    let receiveScope: ReceiveScope
     let defaultSend: Bool
 
     enum CodingKeys: String, CodingKey {
@@ -1034,7 +1078,20 @@ private struct LocalSubscriptionSummary: Encodable {
         case sentMessageTemplate = "sent_message_template"
         case receiveEnabled = "receive_enabled"
         case selfMessagePolicy = "self_message_policy"
+        case receiveScope = "receive_scope"
         case defaultSend = "default_send"
+    }
+}
+
+private struct LocalMentionMemberSummary: Encodable {
+    let memberID: String
+    let name: String
+    let isSelf: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case memberID = "member_id"
+        case isSelf = "is_self"
     }
 }
 
@@ -1043,6 +1100,7 @@ private struct LocalOperationResult: Encodable {
     let callsign: String?
     let channel: String?
     let channels: [LocalChannelSummary]?
+    let members: [LocalMentionMemberSummary]?
     let settings: LocalSubscriptionSummary?
     let provenance: LocalMessageProvenance?
     let message: String?
@@ -1052,6 +1110,7 @@ private struct LocalOperationResult: Encodable {
         callsign: String? = nil,
         channel: String? = nil,
         channels: [LocalChannelSummary]? = nil,
+        members: [LocalMentionMemberSummary]? = nil,
         settings: LocalSubscriptionSummary? = nil,
         provenance: LocalMessageProvenance? = nil,
         message: String? = nil
@@ -1060,6 +1119,7 @@ private struct LocalOperationResult: Encodable {
         self.callsign = callsign
         self.channel = channel
         self.channels = channels
+        self.members = members
         self.settings = settings
         self.provenance = provenance
         self.message = message
@@ -1802,6 +1862,8 @@ extension AppModel {
         guard !busy, let profile = selectedChannel else { return }
         let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        let mentions = composerMentions
+        let mentionSnapshot = composerMentionSnapshot
         let pending = ChannelMessageRecord(
             channelID: profile.id,
             messageID: "local-\(UUID().uuidString.lowercased())",
@@ -1811,7 +1873,8 @@ extension AppModel {
             text: text,
             at: Date().timeIntervalSince1970 * 1000,
             state: .pending,
-            source: MessageSourceReference(provider: "pijoo", label: "Pijoo App")
+            source: MessageSourceReference(provider: "pijoo", label: "Pijoo App"),
+            mention: mentionSnapshot
         )
         upsertMessage(pending, persist: false)
         busy = true
@@ -1821,9 +1884,11 @@ extension AppModel {
                 text,
                 profile: profile,
                 endpoint: endpointCallsign(profile, kind: "app"),
-                source: MessageSourceReference(provider: "pijoo", label: "Pijoo App")
+                source: MessageSourceReference(provider: "pijoo", label: "Pijoo App"),
+                mentions: mentions
             )
             composerText = ""
+            clearComposerMentions()
             messages.removeAll { $0.id == pending.id }
             upsertMessage(ChannelMessageRecord(
                 channelID: profile.id,
@@ -1836,7 +1901,8 @@ extension AppModel {
                 state: .accepted,
                 senderMemberID: result.memberID,
                 senderEndpointID: result.endpointID,
-                source: MessageSourceReference(provider: "pijoo", label: "Pijoo App")
+                source: MessageSourceReference(provider: "pijoo", label: "Pijoo App"),
+                mention: result.mention
             ))
         } catch {
             var final = pending
@@ -1851,8 +1917,9 @@ extension AppModel {
         _ message: String,
         profile: ChannelProfile,
         endpoint: String,
-        source: MessageSourceReference
-    ) async throws -> (id: String, callsign: String, memberID: String, endpointID: String) {
+        source: MessageSourceReference,
+        mentions: [String] = []
+    ) async throws -> (id: String, callsign: String, memberID: String, endpointID: String, mention: MessageMention?) {
         guard !message.isEmpty, message.utf16.count <= maxChannelMessageLength else {
             throw ChannelSendFailure.definitive("消息须为 1–\(maxChannelMessageLength) 个字符")
         }
@@ -1891,18 +1958,25 @@ extension AppModel {
             var sourceJSON: [String: Any] = ["provider": source.provider]
             if let conversationID = source.conversationID { sourceJSON["conversation_id"] = conversationID }
             if let label = source.label { sourceJSON["label"] = label }
+            var body: [String: Any] = ["to": "all", "message": message, "source": sourceJSON]
+            if !mentions.isEmpty { body["mentions"] = mentions }
             let json = try await requestJSON(
                 url: base.appendingPathComponent("send"),
                 method: "POST",
                 bearer: credential,
                 headers: ["X-Session-Id": session],
-                body: ["to": "all", "message": message, "source": sourceJSON]
+                body: body
             )
             guard json["ok"] as? Bool == true else {
                 throw ChannelSendFailure.unknown("频道发送结果未知：服务端未返回有效回执")
             }
-            if let id = json["id"] as? String { return (id, endpoint, memberID, endpointID) }
-            if let id = json["id"] as? NSNumber { return (id.stringValue, endpoint, memberID, endpointID) }
+            let mention = messageMention(json["mention"])
+            let confirmedMentions = mention?.kind == "all" ? ["all"] : mention?.members?.map(\.memberID) ?? []
+            guard confirmedMentions == mentions else {
+                throw ChannelSendFailure.unknown("频道已接收消息，但没有确认完整的 @ 成员")
+            }
+            if let id = json["id"] as? String { return (id, endpoint, memberID, endpointID, mention) }
+            if let id = json["id"] as? NSNumber { return (id.stringValue, endpoint, memberID, endpointID, mention) }
             throw ChannelSendFailure.unknown("频道发送结果未知：回执缺少消息 ID")
         } catch let error as ChannelSendFailure {
             throw error
@@ -1994,6 +2068,12 @@ extension AppModel {
         return String("\(memberEndpointPrefix(profile))\(base)-\(kind)\(task)".prefix(32))
     }
 
+    private func messageMention(_ value: Any?) -> MessageMention? {
+        guard let value, JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value) else { return nil }
+        return try? JSONDecoder().decode(MessageMention.self, from: data)
+    }
+
     private func messageRecord(
         _ json: [String: Any],
         channelID: UUID,
@@ -2025,7 +2105,8 @@ extension AppModel {
             state: state,
             senderMemberID: json["sender_member_id"] as? String,
             senderEndpointID: json["sender_endpoint_id"] as? String,
-            source: source
+            source: source,
+            mention: messageMention(json["mention"])
         )
     }
 
@@ -2228,6 +2309,8 @@ final class AppModel: ObservableObject {
     @Published var conversationSearchResults: [HostConversationSummary] = []
     @Published var conversationSearchStatus = ""
     @Published var composerText = ""
+    @Published var composerMentionAll = false
+    @Published var composerMentionMemberIDs: [String] = []
     @Published var showAddChannel = false
     @Published var oldBetaDataDetected = FileManager.default.fileExists(atPath: AppPaths.legacyBinding.path)
 
@@ -2308,6 +2391,48 @@ final class AppModel: ObservableObject {
         return state.subscriptions.filter { $0.channelID == selectedChannelID }
     }
 
+    var activeMentionMembers: [ChannelMember] { members.filter { $0.status == "active" } }
+    var composerMentionLabel: String {
+        if composerMentionAll { return "所有人" }
+        let selected = composerMentionMemberIDs.compactMap { id in activeMentionMembers.first { $0.memberID == id } }
+        if selected.count == 1 { return selected[0].name }
+        if selected.count > 1 { return "\(selected[0].name)等\(selected.count)人" }
+        return composerMentionMemberIDs.isEmpty ? "" : "已选 \(composerMentionMemberIDs.count) 人"
+    }
+
+    private var composerMentions: [String] {
+        composerMentionAll ? ["all"] : composerMentionMemberIDs
+    }
+
+    private var composerMentionSnapshot: MessageMention? {
+        if composerMentionAll { return MessageMention(kind: "all") }
+        let selected = composerMentionMemberIDs.compactMap { id in
+            activeMentionMembers.first(where: { $0.memberID == id }).map {
+                MentionedMember(memberID: $0.memberID, memberName: $0.name)
+            }
+        }
+        return selected.isEmpty ? nil : MessageMention(kind: "members", members: selected)
+    }
+
+    func clearComposerMentions() {
+        composerMentionAll = false
+        composerMentionMemberIDs = []
+    }
+
+    func toggleComposerMentionAll() {
+        composerMentionAll.toggle()
+        composerMentionMemberIDs = []
+    }
+
+    func toggleComposerMention(_ memberID: String) {
+        composerMentionAll = false
+        if let index = composerMentionMemberIDs.firstIndex(of: memberID) {
+            composerMentionMemberIDs.remove(at: index)
+        } else if composerMentionMemberIDs.count < 100 {
+            composerMentionMemberIDs.append(memberID)
+        }
+    }
+
     var menuIcon: String { lastError.isEmpty ? "paperplane.circle" : "exclamationmark.triangle.fill" }
     var runningListenerCount: Int { listeners.count }
     var enabledSubscriptionCount: Int { state.subscriptions.filter(\.enabled).count }
@@ -2316,6 +2441,7 @@ final class AppModel: ObservableObject {
     }
 
     func selectChannel(_ id: UUID?) {
+        clearComposerMentions()
         selectedChannelID = id
         state.selectedChannelID = id
         persistState()
@@ -2414,7 +2540,8 @@ extension AppModel {
                 return .success(LocalOperationResult(message: "MCP \(version) 已加载"))
             case "list_channels":
                 let task = taskBinding(for: request.sourceContext)
-                let channels = state.channels.map { profile in
+                let profiles = request.channel == nil ? state.channels : [try resolveChannel(request.channel)]
+                let channels = profiles.map { profile in
                     let subscription = task.flatMap { task in
                         state.subscriptions.first { $0.channelID == profile.id && $0.taskID == task.id }
                     }
@@ -2425,6 +2552,28 @@ extension AppModel {
                         subscribed: subscription?.enabled == true,
                         defaultSend: subscription?.defaultSend == true
                     )
+                }
+                if let channel = request.channel {
+                    let profile = try resolveChannel(channel)
+                    _ = try requireSubscription(source: request.sourceContext, profile: profile)
+                    let json = try await authorizedJSON(profile, suffix: "members", method: "GET")
+                    guard let raw = json["members"], JSONSerialization.isValidJSONObject(raw) else {
+                        throw AppFailure("频道成员响应无效")
+                    }
+                    let data = try JSONSerialization.data(withJSONObject: raw)
+                    let members = try JSONDecoder().decode([ChannelMember].self, from: data)
+                        .filter { $0.status == "active" }
+                        .map { LocalMentionMemberSummary(
+                            memberID: $0.memberID,
+                            name: $0.name,
+                            isSelf: $0.memberID == profile.memberID
+                        ) }
+                    return .success(LocalOperationResult(
+                        channel: profile.channel,
+                        channels: channels,
+                        members: members,
+                        message: "\(profile.displayName) 有 \(members.count) 名可 @ 成员"
+                    ))
                 }
                 return .success(LocalOperationResult(channels: channels))
             case "inspect_message_source":
@@ -2478,7 +2627,8 @@ extension AppModel {
                             provider: task.provider,
                             conversationID: task.conversationID,
                             label: taskLabel(task.id)
-                        )
+                        ),
+                        mentions: request.mentions ?? []
                     )
                     upsertMessage(ChannelMessageRecord(
                         channelID: profile.id,
@@ -2495,7 +2645,8 @@ extension AppModel {
                             provider: task.provider,
                             conversationID: task.conversationID,
                             label: taskLabel(task.id)
-                        )
+                        ),
+                        mention: receipt.mention
                     ))
                     let confirmation = renderMessageTemplate(
                         subscription.sentMessageTemplate ?? defaultSentMessageTemplate,
@@ -2503,7 +2654,8 @@ extension AppModel {
                         senderName: state.defaultCallsign,
                         messageSource: taskLabel(task.id),
                         messageText: message,
-                        messageID: receipt.id
+                        messageID: receipt.id,
+                        mentions: receipt.mention?.displayText ?? "无"
                     )
                     return .success(.send(
                         id: receipt.id,
@@ -2659,6 +2811,11 @@ extension AppModel {
 
     func setSubscriptionPolicy(_ id: UUID, policy: SelfMessagePolicy) {
         updateSubscription(id) { $0.selfMessagePolicy = policy }
+        restartListenerIfNeeded(id)
+    }
+
+    func setSubscriptionReceiveScope(_ id: UUID, scope: ReceiveScope) {
+        updateSubscription(id) { $0.receiveScope = scope }
         restartListenerIfNeeded(id)
     }
 
@@ -2844,6 +3001,7 @@ extension AppModel {
             template: subscription.template,
             sentMessageTemplate: subscription.sentMessageTemplate ?? defaultSentMessageTemplate,
             selfMessagePolicy: subscription.selfMessagePolicy,
+            receiveScope: subscription.receiveScope ?? .allMessages,
             defaultSend: subscription.defaultSend
         )
     }
@@ -2868,6 +3026,7 @@ extension AppModel {
         if let template { state.subscriptions[index].template = template }
         if let sentMessageTemplate { state.subscriptions[index].sentMessageTemplate = sentMessageTemplate }
         if let policy = patch.selfMessagePolicy { state.subscriptions[index].selfMessagePolicy = policy }
+        if let scope = patch.receiveScope { state.subscriptions[index].receiveScope = scope }
         if let defaultSend = patch.defaultSend {
             if defaultSend {
                 let taskID = state.subscriptions[index].taskID
@@ -2951,6 +3110,7 @@ extension AppModel {
                 "--quiet",
                 "--channel-name", reconciledProfile.displayName,
                 "--message-template", subscription.template,
+                "--receive-scope", (subscription.receiveScope ?? .allMessages).rawValue,
                 "--self-message-policy", subscription.selfMessagePolicy.rawValue,
                 "--self-endpoint-id", txEndpointID,
                 "--self-member-id", reconciledProfile.memberID,
@@ -3234,7 +3394,8 @@ extension AppModel {
             state: .received,
             senderMemberID: senderMemberID,
             senderEndpointID: senderEndpointID,
-            source: event.source
+            source: event.source,
+            mention: event.mention
         )
         try MessageLedger.append(record)
         upsertMessage(record, persist: false)
@@ -3282,7 +3443,7 @@ extension AppModel {
             state.subscriptions[subscriptionIndex].lastDeliveredAt = Date().timeIntervalSince1970
             state.subscriptions[subscriptionIndex].uncertainMessageID = nil
             state.subscriptions[subscriptionIndex].uncertainDetail = nil
-            if outcome == .filtered { listenerStatus[subscriptionID] = "已过滤自消息" }
+            if outcome == .filtered { listenerStatus[subscriptionID] = "正在接收" }
         } else if outcome == .unknown {
             state.subscriptions[subscriptionIndex].enabled = false
             state.subscriptions[subscriptionIndex].uncertainMessageID = id
@@ -4256,6 +4417,27 @@ private struct ChannelMessagesView: View {
             }
             Divider()
             HStack(alignment: .bottom) {
+                Menu {
+                    Button { model.toggleComposerMentionAll() } label: {
+                        Label("@所有人", systemImage: model.composerMentionAll ? "checkmark" : "person.3")
+                    }
+                    Divider()
+                    ForEach(model.activeMentionMembers) { member in
+                        Button { model.toggleComposerMention(member.memberID) } label: {
+                            Label(
+                                member.name + (member.memberID == model.selectedChannel?.memberID ? "（我）" : ""),
+                                systemImage: model.composerMentionMemberIDs.contains(member.memberID) ? "checkmark" : "person"
+                            )
+                        }
+                    }
+                } label: {
+                    if model.composerMentionLabel.isEmpty {
+                        Image(systemName: "at")
+                    } else {
+                        Label(model.composerMentionLabel, systemImage: "at")
+                    }
+                }
+                .fixedSize()
                 TextField("向频道发送消息", text: $model.composerText)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { Task { await model.sendComposerMessage() } }
@@ -4311,6 +4493,11 @@ private struct MessageRow: View {
                             Text(label).font(.caption2).foregroundStyle(.secondary)
                         }
                     }
+                }
+                if let mention = message.mention {
+                    Text(mention.displayText)
+                        .font(.caption.bold())
+                        .foregroundStyle(.blue)
                 }
                 Text(message.text)
                     .textSelection(.enabled)
@@ -4622,6 +4809,20 @@ private struct SubscriptionCard: View {
                             .toggleStyle(.switch)
                             .fixedSize()
                         }
+                        HStack(spacing: 8) {
+                            Text("接收范围").font(.caption.bold())
+                            Picker("接收范围", selection: Binding(
+                                get: { subscription.receiveScope ?? .allMessages },
+                                set: { model.setSubscriptionReceiveScope(subscription.id, scope: $0) }
+                            )) {
+                                ForEach(ReceiveScope.allCases) { scope in Text(scope.title).tag(scope) }
+                            }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .fixedSize()
+                        }
+                        Text("仅 @我时，@所有人和包含当前成员的消息会进入此会话；其他消息仍保留在消息页。")
+                            .font(.caption).foregroundStyle(.secondary)
                         if let messageID = subscription.uncertainMessageID {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("消息 #\(messageID) 的会话转发结果未知").font(.subheadline.bold())
@@ -4689,7 +4890,7 @@ private struct SubscriptionCard: View {
                             ? "发送成功后作为频道标志返回当前会话，不改写频道正文。"
                             : "收到频道消息时，整段 Markdown 作为会话输入。")
                             .font(.caption2).foregroundStyle(.secondary)
-                        Text("变量：{channel_name} {sender_name} {message_source} {message_text} {message_id}")
+                        Text("变量：{channel_name} {sender_name} {message_source} {message_text} {message_id} {mentions}")
                             .font(.caption2).foregroundStyle(.secondary)
                         HStack {
                             Button("停止转发到此会话", role: .destructive) { model.removeSubscription(subscription.id) }
@@ -4901,8 +5102,8 @@ private struct PijooV2SelfTest {
         precondition(installed.contains(managedConfigStart))
         let removed = try CodexConfigEditor.removingManagedBlock(from: installed)
         precondition(removed == "model = \"gpt-5\"\n")
-        let request = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"send","source":{"provider":"codex","conversationId":"01900000-0000-7000-8000-000000000001"},"message":"hello"}"#.utf8))
-        precondition(request.message == "hello")
+        let request = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"send","source":{"provider":"codex","conversationId":"01900000-0000-7000-8000-000000000001"},"message":"hello","mentions":["member-a","member-b"]}"#.utf8))
+        precondition(request.message == "hello" && request.mentions == ["member-a", "member-b"])
         let inspectRequest = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"inspect_message_source","source":{"provider":"codex","conversationId":"01900000-0000-7000-8000-000000000001"}}"#.utf8))
         precondition(inspectRequest.operation == "inspect_message_source")
         let readyRequest = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"mcp_ready","client_version":"0.3.0-beta.16"}"#.utf8))
@@ -4924,7 +5125,8 @@ private struct PijooV2SelfTest {
             senderName: "frontend",
             messageSource: "ChatGPT Codex · 01900000…",
             messageText: "第一行\n{channel_name}",
-            messageID: "42"
+            messageID: "42",
+            mentions: "@张三、@李四"
         )
         precondition(sentConfirmation == "> **API ˋ联调ˋ** · ChatGPT Codex · 01900000… · #42\n>\n> 第一行\n> {channel_name}")
         let resetSentTemplate = try validateMessageTemplate("  ", defaultTemplate: defaultSentMessageTemplate)
@@ -4936,6 +5138,10 @@ private struct PijooV2SelfTest {
         do {
             _ = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"send","source":{"provider":"codex","conversationId":"bad"},"message":"hello"}"#.utf8))
             preconditionFailure("invalid source was accepted")
+        } catch {}
+        do {
+            _ = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"send","source":{"provider":"codex","conversationId":"01900000-0000-7000-8000-000000000001"},"message":"hello","mentions":["all","member-a"]}"#.utf8))
+            preconditionFailure("mixed all/member mentions were accepted")
         } catch {}
         do {
             _ = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"mcp_ready","client_version":""}"#.utf8))
@@ -4991,6 +5197,7 @@ private struct PijooV2SelfTest {
             selfMessagePolicy: .includeOtherEndpoints,
             defaultSend: true
         )
+        precondition(manuallyStopped.receiveScope == nil)
         recoverSubscriptionDeliveryState(&manuallyStopped, deliveries: [confirmed])
         precondition(!manuallyStopped.enabled)
         var unresolved = manuallyStopped
@@ -5022,10 +5229,18 @@ private struct PijooV2SelfTest {
                 provider: "codex",
                 conversationID: "01900000-0000-7000-8000-000000000001",
                 label: "API review"
+            ),
+            mention: MessageMention(
+                kind: "members",
+                members: [
+                    MentionedMember(memberID: "member-a", memberName: "张三"),
+                    MentionedMember(memberID: "member-b", memberName: "李四"),
+                ]
             )
         )
         precondition(messageA.source?.provider == "codex")
         precondition(messageA.source?.conversationID == "01900000-0000-7000-8000-000000000001")
+        precondition(messageA.mention?.displayText == "@张三、@李四")
         let delivered = SubscriptionDeliveryRecord(
             subscriptionID: subscriptionID,
             channelID: channelID,
