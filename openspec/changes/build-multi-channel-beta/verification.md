@@ -198,6 +198,17 @@ publication remain pending.
   a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.15` with all seven
   tools including `sent_message_template`. It is not notarized, installed, pushed or published.
 
+## 2026-08-25 MCP Restart Awareness
+
+- MCP startup now best-effort reports its embedded App version through the protected local socket. The App
+  persists the latest loaded version, keeps a restart warning in Settings while it differs from the current
+  App version, and clears the warning automatically on an exact match without creating a Host turn.
+- The existing one-time enable/update notice remains, while the persistent state stays out of menu-bar health.
+  Local request validation rejects missing, empty, oversized or whitespace-containing version values.
+- All 11 server test files / 96 tests, TypeScript typecheck, Swift warnings-as-errors typecheck, the focused
+  macOS self-test, strict OpenSpec validation (4/4) and diff checks pass. The socket self-test also exposed and
+  now covers an early-disconnect `SIGPIPE` at the single response write point. No new App package was built.
+
 ## Live Service Gate
 
 - Railway production deployment `2531a50f-116b-4d8c-9f30-e01af302137d` is `SUCCESS`; `/healthz` passed before cutover.

@@ -41,7 +41,7 @@ export type ChannelSettingsPatch = {
   default_send?: boolean;
 };
 
-export type LocalAppRequest =
+export type TaskLocalAppRequest =
   | { version: 2; operation: "list_channels"; source: ConversationSource }
   | { version: 2; operation: "inspect_message_source"; source: ConversationSource }
   | { version: 2; operation: "send"; source: ConversationSource; message: string; channel?: string }
@@ -55,6 +55,12 @@ export type LocalAppRequest =
     channel: string;
     settings: ChannelSettingsPatch;
   };
+
+export type LocalAppRequest = TaskLocalAppRequest | {
+  version: 2;
+  operation: "mcp_ready";
+  client_version: string;
+};
 
 export type LocalLedgerRequest = {
   version: 2;
@@ -379,7 +385,7 @@ function buildLocalRequest(
   tool: string,
   args: Record<string, unknown>,
   source: ConversationSource,
-): LocalAppRequest {
+): TaskLocalAppRequest {
   switch (tool) {
     case "list_channels":
       assertOnlyKeys(args, []);
@@ -644,9 +650,20 @@ export async function runChannelMcp(
 
   const input = dependencies.input ?? (process.stdin as InputStream);
   const output = dependencies.output ?? process.stdout;
+  const requestApp = dependencies.requestApp ?? ((request) => requestViaLocalApp(socketPath, request));
+  try {
+    const readyRequest: LocalAppRequest = {
+      version: LOCAL_APP_PROTOCOL_VERSION,
+      operation: "mcp_ready",
+      client_version: APP_VERSION,
+    };
+    await (dependencies.requestApp
+      ? dependencies.requestApp(readyRequest)
+      : requestViaLocalApp(socketPath, readyRequest, 1_000));
+  } catch {}
   const handle = createReplyMcpHandler({
     ...dependencies,
-    requestApp: dependencies.requestApp ?? ((request) => requestViaLocalApp(socketPath, request)),
+    requestApp,
   });
   const lines = createInterface({ input, crlfDelay: Infinity });
   for await (const line of lines) {

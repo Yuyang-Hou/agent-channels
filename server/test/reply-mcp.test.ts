@@ -295,7 +295,7 @@ describe("channel MCP", () => {
 
   it("blocks unknown sends only for the affected current task", async () => {
     const requestApp = vi.fn(async (request: LocalAppRequest): Promise<LocalAppResult> => {
-      if (request.source.conversationId === THREAD_ID) {
+      if ("source" in request && request.source.conversationId === THREAD_ID) {
         return { ok: false, outcome: "unknown", error: "channel send outcome is unknown" };
       }
       return { ok: true, result: { id: "45", callsign: "backend", channel: "api-work" } };
@@ -405,10 +405,15 @@ describe("channel MCP", () => {
     ]);
     let stdout = "";
     let stderr = "";
+    const requestApp = vi.fn(async (): Promise<LocalAppResult> => ({
+      ok: true,
+      result: { message: "recorded" },
+    }));
     const code = await runChannelMcp(["--config", configPath], {
       input,
       output: { write: (chunk) => (stdout += chunk) },
       error: { write: (chunk) => (stderr += chunk) },
+      requestApp,
     });
 
     expect(code).toBe(0);
@@ -425,5 +430,10 @@ describe("channel MCP", () => {
     expect(lines[1]).toEqual({ jsonrpc: "2.0", id: 2, result: {} });
     expect(lines[2].result.tools).toHaveLength(7);
     expect(lines[2].result.tools).toContainEqual(expect.objectContaining({ name: "list_channels" }));
+    expect(requestApp).toHaveBeenCalledWith({
+      version: 2,
+      operation: "mcp_ready",
+      client_version: "dev",
+    });
   });
 });

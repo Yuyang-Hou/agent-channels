@@ -214,6 +214,10 @@ id，但它属于 Host 能力而非 Agent Channels 稳定协议，因此必须�
 其余六项使用相同 source context，只附带各自需要的 `channel` 或 `settings`；所有频道凭证、网络
 请求和接收状态都留在 App 内。
 
+MCP 启动时通过同一本机 socket best-effort 上报内嵌版本 `mcp_ready`。该生命周期消息不带 source、
+不创建 Host turn，也不接触频道数据；App 只持久化最近加载版本，并在设置页与当前 App 版本比较。
+版本不一致时持续提示完全重启 ChatGPT，收到当前版本后自动清除，不占用菜单栏健康状态。
+
 App 用 `provider + conversationId` 精确匹配 TaskBinding，再解析唯一默认出站 Subscription。
 缺少 `_meta.threadId`、类型错误、未绑定、无默认 Subscription 或歧义时，不请求 Channel
 Service，不回退到最近活跃 task、当前 UI 频道或全局 active channel。thread id 不进入工具正文、

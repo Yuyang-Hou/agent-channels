@@ -13,6 +13,8 @@ private let managedConfigStart = "# >>> Agent Channels managed MCP >>>"
 private let managedConfigEnd = "# <<< Agent Channels managed MCP <<<"
 private let githubReleasesURL = URL(string: "https://api.github.com/repos/Yuyang-Hou/agent-channels/releases?per_page=100")!
 private let automaticUpdateChecksKey = "automaticUpdateChecks"
+private let loadedCodexMCPVersionKey = "loadedCodexMCPVersion"
+private let shownCodexRestartVersionKey = "shownCodexRestartVersion"
 private let localSendProtocolVersion = 2
 private let maxChannelMessageLength = 8192
 private let maxLocalSendFrameBytes = 64 * 1024
@@ -69,6 +71,10 @@ private func isCancellationError(_ error: Error) -> Bool {
     if error is CancellationError { return true }
     let nsError = error as NSError
     return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+}
+
+private func requiresCodexRestart(configured: Bool, appVersion: String, loadedMCPVersion: String?) -> Bool {
+    configured && loadedMCPVersion != appVersion
 }
 
 enum SelfMessagePolicy: String, Codable, CaseIterable, Identifiable {
@@ -866,7 +872,8 @@ private struct LocalSidecarEvent: Codable {
 private struct LocalSendRequest: Decodable {
     let version: Int
     let operation: String
-    let source: LocalSource
+    let source: LocalSource?
+    let clientVersion: String?
     let channel: String?
     let message: String?
     let settings: LocalSettingsPatch?
@@ -875,24 +882,37 @@ private struct LocalSendRequest: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case version, operation, source, channel, message, settings, event
+        case clientVersion = "client_version"
         case subscriptionID = "subscription_id"
     }
+
+    var sourceContext: LocalSource { source! }
 
     static func decode(_ data: Data) throws -> LocalSendRequest {
         let request = try JSONDecoder().decode(LocalSendRequest.self, from: data)
         guard request.version == localSendProtocolVersion else {
             throw AppFailure("本机发送协议版本不兼容")
         }
-        guard request.source.provider == "codex",
-              UUID(uuidString: request.source.conversationId) != nil else {
-            throw AppFailure("当前 AI 会话上下文无效或尚未支持")
-        }
         let operations = [
-            "list_channels", "inspect_message_source", "send", "subscribe", "unsubscribe", "get_settings", "update_settings",
+            "mcp_ready", "list_channels", "inspect_message_source", "send", "subscribe", "unsubscribe", "get_settings", "update_settings",
             "record_received", "record_outcome",
         ]
         guard operations.contains(request.operation) else {
             throw AppFailure("不支持的本机操作")
+        }
+        if request.operation == "mcp_ready" {
+            guard let clientVersion = request.clientVersion,
+                  !clientVersion.isEmpty,
+                  clientVersion.count <= 64,
+                  !clientVersion.contains(where: \.isWhitespace) else {
+                throw AppFailure("client_version is invalid")
+            }
+            return request
+        }
+        guard let source = request.source,
+              source.provider == "codex",
+              UUID(uuidString: source.conversationId) != nil else {
+            throw AppFailure("当前 AI 会话上下文无效或尚未支持")
         }
         if request.operation == "send" {
             guard let message = request.message, !message.isEmpty else {
@@ -1124,7 +1144,7 @@ private final class LocalSendServer {
         payload.withUnsafeBytes { bytes in
             var sent = 0
             while sent < bytes.count {
-                let count = Darwin.send(client, bytes.baseAddress?.advanced(by: sent), bytes.count - sent, 0)
+                let count = Darwin.send(client, bytes.baseAddress?.advanced(by: sent), bytes.count - sent, MSG_NOSIGNAL)
                 if count <= 0 { return }
                 sent += count
             }
@@ -2124,6 +2144,8 @@ final class AppModel: ObservableObject {
     @Published var busy = false
     @Published var launchAtLogin = false
     @Published var codexIntegrationStatus = "未启用"
+    @Published var codexIntegrationNeedsRestart = false
+    @Published var loadedCodexMCPVersion = UserDefaults.standard.string(forKey: loadedCodexMCPVersionKey)
     @Published var updateStatus = "未检查"
     @Published var automaticUpdateChecks = UserDefaults.standard.bool(forKey: automaticUpdateChecksKey)
     @Published var draftNickname = ""
@@ -2185,6 +2207,7 @@ final class AppModel: ObservableObject {
         } catch {
             lastError = "本机 MCP 服务启动失败：\(error.localizedDescription)"
         }
+        showCodexRestartNoticeIfNeeded()
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             for channel in self.state.channels { self.startChannelFeed(channel.id) }
@@ -2308,8 +2331,12 @@ extension AppModel {
     fileprivate func handleLocalRequest(_ request: LocalSendRequest) async -> LocalSendResponse {
         do {
             switch request.operation {
+            case "mcp_ready":
+                guard let version = request.clientVersion else { throw AppFailure("client_version is required") }
+                recordLoadedCodexMCPVersion(version)
+                return .success(LocalOperationResult(message: "MCP \(version) 已加载"))
             case "list_channels":
-                let task = taskBinding(for: request.source)
+                let task = taskBinding(for: request.sourceContext)
                 let channels = state.channels.map { profile in
                     let subscription = task.flatMap { task in
                         state.subscriptions.first { $0.channelID == profile.id && $0.taskID == task.id }
@@ -2324,7 +2351,7 @@ extension AppModel {
                 }
                 return .success(LocalOperationResult(channels: channels))
             case "inspect_message_source":
-                guard let task = taskBinding(for: request.source),
+                guard let task = taskBinding(for: request.sourceContext),
                       let record = latestDeliveredChannelMessage(
                           taskID: task.id,
                           subscriptions: state.subscriptions,
@@ -2363,7 +2390,7 @@ extension AppModel {
                 ))
             case "send":
                 guard let message = request.message else { throw AppFailure("message is required") }
-                let (task, subscription, profile) = try outboundRoute(source: request.source, channel: request.channel)
+                let (task, subscription, profile) = try outboundRoute(source: request.sourceContext, channel: request.channel)
                 let endpoint = endpointCallsign(profile, conversationID: task.conversationID, kind: "t")
                 do {
                     let receipt = try await sendChannelMessage(
@@ -2417,7 +2444,7 @@ extension AppModel {
                 }
             case "subscribe":
                 let profile = try resolveChannel(request.channel)
-                let subscription = try await subscribe(source: request.source, profile: profile)
+                let subscription = try await subscribe(source: request.sourceContext, profile: profile)
                 return .success(LocalOperationResult(
                     channel: profile.channel,
                     settings: subscriptionSummary(subscription, profile: profile),
@@ -2425,17 +2452,17 @@ extension AppModel {
                 ))
             case "unsubscribe":
                 let profile = try resolveChannel(request.channel)
-                let subscription = try requireSubscription(source: request.source, profile: profile)
+                let subscription = try requireSubscription(source: request.sourceContext, profile: profile)
                 stopListener(subscription.id)
                 updateSubscription(subscription.id) { $0.enabled = false }
                 return .success(LocalOperationResult(channel: profile.channel, message: "已停止向当前会话转发 \(profile.displayName) 的消息"))
             case "get_settings":
                 let profile = try resolveChannel(request.channel)
-                let subscription = try requireSubscription(source: request.source, profile: profile)
+                let subscription = try requireSubscription(source: request.sourceContext, profile: profile)
                 return .success(LocalOperationResult(settings: subscriptionSummary(subscription, profile: profile)))
             case "update_settings":
                 let profile = try resolveChannel(request.channel)
-                let subscription = try requireSubscription(source: request.source, profile: profile)
+                let subscription = try requireSubscription(source: request.sourceContext, profile: profile)
                 try applySettings(request.settings, to: subscription.id)
                 let updated = state.subscriptions.first { $0.id == subscription.id }!
                 if updated.enabled { restartListenerIfNeeded(updated.id) }
@@ -3058,8 +3085,8 @@ extension AppModel {
         }
         let subscription = state.subscriptions[subscriptionIndex]
         guard let task = state.tasks.first(where: { $0.id == subscription.taskID }),
-              task.provider == request.source.provider,
-              task.conversationID.caseInsensitiveCompare(request.source.conversationId) == .orderedSame,
+              task.provider == request.sourceContext.provider,
+              task.conversationID.caseInsensitiveCompare(request.sourceContext.conversationId) == .orderedSame,
               let profile = state.channels.first(where: { $0.id == subscription.channelID }),
               profile.channel == request.channel,
               let event = request.event,
@@ -3117,8 +3144,8 @@ extension AppModel {
         guard let subscriptionID = request.subscriptionID.flatMap(UUID.init(uuidString:)),
               let subscriptionIndex = state.subscriptions.firstIndex(where: { $0.id == subscriptionID }),
               let task = state.tasks.first(where: { $0.id == state.subscriptions[subscriptionIndex].taskID }),
-              task.provider == request.source.provider,
-              task.conversationID.caseInsensitiveCompare(request.source.conversationId) == .orderedSame,
+              task.provider == request.sourceContext.provider,
+              task.conversationID.caseInsensitiveCompare(request.sourceContext.conversationId) == .orderedSame,
               let profile = state.channels.first(where: { $0.id == state.subscriptions[subscriptionIndex].channelID }),
               profile.channel == request.channel,
               let event = request.event, let id = event.id, let outcome = event.state,
@@ -3310,12 +3337,40 @@ extension AppModel {
         let raw = (try? String(contentsOf: AppPaths.codexConfig, encoding: .utf8)) ?? ""
         let mcp = raw.contains(managedConfigStart) && raw.contains(AppPaths.state.path)
         let skill = AgentChannelsSkillInstaller.isInstalled()
+        codexIntegrationNeedsRestart = requiresCodexRestart(
+            configured: mcp && skill,
+            appVersion: currentVersion,
+            loadedMCPVersion: loadedCodexMCPVersion
+        )
         switch (mcp, skill) {
-        case (true, true): codexIntegrationStatus = "MCP + Skill 已配置"
+        case (true, true) where codexIntegrationNeedsRestart:
+            codexIntegrationStatus = loadedCodexMCPVersion.map {
+                "已配置，ChatGPT 仍在使用 MCP \($0)"
+            } ?? "已配置，等待 ChatGPT 加载 MCP \(currentVersion)"
+        case (true, true): codexIntegrationStatus = "MCP \(currentVersion) 已加载，Skill 已配置"
         case (true, false): codexIntegrationStatus = "MCP 已配置，Skill 待修复"
         case (false, true): codexIntegrationStatus = "Skill 已配置，MCP 待修复"
         case (false, false): codexIntegrationStatus = "未启用"
         }
+    }
+
+    private func showCodexRestartNoticeIfNeeded() {
+        guard codexIntegrationNeedsRestart,
+              UserDefaults.standard.string(forKey: shownCodexRestartVersionKey) != currentVersion else { return }
+        UserDefaults.standard.set(currentVersion, forKey: shownCodexRestartVersionKey)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.codexIntegrationNeedsRestart else { return }
+            self.showNotice(
+                title: "需要重启 ChatGPT",
+                message: "请完全退出并重新打开 ChatGPT，加载 Agent Channels MCP \(self.currentVersion)。此提示会在新 MCP 连接后自动消失。"
+            )
+        }
+    }
+
+    private func recordLoadedCodexMCPVersion(_ version: String) {
+        loadedCodexMCPVersion = version
+        UserDefaults.standard.set(version, forKey: loadedCodexMCPVersionKey)
+        refreshCodexIntegrationStatus()
     }
 
     func enableCodexIntegration() {
@@ -3326,6 +3381,9 @@ extension AppModel {
             try FileManager.default.createDirectory(at: AppPaths.codexDirectory, withIntermediateDirectories: true)
             let block = CodexConfigEditor.managedBlock(sidecar: Sidecar.executable.path, binding: AppPaths.state.path)
             try CodexIntegrationInstaller.install(configURL: AppPaths.codexConfig, block: block)
+            loadedCodexMCPVersion = nil
+            UserDefaults.standard.removeObject(forKey: loadedCodexMCPVersionKey)
+            UserDefaults.standard.set(currentVersion, forKey: shownCodexRestartVersionKey)
             showNotice(title: "Codex 集成已启用", message: "请完全退出并重新打开 ChatGPT，让所有 task 加载 Agent Channels 工具与 Skill。")
         } catch {
             fail(error)
@@ -3336,6 +3394,9 @@ extension AppModel {
         defer { refreshCodexIntegrationStatus() }
         do {
             try CodexIntegrationInstaller.remove(configURL: AppPaths.codexConfig)
+            loadedCodexMCPVersion = nil
+            UserDefaults.standard.removeObject(forKey: loadedCodexMCPVersionKey)
+            UserDefaults.standard.removeObject(forKey: shownCodexRestartVersionKey)
         } catch {
             fail(error)
         }
@@ -4526,6 +4587,20 @@ private struct AgentChannelsSettingsView: View {
                 }
                 Section("AI 集成") {
                     LabeledContent("ChatGPT Codex", value: model.codexIntegrationStatus)
+                    if model.codexIntegrationNeedsRestart {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label("需要完全重启 ChatGPT", systemImage: "arrow.clockwise.circle.fill")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.orange)
+                            Text(model.loadedCodexMCPVersion.map {
+                                "ChatGPT 仍在使用 MCP \($0)，当前 App 为 \(model.currentVersion)。重启后会自动确认。"
+                            } ?? "尚未检测到 MCP \(model.currentVersion)。重启后会自动确认。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(8)
+                        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                    }
                     HStack {
                         Button("启用或修复 Codex 集成") { model.enableCodexIntegration() }
                         Button("移除 Codex 集成", role: .destructive) { model.removeCodexIntegration() }
@@ -4646,6 +4721,12 @@ private struct AgentChannelsV2SelfTest {
         precondition(request.message == "hello")
         let inspectRequest = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"inspect_message_source","source":{"provider":"codex","conversationId":"01900000-0000-7000-8000-000000000001"}}"#.utf8))
         precondition(inspectRequest.operation == "inspect_message_source")
+        let readyRequest = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"mcp_ready","client_version":"0.3.0-beta.16"}"#.utf8))
+        precondition(readyRequest.clientVersion == "0.3.0-beta.16" && readyRequest.source == nil)
+        precondition(requiresCodexRestart(configured: true, appVersion: "beta.16", loadedMCPVersion: nil))
+        precondition(requiresCodexRestart(configured: true, appVersion: "beta.16", loadedMCPVersion: "beta.15"))
+        precondition(!requiresCodexRestart(configured: true, appVersion: "beta.16", loadedMCPVersion: "beta.16"))
+        precondition(!requiresCodexRestart(configured: false, appVersion: "beta.16", loadedMCPVersion: nil))
         let sentTemplate = try validateMessageTemplate(
             "> **{channel_name}** · {message_source} · #{message_id}\n>\n> {message_text}",
             defaultTemplate: defaultSentMessageTemplate
@@ -4668,6 +4749,10 @@ private struct AgentChannelsV2SelfTest {
         do {
             _ = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"send","source":{"provider":"codex","conversationId":"bad"},"message":"hello"}"#.utf8))
             preconditionFailure("invalid source was accepted")
+        } catch {}
+        do {
+            _ = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"mcp_ready","client_version":""}"#.utf8))
+            preconditionFailure("empty MCP version was accepted")
         } catch {}
         precondition(ReleaseVersion("0.3.0-beta.7")! < ReleaseVersion("0.3.0-beta.8")!)
         let taskA = compactTaskKey("01900000-0000-7000-8000-000000000001")!
