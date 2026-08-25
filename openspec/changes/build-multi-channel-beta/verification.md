@@ -1,8 +1,8 @@
 # Verification
 
-Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.10 local candidate adds the product Skill, editable
-Markdown external-message card, replay recovery, unified main-window interaction and a fixed internal signing
-identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.10
+Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.12 local candidate adds the product Skill, editable
+Markdown external-message card, replay recovery, on-demand conversation search, aligned member management and a fixed internal signing
+identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.12
 publication remain pending.
 
 ## Post-candidate Working Tree
@@ -129,6 +129,12 @@ publication remain pending.
 - “转发到会话”不再预载最近 30 条会话；只有非空关键词才会搜索全部未归档用户主会话索引，结果仍排除 subagent/reviewer。
 - 匹配结果以搜索框下方按内容高度收缩的浮层展示，整行点选即绑定，不再挤压下方页面布局。
 - Swift warnings-as-errors typecheck、OpenSpec strict validation 与 diff checks 通过；未构建、安装或发布 App 包。
+
+## 2026-08-25 Beta.12 Local Package
+
+- `codex-search-conversations` commit `5868088` was merged into local `main`; the package includes on-demand floating conversation results and aligned invitation/member rows.
+- `macos/build/Agent-Channels-0.3.0-beta.12-arm64.dmg` is 28,489,756 bytes with SHA-256 `1e908db89ab1d41f2dd498d2eae60f3cdfea589455351661915b2d0170dc4903`.
+- The mounted DMG contains release version `0.3.0-beta.12`, bundle build `12`, a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.12`; `hdiutil verify` passes. It is not notarized, installed, pushed or published.
 
 ## 2026-08-24 Configurable Invitations
 

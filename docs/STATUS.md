@@ -3,9 +3,9 @@
 ## 当前阶段
 
 当前处于 **0.3 Beta 安装包验收**：多频道 App、Host 无关边界和 Codex 公网入站链路已经完成；
-产品级 Skill、可编辑 Markdown 外部消息模板、重放幂等、最新界面优化与固定内测签名已打入本地 `0.3.0-beta.10` Apple Silicon 验收包。
+产品级 Skill、可编辑 Markdown 外部消息模板、重放幂等、按需会话搜索、成员列表对齐与固定内测签名已打入本地 `0.3.0-beta.12` Apple Silicon 验收包。
 
-公开 GitHub prerelease 仍是 beta.2；本轮 beta.10 是固定内测签名的本地验收包，不是 Developer ID 已公证的生产分发版本。
+公开 GitHub prerelease 仍是 beta.2；本轮 beta.12 是固定内测签名的本地验收包，不是 Developer ID 已公证的生产分发版本。
 
 ## 已完成
 
@@ -18,7 +18,7 @@
 | 原生来源提示实验 | 已结束 | 能显示来源，但需要额外代理任务，产品不采用 |
 | Host 无关架构设计 | 已完成 | 产品、架构和 OpenSpec 已定义 Connector 边界 |
 | Host-neutral 投递边界 | 已完成 | 标准信封、串行投递与 Codex Connector 已实现，94 项测试通过 |
-| Host 会话发现 | 本地代码已完成，待打包实机 | 可按 Codex 标题/id 搜索用户主会话或直接输入 id；标题不落盘，绑定仍需 preflight |
+| Host 会话发现 | 本地 Beta 包已完成，待实机 | 输入非空关键词后可按 Codex 标题/id 搜索用户主会话，结果浮层点选或直接输入 id；标题不落盘，绑定仍需 preflight |
 | CLI 失败状态 | 已完成 | 未支持 Host 参数、Host 不可用和错误凭证均明确失败 |
 | Codex Desktop IPC | 已完成 | 无 daemon/env，空闲 start 与忙时 steer 已实机通过；不确定回执停机有自动化覆盖 |
 | 两设备公网双向入站 | 已完成 | A、B 两台 Mac 均完成频道消息 → Desktop IPC → 目标 task 真实 turn；正文按不可信输入处理 |
