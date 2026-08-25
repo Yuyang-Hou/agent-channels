@@ -87,7 +87,11 @@ describe("channel MCP", () => {
       "inspect_message_source",
     ]);
     expect(tools[0]).toMatchObject({
-      inputSchema: { required: ["message"], additionalProperties: false },
+      inputSchema: {
+        required: ["message"],
+        additionalProperties: false,
+        properties: { mentions: { maxItems: 100, uniqueItems: true } },
+      },
     });
     expect(tools[5]).toMatchObject({
       inputSchema: {
@@ -97,6 +101,7 @@ describe("channel MCP", () => {
           self_message_policy: {
             enum: ["include_other_endpoints", "exclude_member"],
           },
+          receive_scope: { enum: ["all_messages", "mentions_only"] },
           default_send: { type: "boolean" },
         },
       },
@@ -151,6 +156,7 @@ describe("channel MCP", () => {
     const result = await handle(toolCall("send_to_channel", {
       message: "API is ready",
       channel: " api-work ",
+      mentions: [" member-a ", "member-b"],
     }));
 
     expect(requestApp).toHaveBeenCalledWith({
@@ -159,6 +165,7 @@ describe("channel MCP", () => {
       source: { provider: "codex", conversationId: THREAD_ID },
       message: "API is ready",
       channel: "api-work",
+      mentions: ["member-a", "member-b"],
     });
     expect(result?.result).toMatchObject({
       content: [{ type: "text", text: "> **↗ Pijoo · 已发送到频道**\n>\n> API is ready" }],
@@ -189,7 +196,7 @@ describe("channel MCP", () => {
     }));
     const handle = createReplyMcpHandler({ requestApp });
 
-    await handle(toolCall("list_channels", {}));
+    await handle(toolCall("list_channels", { channel: "frontend" }));
     await handle(toolCall("subscribe_to_channel", { channel: "frontend" }));
     await handle(toolCall("unsubscribe_from_channel", { channel: "frontend" }));
     await handle(toolCall("get_channel_settings", { channel: "frontend" }));
@@ -198,12 +205,13 @@ describe("channel MCP", () => {
       template: "服务端说：{{message}}",
       sent_message_template: "已发到频道：{message_text}",
       self_message_policy: "include_other_endpoints",
+      receive_scope: "mentions_only",
       default_send: true,
     }));
 
     const source = { provider: "codex", conversationId: THREAD_ID };
     expect(requestApp.mock.calls.map(([request]) => request)).toEqual([
-      { version: 2, operation: "list_channels", source },
+      { version: 2, operation: "list_channels", source, channel: "frontend" },
       { version: 2, operation: "subscribe", source, channel: "frontend" },
       { version: 2, operation: "unsubscribe", source, channel: "frontend" },
       { version: 2, operation: "get_settings", source, channel: "frontend" },
@@ -216,6 +224,7 @@ describe("channel MCP", () => {
           template: "服务端说：{{message}}",
           sent_message_template: "已发到频道：{message_text}",
           self_message_policy: "include_other_endpoints",
+          receive_scope: "mentions_only",
           default_send: true,
         },
       },
@@ -254,6 +263,9 @@ describe("channel MCP", () => {
     const results = await Promise.all([
       handle(toolCall("send_to_channel", { message: "" })),
       handle(toolCall("send_to_channel", { message: "x".repeat(8193) })),
+      handle(toolCall("send_to_channel", { message: "x", mentions: [] })),
+      handle(toolCall("send_to_channel", { message: "x", mentions: ["all", "member-a"] })),
+      handle(toolCall("send_to_channel", { message: "x", mentions: ["member-a", "member-a"] })),
       handle(toolCall("subscribe_to_channel", {})),
       handle(toolCall("update_channel_settings", { channel: "frontend" })),
       handle(toolCall("update_channel_settings", {

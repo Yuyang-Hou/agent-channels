@@ -83,8 +83,9 @@ AI 会话。
 - 一个 task 可以订阅多个频道，一个频道也可以绑定多个 task，游标和失败状态互相隔离；
 - 真实普通消息触发绑定会话，状态消息和空闲连接不触发；
 - App 收到消息先写本地历史，再逐 Subscription 更新 filtered、delivered、failed 或 unknown；
+- App 与 AI 都可选择不@、@所有人或@一至多名 active Member；@只表达提醒，不改变频道可见性；
 - 每条 Subscription 使用受限的接收模板和发送成功模板，让当前会话同时识别收到的频道消息与
-  已可靠进入频道的消息，并明确是否接收同一成员其他 endpoint 的消息；
+  已可靠进入频道的消息，并明确是否接收同一成员其他 endpoint、是否只接收@当前成员的消息；
 - 本机 MCP 暴露 `send_to_channel`、`list_channels`、`subscribe_to_channel`、
   `unsubscribe_from_channel`、`get_channel_settings`、`update_channel_settings` 和
   `inspect_message_source` 七个 task-scoped 工具；所有调用都必须通过 Codex `_meta.threadId`

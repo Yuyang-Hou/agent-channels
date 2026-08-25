@@ -7,6 +7,7 @@ import { streamSSE } from "hono/streaming";
 import {
   ChannelError,
   type Message,
+  type MessageMention,
   type MessageSource,
   type Priority,
   type Attachment,
@@ -80,6 +81,39 @@ export type AppOptions = {
   staticToken?: string;
   adminToken?: string;
 };
+
+function resolveMessageMention(channelId: string, input: unknown): MessageMention | undefined {
+  if (input === undefined) return undefined;
+  if (!Array.isArray(input) || input.length === 0 || input.length > 100) {
+    throw new ChannelError("mentions must contain 1-100 member ids, or only 'all'", "invalid", 400);
+  }
+  if (!input.every((value) => typeof value === "string" && value.trim().length > 0)) {
+    throw new ChannelError("mentions must contain non-empty strings", "invalid", 400);
+  }
+  const ids = input.map((value) => (value as string).trim());
+  if (new Set(ids).size !== ids.length) {
+    throw new ChannelError("mentions must not contain duplicates", "invalid", 400);
+  }
+  if (ids.includes("all")) {
+    if (ids.length !== 1) {
+      throw new ChannelError("'all' cannot be combined with member ids", "invalid", 400);
+    }
+    return { kind: "all" };
+  }
+  const activeMembers = new Map(
+    listChannelMembers(channelId)
+      .filter((member) => member.status === "active")
+      .map((member) => [member.member_id, member]),
+  );
+  const members = ids.map((id) => activeMembers.get(id));
+  if (members.some((member) => !member)) {
+    throw new ChannelError("mentions contain a member who is not active in this channel", "invalid", 400);
+  }
+  return {
+    kind: "members",
+    members: members.map((member) => ({ member_id: member!.member_id, member_name: member!.name })),
+  };
+}
 
 export function createApp(opts: AppOptions): Hono {
   ensureBands();
@@ -799,6 +833,15 @@ export function createApp(opts: AppOptions): Hono {
       );
     }
     const kind = kindInput === "status" ? "status" : undefined;
+    let mention: MessageMention | undefined;
+    try {
+      mention = resolveMessageMention(channelId, body.mentions);
+    } catch (e) {
+      return handleChannelError(c, e);
+    }
+    if (mention && kind === "status") {
+      return c.json({ error: "status messages cannot mention members", code: "invalid" }, 400);
+    }
     let messageSource: MessageSource | undefined;
     if (body.source !== undefined) {
       if (!body.source || typeof body.source !== "object" || Array.isArray(body.source)) {
@@ -861,6 +904,7 @@ export function createApp(opts: AppOptions): Hono {
         attachments,
         kind,
         messageSource,
+        mention,
       );
       statsRecordMessage();
       // Status pings are ephemeral — keep them out of transcripts.
@@ -877,6 +921,7 @@ export function createApp(opts: AppOptions): Hono {
         sender_member_id: msg.sender_member_id,
         sender_endpoint_id: msg.sender_endpoint_id,
         ...(msg.source ? { source: msg.source } : {}),
+        ...(msg.mention ? { mention: msg.mention } : {}),
         queued,
         to: msg.to,
         ...(msg.kind ? { kind: msg.kind } : {}),

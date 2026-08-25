@@ -15,6 +15,8 @@
    Developer ID 签名、公证并发布 `0.3.0-beta.17` Apple Silicon 正式 Beta；
 6. [`changes/release-pijoo-beta-18`](./changes/release-pijoo-beta-18/)：从当前 `main` 的确定提交构建、
    Developer ID 签名、公证并发布 `0.3.0-beta.18` Apple Silicon 正式 Beta。
+7. [`changes/add-channel-mentions`](./changes/add-channel-mentions/)：为 App 与 AI 发送增加不@、
+   @所有人和@多名成员，并让每条“转发到会话”Subscription 可选择仅接收提及自己的消息。
 
 已完成设计、尚未进入实现的 change：
 

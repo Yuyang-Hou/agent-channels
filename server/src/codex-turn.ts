@@ -254,6 +254,7 @@ export function createCodexDelivery(options: {
       from: message.from,
       sourceLabel: message.source?.label,
       text: message.text,
+      mention: message.mention,
     }, options.messageTemplate);
     const turnId = await startCodexTurn({
       threadId,

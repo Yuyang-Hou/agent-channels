@@ -38,13 +38,21 @@ export type ChannelSettingsPatch = {
   template?: string;
   sent_message_template?: string;
   self_message_policy?: "include_other_endpoints" | "exclude_member";
+  receive_scope?: "all_messages" | "mentions_only";
   default_send?: boolean;
 };
 
 export type TaskLocalAppRequest =
-  | { version: 2; operation: "list_channels"; source: ConversationSource }
+  | { version: 2; operation: "list_channels"; source: ConversationSource; channel?: string }
   | { version: 2; operation: "inspect_message_source"; source: ConversationSource }
-  | { version: 2; operation: "send"; source: ConversationSource; message: string; channel?: string }
+  | {
+    version: 2;
+    operation: "send";
+    source: ConversationSource;
+    message: string;
+    channel?: string;
+    mentions?: string[];
+  }
   | { version: 2; operation: "subscribe"; source: ConversationSource; channel: string }
   | { version: 2; operation: "unsubscribe"; source: ConversationSource; channel: string }
   | { version: 2; operation: "get_settings"; source: ConversationSource; channel: string }
@@ -82,6 +90,12 @@ export type LocalLedgerRequest = {
     at?: number;
     sender_member_id?: string;
     sender_endpoint_id?: string;
+    mention?: {
+      kind: "all";
+    } | {
+      kind: "members";
+      members: Array<{ member_id: string; member_name: string }>;
+    };
     state: "received" | "attempting" | "filtered" | "delivered" | "failed" | "unknown";
     error?: string;
   };
@@ -116,6 +130,14 @@ const SEND_TOOL = {
     properties: {
       message: { type: "string", minLength: 1, maxLength: MAX_MESSAGE_LENGTH },
       channel: channelProperty,
+      mentions: {
+        type: "array",
+        minItems: 1,
+        maxItems: 100,
+        uniqueItems: true,
+        items: { type: "string", minLength: 1 },
+        description: "Omit for no mention; use only 'all', or member ids returned by list_channels(channel).",
+      },
     },
     required: ["message"],
     additionalProperties: false,
@@ -131,10 +153,10 @@ const SEND_TOOL = {
 const LIST_CHANNELS_TOOL = {
   name: "list_channels",
   description:
-    "List locally configured Pijoo channels and the current Codex task's subscription/default-send state.",
+    "List locally configured Pijoo channels and the current Codex task's subscription/default-send state. Pass channel to include active mentionable members for that subscribed channel.",
   inputSchema: {
     type: "object",
-    properties: {},
+    properties: { channel: channelProperty },
     additionalProperties: false,
   },
   annotations: {
@@ -216,7 +238,7 @@ const GET_SETTINGS_TOOL = {
 const UPDATE_SETTINGS_TOOL = {
   name: "update_channel_settings",
   description:
-    "Update the current Codex task's local settings for a channel. template formats received channel messages; sent_message_template formats successful send receipts shown in this task. Its own endpoint echo is always excluded. include_other_endpoints receives this member's other endpoints; exclude_member excludes every endpoint owned by this member. Omitted settings remain unchanged; an empty template restores its default.",
+    "Update the current Codex task's local settings for a channel. template formats received channel messages; sent_message_template formats successful send receipts shown in this task. receive_scope can be all_messages or mentions_only. Its own endpoint echo is always excluded. include_other_endpoints receives this member's other endpoints; exclude_member excludes every endpoint owned by this member. Omitted settings remain unchanged; an empty template restores its default.",
   inputSchema: {
     type: "object",
     properties: {
@@ -227,6 +249,10 @@ const UPDATE_SETTINGS_TOOL = {
         type: "string",
         enum: ["include_other_endpoints", "exclude_member"],
       },
+      receive_scope: {
+        type: "string",
+        enum: ["all_messages", "mentions_only"],
+      },
       default_send: { type: "boolean" },
     },
     required: ["channel"],
@@ -234,6 +260,7 @@ const UPDATE_SETTINGS_TOOL = {
       { required: ["template"] },
       { required: ["sent_message_template"] },
       { required: ["self_message_policy"] },
+      { required: ["receive_scope"] },
       { required: ["default_send"] },
     ],
     additionalProperties: false,
@@ -381,20 +408,45 @@ function channelArgument(args: Record<string, unknown>, required: boolean): stri
   return channel;
 }
 
+function mentionsArgument(args: Record<string, unknown>): string[] | undefined {
+  if (args.mentions === undefined) return undefined;
+  if (!Array.isArray(args.mentions) || args.mentions.length === 0 || args.mentions.length > 100) {
+    throw new ExplicitToolError("mentions must contain 1-100 member ids, or only 'all'");
+  }
+  if (!args.mentions.every((value) => typeof value === "string" && value.trim().length > 0)) {
+    throw new ExplicitToolError("mentions must contain non-empty strings");
+  }
+  const mentions = args.mentions.map((value) => (value as string).trim());
+  if (new Set(mentions).size !== mentions.length) {
+    throw new ExplicitToolError("mentions must not contain duplicates");
+  }
+  if (mentions.includes("all") && mentions.length !== 1) {
+    throw new ExplicitToolError("'all' cannot be combined with member ids");
+  }
+  return mentions;
+}
+
 function buildLocalRequest(
   tool: string,
   args: Record<string, unknown>,
   source: ConversationSource,
 ): TaskLocalAppRequest {
   switch (tool) {
-    case "list_channels":
-      assertOnlyKeys(args, []);
-      return { version: LOCAL_APP_PROTOCOL_VERSION, operation: "list_channels", source };
+    case "list_channels": {
+      assertOnlyKeys(args, ["channel"]);
+      const channel = channelArgument(args, false);
+      return {
+        version: LOCAL_APP_PROTOCOL_VERSION,
+        operation: "list_channels",
+        source,
+        ...(channel ? { channel } : {}),
+      };
+    }
     case "inspect_message_source":
       assertOnlyKeys(args, []);
       return { version: LOCAL_APP_PROTOCOL_VERSION, operation: "inspect_message_source", source };
     case "send_to_channel": {
-      assertOnlyKeys(args, ["message", "channel"]);
+      assertOnlyKeys(args, ["message", "channel", "mentions"]);
       const message = args.message;
       if (typeof message !== "string" || message.length === 0) {
         throw new ExplicitToolError("message must be a non-empty string");
@@ -403,12 +455,14 @@ function buildLocalRequest(
         throw new ExplicitToolError(`message exceeds ${MAX_MESSAGE_LENGTH} characters`);
       }
       const channel = channelArgument(args, false);
+      const mentions = mentionsArgument(args);
       return {
         version: LOCAL_APP_PROTOCOL_VERSION,
         operation: "send",
         source,
         message,
         ...(channel ? { channel } : {}),
+        ...(mentions ? { mentions } : {}),
       };
     }
     case "subscribe_to_channel":
@@ -436,7 +490,7 @@ function buildLocalRequest(
         channel: channelArgument(args, true)!,
       };
     case "update_channel_settings": {
-      assertOnlyKeys(args, ["channel", "template", "sent_message_template", "self_message_policy", "default_send"]);
+      assertOnlyKeys(args, ["channel", "template", "sent_message_template", "self_message_policy", "receive_scope", "default_send"]);
       const settings: ChannelSettingsPatch = {};
       if (args.template !== undefined) {
         if (typeof args.template !== "string") throw new ExplicitToolError("template must be a string");
@@ -462,6 +516,12 @@ function buildLocalRequest(
           );
         }
         settings.self_message_policy = args.self_message_policy;
+      }
+      if (args.receive_scope !== undefined) {
+        if (args.receive_scope !== "all_messages" && args.receive_scope !== "mentions_only") {
+          throw new ExplicitToolError("receive_scope must be all_messages or mentions_only");
+        }
+        settings.receive_scope = args.receive_scope;
       }
       if (args.default_send !== undefined) {
         if (typeof args.default_send !== "boolean") {

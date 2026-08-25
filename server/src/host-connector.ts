@@ -1,3 +1,5 @@
+import type { MessageMention } from "./channel.js";
+
 export type InboundEnvelope = {
   channelId: string;
   messageId: number;
@@ -8,6 +10,7 @@ export type InboundEnvelope = {
     label?: string;
   };
   text: string;
+  mention?: MessageMention;
   receivedAt: number;
   untrusted: true;
 };
@@ -22,7 +25,7 @@ export type HostDelivery = (message: InboundEnvelope) => Promise<DeliveryReceipt
 const DEFAULT_CHANNEL_MESSAGE_TEMPLATE = [
   "> **↗ Pijoo · 外部频道消息**",
   ">",
-  "> **频道** `{channel_name}` · **来自** `{sender_name}` · `#{message_id}`",
+  "> **频道** `{channel_name}` · **来自** `{sender_name}` · **提醒** {mentions} · `#{message_id}`",
   ">",
   "> {message_text}",
 ].join("\n");
@@ -31,9 +34,10 @@ export function formatChannelMessage(message: {
   channel: string;
   id: number;
   from: string;
-  sourceLabel?: string;
-  text: string;
-}, template?: string): string {
+    sourceLabel?: string;
+    text: string;
+    mention?: MessageMention;
+  }, template?: string): string {
   const safeInlineValue = (value: string) => value.replace(/[\r\n]+/g, " ").replaceAll("`", "ˋ");
   const values: Record<string, string> = {
     "{channel_name}": safeInlineValue(message.channel),
@@ -41,10 +45,15 @@ export function formatChannelMessage(message: {
     "{sender_name}": safeInlineValue(message.from),
     "{message_source}": safeInlineValue(message.sourceLabel?.trim() || message.from),
     "{message_text}": message.text.replace(/\r\n?/g, "\n"),
+    "{mentions}": message.mention?.kind === "all"
+      ? "@所有人"
+      : message.mention?.kind === "members"
+        ? message.mention.members.map((member) => `@${safeInlineValue(member.member_name)}`).join("、")
+        : "无",
   };
   const source = (template || DEFAULT_CHANNEL_MESSAGE_TEMPLATE).replace(/\r\n?/g, "\n");
   return source.replace(
-    /\{(?:channel_name|message_id|sender_name|message_source|message_text)\}/g,
+    /\{(?:channel_name|message_id|sender_name|message_source|message_text|mentions)\}/g,
     (key, offset: number) => {
       const value = values[key];
       const linePrefix = source.slice(source.lastIndexOf("\n", offset - 1) + 1, offset);

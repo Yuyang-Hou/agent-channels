@@ -22,6 +22,7 @@ import { request as httpRequest, type IncomingMessage as HttpResponse } from "no
 import { request as httpsRequest } from "node:https";
 import { basename, dirname, join } from "node:path";
 import { parseArgs } from "node:util";
+import type { MessageMention } from "./channel.js";
 import { createCodexDelivery, parseCodexThreadId } from "./codex-turn.js";
 import { DeliveryOutcomeUnknownError, type HostDelivery } from "./host-connector.js";
 import { requestViaLocalApp, type LocalLedgerRequest } from "./reply-mcp.js";
@@ -66,7 +67,8 @@ options:
   --channel-name <n>  display name used for {channel_name}; defaults to channel id
   --message-template <t>
                       render {channel_name}, {sender_name}, {message_source},
-                      {message_text}, and {message_id} as the complete Host input
+                      {message_text}, {mentions}, and {message_id} as the complete Host input
+  --receive-scope <p> all_messages (default) or mentions_only
   --self-message-policy <p>
                       include_other_endpoints (default) or exclude_member;
                       the exact current task endpoint is always excluded
@@ -134,6 +136,7 @@ examples:
 
 type Format = "jsonl" | "text";
 type SelfMessagePolicy = "include_other_endpoints" | "exclude_member";
+type ReceiveScope = "all_messages" | "mentions_only";
 
 type Priority = "min" | "low" | "default" | "high" | "urgent";
 
@@ -166,6 +169,7 @@ type Args = {
   codexSocket?: string;
   channelName?: string;
   messageTemplate?: string;
+  receiveScope: ReceiveScope;
   selfMessagePolicy: SelfMessagePolicy;
   selfEndpointId?: string;
   selfMemberId?: string;
@@ -208,6 +212,7 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
         "codex-socket": { type: "string" },
         "channel-name": { type: "string" },
         "message-template": { type: "string" },
+        "receive-scope": { type: "string" },
         "self-message-policy": { type: "string" },
         "self-endpoint-id": { type: "string" },
         "self-member-id": { type: "string" },
@@ -279,6 +284,13 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
   ) {
     return { error: "--self-message-policy must be include_other_endpoints|exclude_member" };
   }
+  const receiveScope = parsed.values["receive-scope"] ?? "all_messages";
+  if (receiveScope !== "all_messages" && receiveScope !== "mentions_only") {
+    return { error: "--receive-scope must be all_messages|mentions_only" };
+  }
+  if (receiveScope === "mentions_only" && !parsed.values["self-member-id"]) {
+    return { error: "--receive-scope mentions_only requires --self-member-id" };
+  }
   const appSocket = parsed.values["app-socket"];
   const subscriptionId = parsed.values["subscription-id"];
   if (Boolean(appSocket) !== Boolean(subscriptionId)) {
@@ -311,6 +323,7 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
     codexSocket: parsed.values["codex-socket"],
     channelName: parsed.values["channel-name"],
     messageTemplate: parsed.values["message-template"],
+    receiveScope,
     selfMessagePolicy,
     selfEndpointId: parsed.values["self-endpoint-id"],
     selfMemberId: parsed.values["self-member-id"],
@@ -444,6 +457,7 @@ type IncomingMessage = {
   to: string;
   text: string;
   at: number;
+  mention?: MessageMention;
   /** "status" = ephemeral working/typing signal (not real content). */
   kind?: "message" | "status";
   priority?: Priority;
@@ -635,6 +649,7 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
       from: msg.from,
       sender_name: senderName,
       source: msg.source,
+      mention: msg.mention,
       to: msg.to,
       text: msg.text,
       at: msg.at,
@@ -672,8 +687,21 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
       Boolean(args.selfMemberId) &&
       args.selfMemberId === msg.sender_member_id);
   if (filteredSelfMessage) {
-    await recordWithApp(args, "record_outcome", { id: msg.id, state: "filtered" });
+    await recordWithApp(args, "record_outcome", { id: msg.id, state: "filtered", error: "self_message" });
     emitStatus(args, "filtered", { messageId: msg.id, reason: args.selfMessagePolicy });
+    return;
+  }
+  const mentionedSelf = msg.mention?.kind === "all" || (
+    msg.mention?.kind === "members" &&
+    msg.mention.members.some((member) => member.member_id === args.selfMemberId)
+  );
+  if (args.receiveScope === "mentions_only" && !mentionedSelf) {
+    await recordWithApp(args, "record_outcome", {
+      id: msg.id,
+      state: "filtered",
+      error: "mention_not_matched",
+    });
+    emitStatus(args, "filtered", { messageId: msg.id, reason: "mention_not_matched" });
     return;
   }
   if (hostDelivery && msg.kind !== "status") {
@@ -690,6 +718,7 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
           label: msg.source.label,
         } : undefined,
         text: msg.text,
+        mention: msg.mention,
         receivedAt: msg.at,
         untrusted: true,
       });
