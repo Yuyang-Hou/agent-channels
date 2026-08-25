@@ -65,6 +65,7 @@
 - [x] missing、unbound 或 ambiguous 路由失败关闭且不访问 Channel Service；暂停接收不阻止主动发送
 - [x] 用户主动追问时只读返回当前 task 最近一条成功投递的来源；未命中不推断为用户手动输入
 - [x] MCP 启动上报内嵌版本；设置页在版本匹配前持续提示完全重启并在匹配后自动清除
+- [x] 重启提示存在时在主窗口设置入口显示提示点，并复用相同状态自动清除
 - [ ] 用两个真实 Codex task 验证 `_meta.threadId` 分别精确匹配各自 UUID
 
 ## Templates And Policies

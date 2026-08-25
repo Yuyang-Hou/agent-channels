@@ -3734,6 +3734,15 @@ private struct MainWindowView: View {
                         .padding(.horizontal, 10)
                         .padding(.vertical, 7)
                         .contentShape(Rectangle())
+                        .overlay(alignment: .trailing) {
+                            if model.codexIntegrationNeedsRestart {
+                                Circle()
+                                    .fill(.orange)
+                                    .frame(width: 8, height: 8)
+                                    .padding(.trailing, 10)
+                                    .accessibilityLabel("设置中有需要处理的提示")
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(showingSettings ? .white : .primary)

@@ -202,7 +202,8 @@ publication remain pending.
 
 - MCP startup now best-effort reports its embedded App version through the protected local socket. The App
   persists the latest loaded version, keeps a restart warning in Settings while it differs from the current
-  App version, and clears the warning automatically on an exact match without creating a Host turn.
+  App version, shows an orange dot on the Settings entry, and clears both automatically on an exact match
+  without creating a Host turn.
 - The existing one-time enable/update notice remains, while the persistent state stays out of menu-bar health.
   Local request validation rejects missing, empty, oversized or whitespace-containing version values.
 - All 11 server test files / 96 tests, TypeScript typecheck, Swift warnings-as-errors typecheck, the focused

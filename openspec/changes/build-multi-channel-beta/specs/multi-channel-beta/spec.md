@@ -364,14 +364,14 @@ Subscription、入站卡片、信任、回复与可靠发送回执，不得只�
 #### Scenario: App 更新后仍加载旧 MCP
 
 - **GIVEN** MCP 与 Skill 已配置，但 App 尚未收到当前 App 版本的 MCP 启动上报
-- **WHEN** 用户打开设置页的 AI 集成区域
-- **THEN** App 持续提示需要完全重启 ChatGPT，并显示已加载版本或等待加载状态；该提示不进入菜单栏健康状态
+- **WHEN** 用户查看主窗口或打开设置页的 AI 集成区域
+- **THEN** 左侧设置入口显示提示点，设置页持续提示需要完全重启 ChatGPT，并显示已加载版本或等待加载状态；该提示不进入菜单栏健康状态
 
 #### Scenario: 重启后加载当前 MCP
 
 - **GIVEN** 设置页正在提示需要重启 ChatGPT
 - **WHEN** MCP 启动并通过受保护的本机 socket 上报与当前 App 相同的内嵌版本
-- **THEN** App 自动记录版本并清除重启提示，不要求用户手动确认，也不创建 Host turn
+- **THEN** App 自动记录版本并清除设置入口提示点与重启提示，不要求用户手动确认，也不创建 Host turn
 
 #### Scenario: 同名 Skill 不受本 App 管理
 
