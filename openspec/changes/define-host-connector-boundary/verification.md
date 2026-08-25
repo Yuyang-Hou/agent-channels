@@ -2,20 +2,23 @@
 
 ## Implemented
 
-- `host-connector.ts` 定义标准入站信封、投递回执和单 Binding 串行器。
+- `host-connector.ts` 定义标准入站信封、完整模板展开、投递回执和单 Binding 串行器。
 - `listen-here` 只负责过滤、信封构造和调用 `HostDelivery`。
-- `codex-turn.ts` 当前负责 Codex 目标校验、消息格式与 App Server 协议；本 change 将其默认
-  transport 替换为 Desktop IPC，同时保持 HostDelivery 契约不变。
+- `codex-turn.ts` 当前负责 Codex 目标校验、只读会话发现与 Desktop IPC 协议。
 - 菜单栏 App 与 Subscription Runtime 负责持续接收；本机 MCP 只暴露
   `send_to_channel(message)`，主动广播与入站消息相互独立。
-- 现有 `--codex-thread`、`--codex-source-thread` 和 `--codex-socket` CLI 行为保留。
+- 公共 Binding 参数统一为 `--host-provider + --host-conversation`；当前内置分派只支持 `codex`，
+  `--codex-socket` 仅保留为该 Connector 的诊断参数。
+- `host-conversations` 可按 Codex 标题或 id 搜索未归档用户主会话；标题只在当次结果中返回，
+  TaskBinding 不保存标题，点选或直接输入 id 最终都执行 owner preflight。
 - 不声称已经支持非 Codex Host。
 
-## Automated — 2026-08-21
+## Automated — 2026-08-24
 
-- `npm test`: 10 files, 72 tests passed。
-- `npm run typecheck`: passed。
-- `npm run build`: passed。
+- `npm test`: 11 files, 94 tests passed。
+- `npm run build`: passed（包含 TypeScript 编译）。
+- Swift typecheck 与 macOS v2 self-test：passed。
+- 真实 `host-conversations --query` 只读查询命中当前用户主会话，未返回同标题的 subagent/reviewer。
 - 新 Desktop IPC 测试覆盖拆帧/粘帧、client discovery 拒绝、owner discovery、定向
   start-turn、busy steer、嵌套接受回执，以及回执不确定时停止自动重放。
 - `listen-here --identity-key` 真实集成测试覆盖自动 join 使用服务端 `callsign` 字段。

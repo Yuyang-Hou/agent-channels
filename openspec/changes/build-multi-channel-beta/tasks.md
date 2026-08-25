@@ -43,6 +43,7 @@
 ## Task Bindings And Runtime
 
 - [x] 实现 TaskBinding 的显式创建、兼容性状态和删除保护
+- [x] 支持按 Host 会话标题/id 搜索点选绑定，标题不落盘，同时保留 id/链接直绑与最终 preflight
 - [x] 实现 TaskBinding × ChannelConnection Subscription 管理及唯一默认出站约束
 - [x] 为每条 enabled Subscription 监管独立 listen-here sidecar、游标和错误状态
 - [x] 扩展本机 App IPC：sidecar 在 Host delivery 前 `record_received` 并等待持久化 ack，结束后记录 outcome
@@ -52,20 +53,24 @@
 - [x] 一个 Subscription 的 failed/unknown/restart 不影响其他 Subscription
 - [x] App 重启恢复 enabled Subscription；成员撤权停止对应 feed 和全部 Subscription
 - [x] Subscription 列表可通过 `codex://threads/<id>` 启动 ChatGPT 并打开目标会话
+- [x] Subscription 添加或恢复监听时读取 Codex 本机会话名称，失败时回退缩短的会话 ID
 - [x] 确保空闲频道、filtered 消息和 App 状态事件不创建 Host turn
 
 ## Codex MCP Routing
 
-- [x] 将单一本机 App IPC 升级为 v2；六个 MCP 工具只传各自参数与已校验的 source context
-- [x] 固定工具表为 send/list/subscribe/unsubscribe/get_settings/update_settings，并确认接收链路只在 App
-- [x] 从 `tools/call params._meta.threadId` 读取 Codex 来源 task；六项均覆盖合法、缺失、错误类型和非法 UUID
+- [x] 将单一本机 App IPC 升级为 v2；七个 MCP 工具只传各自参数与已校验的 source context
+- [x] 固定工具表为 send/list/subscribe/unsubscribe/get_settings/update_settings/inspect_message_source，并确认接收链路只在 App
+- [x] 从 `tools/call params._meta.threadId` 读取 Codex 来源 task；七项均覆盖合法、缺失、错误类型和非法 UUID
 - [x] App 按 provider + conversationId 匹配 TaskBinding，并解析唯一默认出站 Subscription
 - [x] missing、unbound 或 ambiguous 路由失败关闭且不访问 Channel Service；暂停接收不阻止主动发送
+- [x] 用户主动追问时只读返回当前 task 最近一条成功投递的来源；未命中不推断为用户手动输入
 - [ ] 用两个真实 Codex task 验证 `_meta.threadId` 分别精确匹配各自 UUID
 
 ## Templates And Policies
 
 - [x] 实现每 Subscription 的完整消息模板、固定变量校验和默认 Markdown 卡片模板
+- [x] 增加 `{message_source}`，task 使用 Host 名称与缩短 id、App 使用产品名并兼容旧客户端回退
+- [x] 消息保留可扩展 `provider + conversation_id + label` 来源引用并提供来源会话 id 复制入口
 - [x] 模板编辑区使用 macOS 原生 Markdown 渲染提供未保存草稿预览
 - [x] Connector 仅展开用户模板，多行正文继承占位符的 blockquote 前缀，不再额外包裹固定卡片
 - [x] 实现精确来源 endpoint 永不回投的安全不变量
@@ -74,7 +79,7 @@
 
 ## Agent Channels Skill
 
-- [x] 定义面向完整产品的 Skill，覆盖产品边界、入站信任、回复决策、六项工具与可靠回执
+- [x] 定义面向完整产品的 Skill，覆盖产品边界、入站信任、回复决策、七项工具与可靠回执
 - [x] 把 Skill 作为静态资源打入 App，并由用户显式 Codex 集成操作安装受管理链接
 - [x] 拒绝覆盖或删除同名普通目录和外来链接；覆盖首次安装、幂等修复与安全移除自测
 - [x] 集成操作对不可读 Codex 配置失败关闭，预检 Skill 归属，并在组合写入失败时回滚

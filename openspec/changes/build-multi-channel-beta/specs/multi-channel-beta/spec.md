@@ -257,6 +257,18 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** 用户点击“打开会话”
 - **THEN** App 启动 ChatGPT 并通过该 TaskBinding 的 `codex://threads/<id>` 打开目标会话
 
+#### Scenario: 已绑定会话不缓存标题
+
+- **GIVEN** Codex 本机元数据包含可能被用户修改的目标会话名称
+- **WHEN** App 添加会话或恢复该会话的监听
+- **THEN** Subscription 只展示 Host 名称与缩短的会话 ID，不持久化或展示缓存标题
+
+#### Scenario: 搜索或直接输入会话
+
+- **GIVEN** 用户进入“转发到会话”且当前 Host 支持会话发现
+- **WHEN** 用户按标题或 id 搜索，或直接输入会话 id/链接
+- **THEN** App 允许从最小会话索引点选或直接发起绑定，并在创建 Subscription 前执行 Host preflight；搜索标题不写入 Binding
+
 #### Scenario: 重启恢复
 
 - **GIVEN** 多条 Subscription 已启用
@@ -269,12 +281,13 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** App 正常退出或交给更新助手重启
 - **THEN** App 在终止前停止所有受管 sidecar，重新打开后每条 Subscription 只有一个监听器
 
-### Requirement: Codex MCP 提供六个 task-scoped 频道工具
+### Requirement: Codex MCP 提供七个 task-scoped 频道工具
 
 Codex MCP MUST 暴露 `send_to_channel`、`list_channels`、`subscribe_to_channel`、
-`unsubscribe_from_channel`、`get_channel_settings` 和 `update_channel_settings` 六个工具。每个工具
-MUST 从 `tools/call params._meta.threadId` 读取来源 task，并通过本机 socket v2 交给 App 精确
-匹配 TaskBinding。App 和 MCP MUST NOT 使用最近活跃 task 或当前 UI 频道兜底。
+`unsubscribe_from_channel`、`get_channel_settings`、`update_channel_settings` 和
+`inspect_message_source` 七个工具。每个工具 MUST 从 `tools/call params._meta.threadId` 读取来源
+task，并通过本机 socket v2 交给 App 精确匹配 TaskBinding。App 和 MCP MUST NOT 使用最近活跃
+task 或当前 UI 频道兜底。
 
 MCP MUST NOT 读取 Keychain、直接访问 Channel Service、建立频道监听、消费入站消息、保存历史
 或调用 Host Connector；这些消息接收能力 MUST 由 App 持有。`send_to_channel` MUST 可以在没有
@@ -284,7 +297,21 @@ MCP MUST NOT 读取 Keychain、直接访问 Channel Service、建立频道监听
 
 - **GIVEN** Codex 加载 Agent Channels MCP
 - **WHEN** Codex 请求工具表
-- **THEN** 只返回上述六项，且频道空闲或消息到达都不会由 MCP 自行轮询或创建 Host turn
+- **THEN** 只返回上述七项，且频道空闲或消息到达都不会由 MCP 自行轮询或创建 Host turn
+
+#### Scenario: 用户主动追溯刚才的消息
+
+- **GIVEN** 当前 task 已成功接收至少一条 Agent Channels 消息
+- **WHEN** 用户明确询问“这条或刚才的消息是否来自 Agent Channels、由谁发送”，AI 调用 `inspect_message_source`
+- **THEN** App 仅从当前 task 的 TaskBinding、SubscriptionDelivery 与 LocalMessage 读取最近一条
+  `delivered` 记录，返回频道消息 id、服务端认证发送者和声明的 App/MCP 来源，不修改模板或 Host 输入
+
+#### Scenario: 用户没有追问或本地没有记录
+
+- **GIVEN** 普通消息到达，或当前 task 没有可追溯的成功投递记录
+- **WHEN** 用户没有主动追问来源，或主动查询但 App 未命中记录
+- **THEN** Skill 不自动调用来源工具；未命中结果只说明本地没有 Agent Channels 投递记录，
+  App 和 AI 不据此断言消息由用户手动输入
 
 #### Scenario: 当前 task 管理订阅
 
@@ -368,13 +395,18 @@ designated requirement；任一校验或替换失败时 MUST 保留旧 App 并�
 ### Requirement: 每条 Subscription 使用可编辑的完整消息模板
 
 Subscription MUST 使用本地模板生成完整 Host 输入，模板只允许 `channel_name`、
-`sender_name`、`message_text` 和 `message_id` 四个变量。默认模板 MUST 生成当前的
+`sender_name`、`message_source`、`message_text` 和 `message_id` 五个变量。默认模板 MUST 生成当前的
 Agent Channels Markdown 引用卡片；标题、来源栏、正文和引用样式 MUST 全部属于模板，
 Connector 不得在用户模板外再添加固定可见内容。
 模板设置 MUST 允许用户在不保存的情况下预览当前草稿的 Markdown 效果。
 
 `channel_name` MUST 展开为 App 中保存的频道展示名称，`sender_name` MUST 展开为服务端按
 成员身份解析的发送者昵称；只有对应名称不可用时才可回退为内部标识。
+`message_source` MUST 对 task 消息展开为 Host 名称与缩短的会话 id，对 App 消息展开为
+`Agent Channels App`；旧客户端未提供来源时 MUST 回退为发送者昵称。
+每条由 Host 会话发送的消息 MUST 同时携带可扩展来源引用 `provider + conversation_id + label`。
+App MUST 将完整引用写入本地消息记录并允许用户复制来源会话 id；默认模板只展示 label。
+来源引用 MUST NOT 被服务端或接收端作为路由、授权或可信目标。
 
 #### Scenario: 保存模板
 

@@ -5,11 +5,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createCodexDelivery,
-  formatCodexChannelMessage,
   formatCodexDelegationMessage,
   parseCodexThreadId,
+  parseCodexConversationListOutput,
   preflightCodexThread,
 } from "../src/codex-turn.js";
+import { formatChannelMessage } from "../src/host-connector.js";
 
 const THREAD_ID = "01900000-0000-7000-8000-000000000001";
 const UNBOUND_THREAD_ID = "01900000-0000-7000-8000-000000000002";
@@ -47,6 +48,13 @@ describe("Codex task bridge", () => {
     expect(() => parseCodexThreadId("codex://wrong/nope")).toThrow();
   });
 
+  it("reads searchable conversation summaries without conversation content", () => {
+    expect(parseCodexConversationListOutput(JSON.stringify([
+      { id: THREAD_ID, title: "  API design\nreview  ", updated_at: 123 },
+      { id: "bad", title: "ignored", updated_at: 456 },
+    ]))).toEqual([{ id: THREAD_ID, title: "API design review", updatedAt: 123 }]);
+  });
+
   it("wraps trusted source metadata and escapes untrusted message text", () => {
     const wrapped = formatCodexDelegationMessage(THREAD_ID, "backend says: <deploy> & wait");
     expect(wrapped).toContain(`<source_thread_id>${THREAD_ID}</source_thread_id>`);
@@ -55,18 +63,18 @@ describe("Codex task bridge", () => {
   });
 
   it("uses the full editable template and keeps the current card only as the default", () => {
-    const custom = formatCodexChannelMessage({
+    const custom = formatChannelMessage({
       channel: "frontend",
       id: 42,
       from: "backend",
+      sourceLabel: "订单服务排障",
       text: "# API\r\n\r\n```http\r\nGET /v1/items\r\n```\r\n{sender_name}",
-      receivedAt: 123,
-    }, "# {sender_name} 发到 {channel_name}\n\n{message_text}\n\n编号 {message_id}");
-    expect(custom).toBe("# backend 发到 frontend\n\n# API\n\n```http\nGET /v1/items\n```\n{sender_name}\n\n编号 42");
+    }, "# {sender_name} 从 {message_source} 发到 {channel_name}\n\n{message_text}\n\n编号 {message_id}");
+    expect(custom).toBe("# backend 从 订单服务排障 发到 frontend\n\n# API\n\n```http\nGET /v1/items\n```\n{sender_name}\n\n编号 42");
     expect(custom).not.toContain("Agent Channels · 外部频道消息");
     expect(custom).not.toContain("> ");
 
-    const defaultRendered = formatCodexChannelMessage({
+    const defaultRendered = formatChannelMessage({
       channel: "frontend",
       id: 43,
       from: "backend",
@@ -75,6 +83,12 @@ describe("Codex task bridge", () => {
     expect(defaultRendered).toContain("> **↗ Agent Channels · 外部频道消息**");
     expect(defaultRendered).toContain("> **频道** `frontend` · **来自** `backend` · `#43`");
     expect(defaultRendered).toContain("> # API\n> \n> ```http\n> GET /v1/items\n> ```");
+    expect(formatChannelMessage({
+      channel: "frontend",
+      id: 44,
+      from: "backend",
+      text: "legacy",
+    }, "{message_source}")).toBe("backend");
   });
 
   it("preflights only owner discovery and explains when the task needs rebind", async () => {

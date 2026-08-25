@@ -70,8 +70,11 @@ HOST=0.0.0.0 PORT=7424 PUBLIC_ORIGIN=http://127.0.0.1:7424 npm start
 npx rogerthat listen-here \
   --origin https://rogerthat-production-fff6.up.railway.app \
   --channel <channel-id> --token <token> --identity-key <callsign> \
-  --codex-thread codex://threads/<target-task-id>
+  --host-provider codex --host-conversation codex://threads/<target-task-id>
 ```
+
+macOS App 可从本机只读索引按标题或 id 搜索会话，也保留 id/链接直绑。标题只在当次搜索结果中
+展示，Binding 只保存 `provider + conversation_id`；绑定前仍会检查 Desktop 是否可投递。
 
 默认直接使用 ChatGPT Desktop 本地 IPC，不需要安装 Codex CLI、启动 standalone daemon、
 设置 `CODEX_APP_SERVER_USE_LOCAL_DAEMON` 或保持目标任务可见。该进程空闲时只保持 SSE；
@@ -93,8 +96,5 @@ macOS 若曾设置旧方案的 `CODEX_APP_SERVER_USE_LOCAL_DAEMON=1`，先执行
 若日志提示 `delivery outcome unknown`，Bridge 会停止且不推进游标，避免自动重放造成重复
 turn；用户确认目标任务后，再选择跳过该 message id 或重启重试。这只发生在 mutating IPC
 请求已发出、但 Desktop 回执丢失的异常窗口。
-
-`--codex-source-thread` 曾用于验证 ChatGPT Desktop 的原生来源提示，但需要额外本机任务，
-不再作为产品用法或架构依赖；实验记录保留在已归档的 Codex Bridge change 中。
 
 `server/README.md` 是上游 RogerThat 服务端说明，不代表 Agent Channels 当前产品承诺。

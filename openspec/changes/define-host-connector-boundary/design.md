@@ -12,7 +12,7 @@ Channel Service
 Subscription Runtime 拥有频道认证、SSE、过滤、串行投递、游标和重连。它只产生标准
 消息信封，不包含 `turn`、`thread` 等 Host 术语。
 
-Host Connector 拥有目标校验、Host 私有格式转换和投递。当前 Codex Connector 负责
+Host Connector 拥有会话发现、目标校验、Host 私有格式转换和投递。当前 Codex Connector 负责
 解析 `codex://threads/...`，并在真实消息到达时短连 ChatGPT Desktop IPC：注册临时
 client、发现该 task 的 owner、先尝试 `thread-follower-steer-turn`：若有 active turn 就把消息
 加入其中；明确没有 active turn 时才发送 `thread-follower-start-turn`。最后从接受响应中返回
@@ -50,13 +50,13 @@ Host Binding 由用户在本机显式创建：`provider + conversation_id + loca
 频道 token、Binding、socket 路径和其他本机会话 id 都不得进入消息正文。远端消息中的
 任何字段都不能选择或改写目标 Binding。
 
-现有 `--codex-thread` 和 `--codex-socket` 作为 Codex P0 入口保留；后者只用于覆盖 Desktop
-IPC endpoint。默认发现 `${CODEX_HOME:-~/.codex}/ipc/ipc.sock`，并仅在属主和目录权限安全
-时尝试旧版临时目录 endpoint。Connector 不删除 stale socket，也不自行启动 IPC router。
-未来出现第二个 Connector 时，再把 CLI 表达升级为显式 `--host` 配置；在此之前不提前
-增加通用配置层。
+App 与 Subscription Runtime 使用 `--host-provider + --host-conversation` 表达 Binding；入口只
+按 provider 显式分派到内置 Connector，不加载第三方代码。`--codex-socket` 仍是 Codex 诊断项，
+只用于覆盖 Desktop IPC endpoint。默认发现 `${CODEX_HOME:-~/.codex}/ipc/ipc.sock`，并仅在属主
+和目录权限安全时尝试旧版临时目录 endpoint。Connector 不删除 stale socket，也不自行启动
+IPC router。
 
-用户执行带 `--codex-thread` 的监听命令即表示绑定该 task。ChatGPT Desktop 必须运行，
+用户执行带 Host Binding 的监听命令即表示绑定该会话。ChatGPT Desktop 必须运行，
 并在本次 Desktop 生命周期内打开过该 task；切换到其他 task 不影响已建立的 owner。
 Desktop 重启或升级后 owner 丢失时，Connector 返回 `needs_rebind` 语义的可操作错误，
 由现有 SSE 重试保留消息，直到用户重新打开绑定 task。
@@ -70,6 +70,14 @@ Desktop 重启或升级后 owner 丢失时，Connector 返回 `needs_rebind` 语
 - Host 明确拒绝时自动重试；mutating 请求发出后若回执丢失，停止监听并保留旧游标，避免
   自动重放产生重复交互。
 - 回执不等于 AI 已完成，不能据此展示“已处理”或“已发送”。
+
+## 会话发现
+
+`host-conversations` 是只读 Host 能力，返回 `provider + conversation_id + title + updated_at`，
+不返回会话正文、工作目录或权限。Codex 从本机索引中只选择未归档的用户主会话，排除 subagent、
+审批 reviewer 与实时语音内部会话。用户可按标题或 id 搜索，也可直接输入 id/链接；列表命中不
+代表 Desktop 当前可投递，最终绑定仍必须执行 owner preflight。标题是易变的发现数据，只在
+当前搜索结果展示；TaskBinding 不保存标题，绑定后的稳定展示使用 Host 名称与缩短的 conversation id。
 
 ## 信任边界
 
@@ -93,5 +101,5 @@ Host Connector 不读取模型输出或代理发送。
 ## 演进路径
 
 新增 Host 时只回答四个问题：如何定位目标会话、如何交付一次输入、什么响应代表已
-接受、Host 不可用时如何失败。当前只隔离 `deliver` 调用点；只有第二个 Connector
-真正实现时才提取 Connector 间共享帮助代码或引入 registry、通用配置与 SDK。
+接受、Host 不可用时如何失败。当前只共享标准消息渲染、Binding 字段与显式 provider 分派；
+只有第二个 Connector 真正实现时才提取更多共享帮助代码或引入动态 registry、通用配置与 SDK。

@@ -55,8 +55,14 @@ describe("Host delivery boundary", () => {
 
   it("fails closed for unsupported Host CLI options", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    expect(await runListenHere(["--host", "claude"])).toBe(2);
-    expect(error.mock.calls.flat().join("\n")).toContain("Unknown option");
+    expect(await runListenHere([
+      "--channel", "test-channel",
+      "--token", "test-token",
+      "--session", "test-session",
+      "--host-provider", "claude",
+      "--host-conversation", "test-conversation",
+    ])).toBe(2);
+    expect(error.mock.calls.flat().join("\n")).toContain("Unsupported Host provider: claude");
   });
 
   it("reports an unavailable Codex Host before opening the channel", async () => {
@@ -65,7 +71,8 @@ describe("Host delivery boundary", () => {
       "--channel", "test-channel",
       "--token", "test-token",
       "--session", "test-session",
-      "--codex-thread", THREAD_ID,
+      "--host-provider", "codex",
+      "--host-conversation", THREAD_ID,
       "--codex-socket", join("/tmp", "agent-channels-missing.sock"),
     ]);
     expect(code).toBe(1);

@@ -27,6 +27,9 @@ Agent Channels 连接用户正在使用的 AI task，让协作消息进入既有
 
 - `send_to_channel`：随时主动发送；目标不明确时先调用 `list_channels`，不要猜测当前 UI 频道。
 - `list_channels`：查看本机频道及当前 task 的订阅和默认发送状态。
+- `inspect_message_source`：仅当用户明确追问“这条/刚才的消息是否来自 Agent Channels、由谁发送”时调用；
+  它只查询当前 task 最近一条已成功投递的频道消息。未命中只表示本地没有可追溯记录，不能据此
+  断言消息一定由用户手动输入。普通消息到达时不要自动调用。
 - `subscribe_to_channel` / `unsubscribe_from_channel`：仅在用户明确要求时修改当前 task 的监听关系。
 - `get_channel_settings` / `update_channel_settings`：读取或修改当前 task 的正文模板、自消息策略和默认发送频道。
 

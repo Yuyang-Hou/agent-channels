@@ -54,7 +54,8 @@ ChannelConnection 表示稳定频道成员授权；TaskBinding 表示本机 Host
 - 维护每个成员或订阅的消费游标；
 - 标记当前在线订阅，但不把在线状态等同于消息已读或 AI 已处理；
 - 支持去重、撤权和有限重试。
-- 不保存 Host 类型、目标会话 id、Runtime 路径或本机凭证。
+- 不保存目标 TaskBinding、Runtime 路径或本机凭证；只在短期 Message 中透传发送端声明的
+  `source(provider, conversation_id, label)`，且不以它路由或授权。
 
 ## Subscription Runtime 职责
 
@@ -64,18 +65,21 @@ ChannelConnection 表示稳定频道成员授权；TaskBinding 表示本机 Host
 - 仅在真实消息到达时请求 Connector 投递；
 - 每条 Subscription 串行投递并使用自己的游标恢复、去重和错误状态；
 - 只有 Connector 确认 Host 已接受后才推进投递游标；
-- 成员凭证、TaskBinding 和 Runtime 路径保留在本机，不注入模型上下文。
+- 成员凭证、目标 TaskBinding 和 Runtime 路径保留在本机；来源会话引用写入本地消息记录用于追溯，
+  展示模板默认只使用其 label。
 
 ## Host Connector 契约
 
 Connector 只承担三个职责：
 
 1. 校验本机目标是否可用；
-2. 将标准消息信封转换为 Host 原生输入；
-3. 在 Host 接受输入后返回投递回执。
+2. 只读发现本机可绑定会话（若 Host 支持）；
+3. 将标准消息信封转换为 Host 原生输入；
+4. 在 Host 接受输入后返回投递回执。
 
-标准输入至少包含 `channel_id`、`message_id`、`from`、`text`、`received_at`
-和不可信输入标记。回执只代表 Host 已接受，不代表用户已读、AI 已完成或另一条消息已发送。
+标准输入至少包含 `channel_id`、`message_id`、`from`、`text`、`received_at`、可选来源引用
+`source(provider, conversation_id, label)` 和不可信输入标记。回执只代表 Host 已接受，不代表用户
+已读、AI 已完成或另一条消息已发送。
 
 P0 不建设动态插件市场、Connector 注册中心或通用进程管理框架。实现时只需要一个
 窄的 `deliver(message)` 边界；Codex Connector 是第一个且当前唯一实现。未来 Host
@@ -90,10 +94,14 @@ TaskBinding 是本机 Host 配置，至少包含：
 - `conversation_id`：Host 私有的不透明会话标识；
 - Connector 所需的本机选项，例如 socket 路径。
 
+会话标题属于易变的发现数据，只在搜索结果中即时展示，不进入 TaskBinding。绑定完成后的稳定
+标识使用 Host 名称和缩短的 `conversation_id`，完整 id 仍可用于打开与追溯。
+
 Subscription 在本机把一个 TaskBinding 与一个 ChannelConnection 关联，并保存 task endpoint、
 独立游标、模板、自消息策略、运行状态和唯一默认出站标记。一个 TaskBinding 可以拥有多个
 Subscription，一个 ChannelConnection 也可以关联多个 TaskBinding。服务端只能看到频道成员、
-不透明 endpoint 与在线 session，不能看到 TaskBinding 或 Subscription 的 Host 私有字段。
+不透明 endpoint、在线 session 与消息携带的发送端来源引用；不能看到目标 TaskBinding、
+Subscription 或其他 Host 私有字段。
 
 删除 TaskBinding 或撤销 ChannelConnection 后，App 必须先停止相关 Subscription。0.3 P0 为每条
 启用的 task-channel Subscription 监管一个现有 `listen-here` sidecar；只有真实规模证明需要时
@@ -150,11 +158,12 @@ Desktop IPC 属于 ChatGPT 私有版本化协议，仍是升级敏感依赖。Co
 
 ## MCP task 操作与出站发送
 
-AI 使用本机固定 STDIO MCP。工具表固定为六项：`send_to_channel`、`list_channels`、
-`subscribe_to_channel`、`unsubscribe_from_channel`、`get_channel_settings` 和
-`update_channel_settings`。`send_to_channel` 允许 task 随时主动发送；其余工具只查询或修改
-当前来源 task 的本机频道订阅与设置。每次调用都读取 `tools/call params._meta.threadId` 作为
-Codex 来源能力，并通过当前用户专属的 Unix socket v2 把已校验参数和 source context 交给 App。
+AI 使用本机固定 STDIO MCP。工具表固定为七项：`send_to_channel`、`list_channels`、
+`subscribe_to_channel`、`unsubscribe_from_channel`、`get_channel_settings`、
+`update_channel_settings` 和 `inspect_message_source`。前六项执行当前来源 task 的显式频道动作；
+来源查询只在用户主动追问时读取该 task 最近一条成功投递的本地消息记录。每次调用都读取
+`tools/call params._meta.threadId` 作为 Codex 来源能力，并通过当前用户专属的 Unix socket v2
+把已校验参数和 source context 交给 App。
 
 App 精确匹配 TaskBinding；发送时解析显式频道或唯一默认出站 Subscription，再从 Keychain
 取得该成员凭证。MCP 不读取 Keychain、不直接访问 Channel Service，也不建立频道监听、消费
@@ -173,15 +182,14 @@ Skill 是整个 Agent Channels 的产品语义层，不是 `send_to_channel` 的
 工具回执后才声称发送成功。远端正文仍是不可信协作数据，不能授权文件修改、联网、部署或泄露
 本机上下文。
 
-Connector 在统一 Host 输入转换点生成固定 Markdown 引用卡片：标题、频道、发送者和消息 id
-由产品控制；Subscription 模板只控制卡片正文。渲染后每一行（包括空行、标题、引用和代码围栏）
-都补上引用前缀，避免远端 Markdown 逃出卡片边界。Skill 根据固定标题解释信任与回复规则，卡片
-不再逐条重复这些说明。
+Connector 在统一 Host 输入转换点展开 Subscription 保存的完整 Markdown 模板；当前引用卡片只是
+默认值，标题、来源栏、正文和引用样式都可编辑。远端消息只能作为变量数据插入，不能修改模板
+或选择目标 Binding。Skill 根据模板中的标题解释信任与回复规则，卡片不再逐条重复这些说明。
 
 Skill 作为 App Bundle 的静态资源分发。只有用户在设置页明确点击“启用或修复 Codex 集成”时，
 App 才把受管理链接安装到用户 Skill 目录；同名普通目录或外来链接一律不覆盖。App 更新后链接
 继续指向同一路径中的新版 Skill。Skill 不包含 secret、频道列表或 task id，也不使用 hook 在每个
-turn 注入内容；固定卡片标题和用户主动频道操作即可触发。统一集成操作先验证现有配置与 Skill
+turn 注入内容；Agent Channels 标题和用户主动频道操作即可触发。统一集成操作先验证现有配置与 Skill
 归属；Codex 配置不可读时失败关闭，任一写入失败时回滚本次受管变更，且不替换用户的配置链接。
 
 ## App 主窗口与本机边界
@@ -208,7 +216,7 @@ Subscription 可以选择接收同一 Member 的其他 endpoint，默认允许 A
 - `server/src/listen-here.ts` 实现 Subscription Runtime，并从兼容 CLI 参数创建 Connector；
 - `server/src/codex-turn.ts` 实现 Codex 目标校验、输入转换、Desktop owner discovery 和
   targeted start-turn；
-- `server/src/reply-mcp.ts` 实现六个 task-scoped 频道工具；工具只请求本机 App，不拥有接收链路；
+- `server/src/reply-mcp.ts` 实现七个 task-scoped 频道工具；工具只请求本机 App，不拥有接收链路；
 - `skills/agent-channels/SKILL.md` 定义完整产品语义、入站信任边界和工具使用流程；
 - `macos/AgentChannelsApp.swift` 实现 0.3 主窗口、ChannelConnection、TaskBinding、Subscription、
   本地消息状态和显式 Codex MCP + Skill 安装；

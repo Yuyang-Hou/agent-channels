@@ -21,8 +21,8 @@ Binding 上叠加入口会让多频道、成员撤权和 task 路由互相污染
   `delivered`、`failed`、`unknown` 或 `filtered` 状态。
 - Codex MCP 从 `tools/call params._meta.threadId` 取得来源 task，经过本机 socket v2 交给 App
   精确路由；缺失、类型错误或未绑定时失败关闭，不按最近活跃 task 猜测。
-- MCP 提供发送、频道列表、订阅/取消订阅和订阅设置六个 task-scoped 工具；频道监听、消息接收、
-  本地历史和 Host 投递仍由 App 持有，AI 主动发送不依赖先收到消息。
+- MCP 提供发送、频道列表、订阅/取消订阅、订阅设置和按需消息来源查询七个 task-scoped 工具；
+  频道监听、消息接收、本地历史和 Host 投递仍由 App 持有，AI 主动发送不依赖先收到消息。
 - App 以当前 Markdown 外部消息卡片作为默认完整模板；用户可编辑标题、来源栏、正文和
   引用样式，Connector 只展开受限变量，信任与回复规则由产品 Skill 解释。
 - App 显式安装面向完整产品的 Agent Channels Skill，使 AI 理解收发、订阅、信任和回执语义；

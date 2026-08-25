@@ -110,6 +110,7 @@ swiftc \
 echo "==> Compiling RogerThat sidecar"
 bun build --compile --target=bun-darwin-arm64 \
   --define 'process.env.AGENT_CHANNELS_EMBEDDED_VERSION="1.25.1-agent-channels.0"' \
+  --define "process.env.AGENT_CHANNELS_APP_VERSION=\"$RELEASE_VERSION\"" \
   "$ROOT_DIR/server/src/cli.ts" \
   --outfile "$MACOS_DIR/rogerthat-sidecar"
 

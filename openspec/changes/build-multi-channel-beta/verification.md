@@ -67,13 +67,13 @@ publication remain pending.
 - Local-store/runtime tests prove the App acknowledges `record_received` only after committing LocalMessage
   and SubscriptionDelivery, Connector invocation happens after that ack, and persistence failure leaves the
   Host untouched.
-- MCP tests prove the tool table contains exactly send/list/subscribe/unsubscribe/get_settings/update_settings;
+- MCP tests prove the tool table contains exactly send/list/subscribe/unsubscribe/get_settings/update_settings/inspect_message_source;
   every tool uses `_meta.threadId` as its task source, and missing, wrong-type or malformed metadata is rejected
   before the App socket. App routing rejects unbound or ambiguous targets before Channel Service access, while
   a paused receive Subscription remains eligible for explicit or unique-default outbound sending.
 - MCP boundary tests prove it never opens a channel stream, consumes inbound messages, persists history or
   invokes a Host Connector; those receive-side effects remain App-owned.
-- Template tests cover the editable full-message template, all four allowed variables, single-pass substitution,
+- Template tests cover the editable full-message template, all five allowed variables, single-pass substitution,
   default Markdown blockquote continuation, invalid variables and size limits.
 - Self-message tests cover exact endpoint suppression and both same-member policies.
 
@@ -98,13 +98,31 @@ publication remain pending.
   the public `/healthz` endpoint returned `ok` after cutover.
 - No production test channel was created because channels have no deletion endpoint. A new message through an
   existing channel remains the required visible acceptance for the rendered sender nickname.
-- All 11 server test files / 92 tests, TypeScript typecheck/build, strict OpenSpec validation and diff checks pass.
+- All 11 server test files / 93 tests, TypeScript typecheck/build, strict OpenSpec validation and diff checks pass.
 - Live message `1787569685428` proved the deployed service now renders sender nickname `侯老师`. Its channel id
   came from an orphan pre-update listener while the installed listener already carried `--channel-name 产品协助`.
 - The stale listener was stopped; the enabled Subscription automatically recovered with exactly one App-owned
   listener and cursor `1787569685428`. Normal App termination and update handoff now stop all supervised sidecars.
+
+## 2026-08-24 Message Source Variable
+
+- Messages carry `source(provider, conversation_id, label)`; `{message_source}` displays only label, while the
+  local timeline stores the full reference and exposes source conversation-id copy from the message context menu.
+- `npm run build`, all 11 server test files / 94 tests, Swift typecheck, strict OpenSpec validation and diff checks pass.
+- No App package, server deployment or real cross-device message was changed during this source verification.
 - The beta.10 product Skill recognizes editable inbound titles containing either `频道消息` or `Agent Channels`.
 - Each Subscription row exposes an `打开会话` button that opens its exact `codex://threads/<id>` binding through macOS.
+- The working-tree sidecar can search the live Codex index by title or id while excluding internal subagent/reviewer sessions. Titles remain transient search data; TaskBinding persists only provider and conversation id, and Subscription rows use the shortened id.
+
+## 2026-08-24 On-demand Message Source Inspection
+
+- `inspect_message_source` is the seventh task-scoped MCP tool. It has no model-supplied target arguments and
+  uses protected `_meta.threadId` to ask the App for that TaskBinding's latest successful Channel delivery.
+- The App joins existing SubscriptionDelivery and LocalMessage JSONL records; it does not read Codex history,
+  change the editable template or add visible source text. A missing record remains unknown rather than proof
+  of manual user input.
+- All 11 server test files / 95 tests, TypeScript typecheck/build, Swift warnings-as-errors typecheck and focused
+  self-test, strict OpenSpec validation and diff checks pass. No App package was built, installed or published.
 
 ## 2026-08-24 Configurable Invitations
 
@@ -139,7 +157,7 @@ tasks. Do not reuse or import 0.2 data.
    `codex://threads/...` UUID. Source-code inspection alone does not pass this gate.
 3. Configure at least three task-channel Subscriptions, including one task subscribed to both channels and
    one channel subscribed by both tasks.
-4. From both tasks, exercise all six MCP tools, then complete App → task, task → App and task → task sends.
+4. From both tasks, exercise all seven MCP tools, then complete App → task, task → App and task → task sends.
    No message or configuration mutation may use the currently selected UI channel or most recently active
    task as an implicit route; task sends must also work before either task receives a message.
 5. In a new task, verify the installed Skill explains App-only creation, invitation, member, history and
@@ -155,8 +173,8 @@ tasks. Do not reuse or import 0.2 data.
 ## Data And Security Inspection
 
 - Keychain contains independent member credentials; local store contains only credential references.
-- Server records contain member and opaque endpoint ids but no Codex thread id, Host path, workspace or task
-  snapshot.
+- Server messages may contain sender-declared source provider/conversation id/label for traceability, but no
+  target TaskBinding, Host path, workspace, task snapshot or credential; source metadata never selects a target.
 - MCP App requests contain only protocol version, operation-specific arguments and local source context;
   channel credentials, inbound payloads and local history do not appear in model content, argv, environment
   or MCP process memory.

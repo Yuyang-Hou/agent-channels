@@ -57,6 +57,8 @@ export type Message = {
   from: string;
   /** Human-facing member nickname resolved from the authenticated member. */
   sender_name?: string;
+  /** Sender-supplied trace metadata. Never used for routing or authorization. */
+  source?: MessageSource;
   /** Authenticated channel member resolved from the credential-bound session. */
   sender_member_id: string;
   /** Stable server-derived endpoint for this member + callsign. Never client supplied. */
@@ -84,6 +86,12 @@ export type AuthenticatedSource = {
   memberId: string;
   endpointId: string;
   memberName?: string;
+};
+
+export type MessageSource = {
+  provider: string;
+  label?: string;
+  conversation_id?: string;
 };
 
 export const MAX_SUGGESTED_REPLIES = 4;
@@ -480,6 +488,7 @@ export class Channel {
     suggestedReplies?: string[],
     attachments?: Attachment[],
     kind?: MessageKind,
+    messageSource?: MessageSource,
   ): Message {
     this.ensureJoined(sessionId);
     const from = this.callsignBySession.get(sessionId)!;
@@ -535,6 +544,7 @@ export class Channel {
       text,
       at: now,
     };
+    if (messageSource) msg.source = messageSource;
     if (isStatus) msg.kind = "status";
     // Only attach `priority` when explicitly non-default — keeps the wire format
     // backward-compatible for consumers that don't know about priorities.

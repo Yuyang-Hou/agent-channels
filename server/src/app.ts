@@ -7,6 +7,7 @@ import { streamSSE } from "hono/streaming";
 import {
   ChannelError,
   type Message,
+  type MessageSource,
   type Priority,
   type Attachment,
   isPriority,
@@ -798,6 +799,36 @@ export function createApp(opts: AppOptions): Hono {
       );
     }
     const kind = kindInput === "status" ? "status" : undefined;
+    let messageSource: MessageSource | undefined;
+    if (body.source !== undefined) {
+      if (!body.source || typeof body.source !== "object" || Array.isArray(body.source)) {
+        return c.json({ error: "source must be an object", code: "invalid" }, 400);
+      }
+      const source = body.source as Record<string, unknown>;
+      if (typeof source.provider !== "string"
+        || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(source.provider.trim().toLowerCase())) {
+        return c.json({ error: "source.provider must be 1-64 alphanumeric, underscore or dash characters", code: "invalid" }, 400);
+      }
+      if (source.label !== undefined && typeof source.label !== "string") {
+        return c.json({ error: "source.label must be a string", code: "invalid" }, 400);
+      }
+      if (source.conversation_id !== undefined && typeof source.conversation_id !== "string") {
+        return c.json({ error: "source.conversation_id must be a string", code: "invalid" }, 400);
+      }
+      const label = source.label?.trim();
+      const conversationID = source.conversation_id?.trim();
+      if (label && label.length > 200) {
+        return c.json({ error: "source.label too long (max 200 chars)", code: "invalid" }, 400);
+      }
+      if (conversationID && (conversationID.length > 512 || /[\r\n]/.test(conversationID))) {
+        return c.json({ error: "source.conversation_id must be a single line of at most 512 chars", code: "invalid" }, 400);
+      }
+      messageSource = {
+        provider: source.provider.trim().toLowerCase(),
+        ...(label ? { label } : {}),
+        ...(conversationID ? { conversation_id: conversationID } : {}),
+      };
+    }
     let suggestedReplies: string[] | undefined;
     let attachments: Attachment[] | undefined;
     try {
@@ -829,6 +860,7 @@ export function createApp(opts: AppOptions): Hono {
         suggestedReplies,
         attachments,
         kind,
+        messageSource,
       );
       statsRecordMessage();
       // Status pings are ephemeral — keep them out of transcripts.
@@ -844,6 +876,7 @@ export function createApp(opts: AppOptions): Hono {
         sender_name: msg.sender_name,
         sender_member_id: msg.sender_member_id,
         sender_endpoint_id: msg.sender_endpoint_id,
+        ...(msg.source ? { source: msg.source } : {}),
         queued,
         to: msg.to,
         ...(msg.kind ? { kind: msg.kind } : {}),

@@ -44,7 +44,8 @@ Endpoint
   id, member_id, kind(app|task), label, status
 
 Message
-  id, channel_id, sender_member_id, sender_endpoint_id, sender_name, text, created_at
+  id, channel_id, sender_member_id, sender_endpoint_id, sender_name,
+  source(provider, conversation_id, label), text, created_at
 
 OnlineSession
   id, member_id, endpoint_id, cursor, expires_at
@@ -65,8 +66,10 @@ Member 创建必须作为一次持久化提交，单实例内并发请求不得�
 账户或设备证明，因此不能承诺阻止同一个自然人在拿到另一份新邀请后创建全新 Member；UI 和
 文档必须明确这个边界。
 
-Endpoint 只用于来源和自消息判断。task Endpoint 的 id 是不透明随机值；服务端不得保存
-provider、Codex thread id、工作目录或本机路径。
+Endpoint 只用于来源和自消息判断。task Endpoint 的 id 是不透明随机值；服务端不得保存目标
+TaskBinding、工作目录或本机路径。发送端可为单条 Message 提供
+`source(provider, conversation_id, label)` 供接收端追溯；它是不可信审计元数据，不参与路由、授权
+或自消息判断。
 
 `sender_name` 由服务端根据凭证对应的 Member 生成，UI 与 Host 卡片使用它展示；`from` callsign
 继续承担端点路由兼容职责，不作为用户昵称。ChannelConnection 的 `display_name` 是本机频道昵称，
@@ -94,7 +97,7 @@ DeliveryTemplate
 
 LocalMessage
   channel_id, message_id, sender_member_id, sender_endpoint_id, sender_label,
-  direction, text, server_created_at, local_received_at, outbound_state
+  source(provider, conversation_id, label), direction, text, server_created_at, local_received_at, outbound_state
 
 SubscriptionDelivery
   subscription_id, channel_id, message_id,
@@ -164,6 +167,11 @@ App 手工发送使用当前选中的 ChannelConnection 和 app endpoint。发�
 
 TaskBinding 只描述一个本机 Host 会话；Subscription 才表达“这个 task 接收这个频道”。删除
 TaskBinding 必须先停掉相关 Subscription，删除 ChannelConnection 也必须停止其全部运行态。
+TaskBinding 只持久化 `provider + conversation_id`，绑定后的稳定展示使用 Host 名称与缩短 id。
+标题仅在会话搜索结果中通过对应 Host Connector 的只读发现能力即时获取，不写入 Binding。Codex 首个实现只从本机
+`state_5.sqlite` 读取用户主会话的 `id/name/title/updated_at` 索引，排除 subagent/reviewer，且不读取
+正文或 snapshot；用户可按标题或 id 搜索点选，也可直接输入 id/链接。创建 Subscription 前仍执行
+Host preflight。
 
 P0 每条启用的 Subscription 监管一个现有 `listen-here` sidecar，保持独立 session、游标、
 错误和不确定投递状态。一个 Subscription 失败不得暂停其他 Subscription。App 可以为频道
@@ -176,13 +184,15 @@ P0 每条启用的 Subscription 监管一个现有 `listen-here` sidecar，保�
 
 ## Codex Source Routing
 
-0.3 MCP 工具表固定暴露六项：
+0.3 MCP 工具表固定暴露七项：
 
 - `send_to_channel`：当前 task 随时主动发送，可使用显式已订阅频道或唯一默认出站频道；
 - `list_channels`：列出 App 中当前 task 可见的频道及订阅状态；
 - `subscribe_to_channel` / `unsubscribe_from_channel`：请求 App 创建或移除当前 task 的订阅；
 - `get_channel_settings` / `update_channel_settings`：读取或修改当前 task 某条订阅的模板、
   自消息策略和默认发送设置。
+- `inspect_message_source`：仅在用户主动追问时，读取当前 task 最近一条成功投递的本地消息来源；
+  不读取 Host 历史，未命中也不推断为用户手动输入。
 
 频道 SSE、消息接收、本地历史、sidecar 与 Host Connector 全部由 App 持有。MCP 只把当前工具的
 已校验参数和 source context 交给 App；它不会因为消息到达而自动运行，也不把“收到消息”解释
@@ -201,7 +211,7 @@ id，但它属于 Host 能力而非 Agent Channels 稳定协议，因此必须�
 }
 ```
 
-其余五项使用相同 source context，只附带各自需要的 `channel` 或 `settings`；所有频道凭证、网络
+其余六项使用相同 source context，只附带各自需要的 `channel` 或 `settings`；所有频道凭证、网络
 请求和接收状态都留在 App 内。
 
 App 用 `provider + conversationId` 精确匹配 TaskBinding，再解析唯一默认出站 Subscription。
@@ -215,7 +225,7 @@ Service，不回退到最近活跃 task、当前 UI 频道或全局 active chann
 ## Product Skill
 
 Agent Channels Skill 面向整个产品，而不是包装某一个 MCP 工具。它定义产品模型、App/MCP/Skill
-边界、入站卡片识别、外部输入信任、是否回复、可靠发送回执和最小上下文披露规则；六项工具仍
+边界、入站卡片识别、外部输入信任、是否回复、可靠发送回执和最小上下文披露规则；七项工具仍
 只执行当前 task 的显式动作。
 
 Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设置页的“启用或修复 Codex 集成”
@@ -233,6 +243,7 @@ Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设
 
 - `{channel_name}`
 - `{sender_name}`
+- `{message_source}`
 - `{message_text}`
 - `{message_id}`
 
@@ -240,6 +251,9 @@ Skill 是 App Bundle 中不含 secret 或动态频道数据的静态资源。设
 默认值包含 Agent Channels 标题、频道、发送者、消息 id、正文和 blockquote 样式。Connector 只展开
 变量，并让多行 `{message_text}` 继承该占位符所在的 blockquote 前缀，不在模板外增加可见外壳。
 远端正文只作为 `{message_text}` 数据插入，不能成为模板指令或选择目标 Binding。
+`{message_source}` 对 task 消息使用 Host 名称与缩短的会话 id，对 App 消息使用
+`Agent Channels App`；旧客户端未提供来源时回退为发送者昵称。完整来源引用随消息写入本地记录，
+其中 provider 与 conversation_id 用于追溯但不进入默认模板。
 
 精确 `sender_endpoint_id == subscription.task_endpoint_id` 的消息永远过滤，避免 task 自回声循环。
 每条 Subscription 另有 `same_member_policy`：

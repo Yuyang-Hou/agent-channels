@@ -62,7 +62,8 @@ usage:
   rogerthat [options]                  # run the local hub (default)
   rogerthat listen-here [options]      # open an SSE receiver for a channel (see --help)
   rogerthat receive-recipe [options]   # print copy-paste recipe: listener + Monitor cmd
-  rogerthat codex-preflight [options]  # verify Desktop IPC + bound task without a turn
+  rogerthat host-preflight [options]   # verify a Host conversation without a turn
+  rogerthat host-conversations [opts]  # search local Host conversations
   rogerthat channel-mcp [options]      # run the local one-tool channel MCP over stdio
 
 options:
@@ -118,14 +119,15 @@ async function main(): Promise<void> {
     const code = runReceiveRecipe(process.argv.slice(3));
     process.exit(code);
   }
-  if (first === "codex-preflight") {
+  if (first === "host-preflight") {
     const { parseArgs } = await import("node:util");
     let parsed;
     try {
       parsed = parseArgs({
         args: process.argv.slice(3),
         options: {
-          "codex-thread": { type: "string" },
+          "host-provider": { type: "string" },
+          "host-conversation": { type: "string" },
           "codex-socket": { type: "string" },
           help: { type: "boolean", short: "h" },
         },
@@ -137,21 +139,80 @@ async function main(): Promise<void> {
       process.exit(2);
     }
     if (parsed.values.help) {
-      console.log("usage: rogerthat codex-preflight --codex-thread <id|codex://threads/id> [--codex-socket <path>]");
+      console.log("usage: rogerthat host-preflight --host-provider codex --host-conversation <id|codex://threads/id> [--codex-socket <path>]");
       process.exit(0);
     }
-    const thread = parsed.values["codex-thread"];
-    if (!thread) {
-      console.error("error: --codex-thread is required");
+    const provider = parsed.values["host-provider"];
+    const conversation = parsed.values["host-conversation"];
+    if (!provider || !conversation) {
+      console.error("error: --host-provider and --host-conversation are required");
       process.exit(2);
     }
     try {
+      if (provider !== "codex") throw new Error(`Unsupported Host provider: ${provider}`);
       const { parseCodexThreadId, preflightCodexThread } = await import("./codex-turn.js");
+      const threadId = parseCodexThreadId(conversation);
       await preflightCodexThread({
-        threadId: thread,
+        threadId,
         socketPath: parsed.values["codex-socket"],
       });
-      console.log(JSON.stringify({ ok: true, thread_id: parseCodexThreadId(thread) }));
+      console.log(JSON.stringify({
+        ok: true,
+        provider,
+        conversation_id: threadId,
+      }));
+      process.exit(0);
+    } catch (error) {
+      console.error(`error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  }
+  if (first === "host-conversations") {
+    const { parseArgs } = await import("node:util");
+    let parsed;
+    try {
+      parsed = parseArgs({
+        args: process.argv.slice(3),
+        options: {
+          "host-provider": { type: "string" },
+          query: { type: "string" },
+          limit: { type: "string" },
+          help: { type: "boolean", short: "h" },
+        },
+        strict: true,
+        allowPositionals: false,
+      });
+    } catch (error) {
+      console.error(`error: ${(error as Error).message}`);
+      process.exit(2);
+    }
+    if (parsed.values.help) {
+      console.log("usage: rogerthat host-conversations --host-provider codex [--query <title|id>] [--limit <1-100>]");
+      process.exit(0);
+    }
+    const provider = parsed.values["host-provider"];
+    if (!provider) {
+      console.error("error: --host-provider is required");
+      process.exit(2);
+    }
+    const limit = parsed.values.limit === undefined ? 30 : Number(parsed.values.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      console.error("error: --limit must be an integer from 1 to 100");
+      process.exit(2);
+    }
+    try {
+      if (provider !== "codex") throw new Error(`Unsupported Host provider: ${provider}`);
+      const { listCodexConversations } = await import("./codex-turn.js");
+      const conversations = await listCodexConversations({ query: parsed.values.query, limit });
+      console.log(JSON.stringify({
+        ok: true,
+        conversations: conversations.map((item) => ({
+          provider,
+          conversation_id: item.id,
+          title: item.title,
+          updated_at: item.updatedAt,
+        })),
+      }));
       process.exit(0);
     } catch (error) {
       console.error(`error: ${(error as Error).message}`);

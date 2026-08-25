@@ -9,7 +9,7 @@
 - 完成 Host-neutral `deliver(message)` 边界；
 - 保持 Codex 为唯一 Connector；
 - 完成两个用户、两台设备的双向真实验收；
-- 保持 App 负责持续接收、历史和 Host 投递；MCP 只执行当前 task 的六项显式频道操作；
+- 保持 App 负责持续接收、历史和 Host 投递；MCP 只执行当前 task 的七项显式频道操作，来源查询仅在用户主动追问时读取本地记录；
 - 用产品级 Skill 让 AI 理解完整频道语义，并默认以 Agent Channels Markdown 卡片区分外部消息；
 - 创建时填写频道名称；邀请口令直接携带频道，加入者只需粘贴；用户昵称在设置中全局维护；
 - 明确 Host 不可用、授权失效、断线恢复和重复投递状态；
