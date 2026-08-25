@@ -1,8 +1,8 @@
 # Verification
 
-Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.15 local candidate adds the product Skill, editable
+Status: 0.3.0-beta.2 prerelease published. 0.3.0-beta.16 local candidate adds the product Skill, editable
 Markdown receive and sent-message cards, replay recovery, on-demand conversation search with corrected overlay stacking, member identity recovery, client log export and a fixed internal signing
-identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.15
+identity; automated gates pass. Clean-install, two-machine, real-Host, security inspection and beta.16
 publication remain pending.
 
 ## Post-candidate Working Tree
@@ -208,6 +208,16 @@ publication remain pending.
 - All 11 server test files / 96 tests, TypeScript typecheck, Swift warnings-as-errors typecheck, the focused
   macOS self-test, strict OpenSpec validation (4/4) and diff checks pass. The socket self-test also exposed and
   now covers an early-disconnect `SIGPIPE` at the single response write point. No new App package was built.
+
+## 2026-08-25 Beta.16 Local Package
+
+- Feature commit `87a2d63` adds the MCP startup version report, persistent Settings restart warning and automatic
+  clearing on an exact App/MCP version match without adding a menu-bar health warning.
+- `macos/build/Agent-Channels-0.3.0-beta.16-arm64.dmg` is 28,530,761 bytes with SHA-256
+  `a45b3c9b7d2de716d65dfe89963b382adec8138e0427d96f89619f7653f820c0`; `hdiutil verify` passes.
+- The mounted DMG contains release version `0.3.0-beta.16`, bundle build `16`, the exact bundled Skill,
+  a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.16` with all seven
+  task-scoped tools. It is not notarized, installed, pushed or published.
 
 ## Live Service Gate
 
