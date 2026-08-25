@@ -154,8 +154,34 @@ private struct HostConversationSearchResponse: Decodable {
     let conversations: [HostConversationSummary]
 }
 
+private struct HostConversationCreateResponse: Decodable {
+    let ok: Bool
+    let provider: String
+    let conversationID: String
+
+    enum CodingKeys: String, CodingKey {
+        case ok, provider
+        case conversationID = "conversation_id"
+    }
+}
+
+enum HostProviderChoice: String, CaseIterable, Identifiable {
+    case codex
+    case claude
+
+    var id: String { rawValue }
+    var displayName: String { self == .codex ? "ChatGPT" : "Claude" }
+    var bundleIdentifier: String { self == .codex ? "com.openai.codex" : "com.anthropic.claudefordesktop" }
+    var isInstalled: Bool { NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) != nil }
+    var supportsForwarding: Bool { self == .codex }
+
+    static var available: [Self] {
+        allCases.filter { $0.isInstalled && $0.supportsForwarding }
+    }
+}
+
 private func hostDisplayName(_ provider: String) -> String {
-    provider == "codex" ? "ChatGPT Codex" : provider
+    HostProviderChoice(rawValue: provider)?.displayName ?? provider
 }
 
 struct ChannelSubscription: Codable, Equatable, Identifiable {
@@ -2225,6 +2251,7 @@ final class AppModel: ObservableObject {
     @Published var draftChannelName = ""
     @Published var invitationInput = ""
     @Published var draftTask = ""
+    @Published var selectedHostProvider = HostProviderChoice.codex
     @Published var conversationSearchResults: [HostConversationSummary] = []
     @Published var conversationSearchStatus = ""
     @Published var composerText = ""
@@ -2563,6 +2590,7 @@ extension AppModel {
     }
 
     func searchHostConversations() async {
+        guard selectedHostProvider.supportsForwarding else { return }
         let query = draftTask.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else {
             conversationSearchResults = []
@@ -2572,7 +2600,7 @@ extension AppModel {
         busy = true
         defer { busy = false }
         do {
-            var arguments = ["host-conversations", "--host-provider", "codex", "--limit", "30"]
+            var arguments = ["host-conversations", "--host-provider", selectedHostProvider.rawValue, "--limit", "30"]
             arguments.append(contentsOf: ["--query", query])
             let result = try await Sidecar.run(arguments)
             guard result.status == 0,
@@ -2593,43 +2621,129 @@ extension AppModel {
     }
 
     func bindHostConversation(_ conversation: HostConversationSummary) async {
+        if let provider = HostProviderChoice(rawValue: conversation.provider) {
+            selectedHostProvider = provider
+        }
         draftTask = conversation.conversationID
         await addTaskSubscription()
     }
 
+    func createTaskSubscription() async {
+        guard let profile = selectedChannel else { return }
+        guard selectedHostProvider.supportsForwarding else {
+            showNotice(title: "暂不支持", message: "Pijoo 目前还不能向 Claude 会话转发消息。")
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.message = "选择新会话要使用的工作目录"
+        panel.prompt = "新建会话"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let workspace = panel.url else { return }
+
+        busy = true
+        defer { busy = false }
+        do {
+            let provider = selectedHostProvider
+            guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: provider.bundleIdentifier) else {
+                throw AppFailure("未找到 \(provider.displayName) App")
+            }
+            let executable = app.appendingPathComponent("Contents/Resources/codex")
+            guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+                throw AppFailure("\(provider.displayName) App 缺少可用的 Codex 组件")
+            }
+            let result = try await Sidecar.run([
+                "host-create",
+                "--host-provider", provider.rawValue,
+                "--host-workspace", workspace.path,
+                "--host-title", "Pijoo · \(profile.displayName)",
+                "--codex-executable", executable.path,
+            ])
+            guard result.status == 0,
+                  let data = result.stdout.data(using: .utf8),
+                  let response = try? JSONDecoder().decode(HostConversationCreateResponse.self, from: data),
+                  response.ok,
+                  UUID(uuidString: response.conversationID) != nil else {
+                let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                throw AppFailure(detail.isEmpty ? "无法新建 AI 会话" : detail)
+            }
+            let conversationID = response.conversationID.lowercased()
+            guard let url = URL(string: "codex://threads/\(conversationID)"),
+                  NSWorkspace.shared.open(url) else {
+                throw AppFailure("会话已创建（\(conversationID)），但无法在 \(provider.displayName) 中打开")
+            }
+
+            var lastPreflightError = ""
+            var verified: (provider: String, conversationID: String)?
+            for attempt in 0..<20 {
+                do {
+                    verified = try await preflightHostConversation(conversationID, provider: provider)
+                    break
+                } catch {
+                    lastPreflightError = error.localizedDescription
+                    if attempt < 19 { try await Task.sleep(nanoseconds: 500_000_000) }
+                }
+            }
+            guard let verified else {
+                throw AppFailure("会话已创建（\(conversationID)），但暂时无法连接。请在 Codex 中打开后按 ID 连接。\(lastPreflightError.isEmpty ? "" : "\n\(lastPreflightError)")")
+            }
+            _ = try await subscribe(
+                source: LocalSource(provider: verified.provider, conversationId: verified.conversationID),
+                profile: profile
+            )
+            clearConversationDraft()
+        } catch {
+            fail(error)
+        }
+    }
+
     func addTaskSubscription() async {
         guard let profile = selectedChannel else { return }
+        guard selectedHostProvider.supportsForwarding else {
+            showNotice(title: "暂不支持", message: "Pijoo 目前还不能向 Claude 会话转发消息。")
+            return
+        }
         busy = true
         defer { busy = false }
         do {
             let raw = draftTask.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !raw.isEmpty else { throw AppFailure("请输入 AI 会话 ID 或链接") }
-            let result = try await Sidecar.run([
-                "host-preflight",
-                "--host-provider", "codex",
-                "--host-conversation", raw,
-            ])
-            guard result.status == 0,
-                  let data = result.stdout.data(using: .utf8),
-                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  json["ok"] as? Bool == true,
-                  let provider = json["provider"] as? String,
-                  let conversationID = json["conversation_id"] as? String,
-                  UUID(uuidString: conversationID) != nil else {
-                let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-                throw AppFailure(detail.isEmpty ? "AI 会话检测失败" : detail)
-            }
+            let verified = try await preflightHostConversation(raw, provider: selectedHostProvider)
             _ = try await subscribe(
-                source: LocalSource(provider: provider, conversationId: conversationID.lowercased()),
+                source: LocalSource(provider: verified.provider, conversationId: verified.conversationID),
                 profile: profile
             )
-            draftTask = ""
-            conversationSearchResults = []
-            conversationSearchStatus = ""
-            lastError = ""
+            clearConversationDraft()
         } catch {
             fail(error)
         }
+    }
+
+    private func preflightHostConversation(_ raw: String, provider: HostProviderChoice) async throws -> (provider: String, conversationID: String) {
+        let result = try await Sidecar.run([
+            "host-preflight",
+            "--host-provider", provider.rawValue,
+            "--host-conversation", raw,
+        ])
+        guard result.status == 0,
+              let data = result.stdout.data(using: .utf8),
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["ok"] as? Bool == true,
+              let provider = json["provider"] as? String,
+              let conversationID = json["conversation_id"] as? String,
+              UUID(uuidString: conversationID) != nil else {
+            let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw AppFailure(detail.isEmpty ? "AI 会话检测失败" : detail)
+        }
+        return (provider, conversationID.lowercased())
+    }
+
+    private func clearConversationDraft() {
+        draftTask = ""
+        conversationSearchResults = []
+        conversationSearchStatus = ""
+        lastError = ""
     }
 
     func setSubscriptionEnabled(_ id: UUID, enabled: Bool) {
@@ -4455,69 +4569,107 @@ private struct ChannelSubscriptionsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    TextField("搜索标题，或输入会话 ID / 链接", text: $model.draftTask)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { Task { await model.searchHostConversations() } }
-                        .onChange(of: model.draftTask) { _ in
-                            model.conversationSearchResults = []
-                            model.conversationSearchStatus = ""
-                        }
-                        .overlay(alignment: .topLeading) {
-                            if !model.conversationSearchResults.isEmpty {
-                                ScrollView {
-                                    LazyVStack(spacing: 0) {
-                                        ForEach(model.conversationSearchResults) { conversation in
-                                            Button {
-                                                Task { await model.bindHostConversation(conversation) }
-                                            } label: {
-                                                VStack(alignment: .leading, spacing: 2) {
-                                                    Text(conversation.title).lineLimit(1)
-                                                    Text("\(hostDisplayName(conversation.provider)) · \(conversation.conversationID)")
-                                                        .font(.caption2).foregroundStyle(.secondary)
-                                                }
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                                .padding(.horizontal, 10)
-                                                .padding(.vertical, 7)
-                                                .contentShape(Rectangle())
-                                            }
-                                            .buttonStyle(.plain)
-                                            .disabled(model.busy)
-                                            if conversation.id != model.conversationSearchResults.last?.id { Divider() }
-                                        }
-                                    }
-                                }
-                                .frame(height: min(CGFloat(model.conversationSearchResults.count) * 48, 210))
-                                .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
-                                .overlay { RoundedRectangle(cornerRadius: 7).stroke(.separator) }
-                                .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
-                                .offset(y: 30)
-                            } else if !model.conversationSearchStatus.isEmpty {
-                                Text(model.conversationSearchStatus)
-                                    .font(.caption).foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(10)
-                                    .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
-                                    .overlay { RoundedRectangle(cornerRadius: 7).stroke(.separator) }
-                                    .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
-                                    .offset(y: 30)
+                if HostProviderChoice.available.count > 1 {
+                    HStack {
+                        Text("AI App")
+                            .font(.headline)
+                        Picker("AI App", selection: $model.selectedHostProvider) {
+                            ForEach(HostProviderChoice.available) { provider in
+                                Text(provider.displayName)
+                                    .tag(provider)
                             }
                         }
-                    Button("搜索") { Task { await model.searchHostConversations() } }
-                        .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Button("按 ID 绑定") { Task { await model.addTaskSubscription() } }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .labelsHidden()
+                        .frame(width: 180)
+                        Spacer()
+                    }
+                    .onChange(of: model.selectedHostProvider) { _ in
+                        model.draftTask = ""
+                        model.conversationSearchResults = []
+                        model.conversationSearchStatus = ""
+                    }
                 }
-                .zIndex(1)
-                Text("支持 ChatGPT Codex")
-                    .font(.caption2).foregroundStyle(.tertiary)
+
+                if HostProviderChoice.available.contains(model.selectedHostProvider) {
+                    HStack {
+                        Button {
+                            Task { await model.createTaskSubscription() }
+                        } label: {
+                            Label("新建专属会话", systemImage: "plus.message")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.busy)
+                        Text("\(model.selectedHostProvider.displayName) · 自动连接当前频道")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    HStack {
+                        TextField("搜索 \(model.selectedHostProvider.displayName) 会话，或输入 ID / 链接", text: $model.draftTask)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { Task { await model.searchHostConversations() } }
+                            .onChange(of: model.draftTask) { _ in
+                                model.conversationSearchResults = []
+                                model.conversationSearchStatus = ""
+                            }
+                            .overlay(alignment: .topLeading) {
+                                if !model.conversationSearchResults.isEmpty {
+                                    ScrollView {
+                                        LazyVStack(spacing: 0) {
+                                            ForEach(model.conversationSearchResults) { conversation in
+                                                Button {
+                                                    Task { await model.bindHostConversation(conversation) }
+                                                } label: {
+                                                    VStack(alignment: .leading, spacing: 2) {
+                                                        Text(conversation.title).lineLimit(1)
+                                                        Text("\(hostDisplayName(conversation.provider)) · \(conversation.conversationID)")
+                                                            .font(.caption2).foregroundStyle(.secondary)
+                                                    }
+                                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                                    .padding(.horizontal, 10)
+                                                    .padding(.vertical, 7)
+                                                    .contentShape(Rectangle())
+                                                }
+                                                .buttonStyle(.plain)
+                                                .disabled(model.busy)
+                                                if conversation.id != model.conversationSearchResults.last?.id { Divider() }
+                                            }
+                                        }
+                                    }
+                                    .frame(height: min(CGFloat(model.conversationSearchResults.count) * 48, 210))
+                                    .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
+                                    .overlay { RoundedRectangle(cornerRadius: 7).stroke(.separator) }
+                                    .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
+                                    .offset(y: 30)
+                                } else if !model.conversationSearchStatus.isEmpty {
+                                    Text(model.conversationSearchStatus)
+                                        .font(.caption).foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(10)
+                                        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
+                                        .overlay { RoundedRectangle(cornerRadius: 7).stroke(.separator) }
+                                        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                                        .offset(y: 30)
+                                }
+                            }
+                        Button("搜索") { Task { await model.searchHostConversations() } }
+                            .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button("按 ID 连接") { Task { await model.addTaskSubscription() } }
+                            .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    .zIndex(1)
+                } else {
+                    Label("未发现支持会话转发的 AI App", systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                }
             }
             .padding(16)
             .zIndex(1)
             Divider()
             if model.selectedSubscriptions.isEmpty {
-                EmptyStateView(title: "尚未连接会话", systemImage: "link.badge.plus", detail: "搜索或输入 AI 会话，让该会话接收本频道消息。") { EmptyView() }
+                EmptyStateView(title: "尚未连接会话", systemImage: "link.badge.plus", detail: "新建专属会话，或连接已有会话来接收本频道消息。") { EmptyView() }
                     .frame(maxHeight: .infinity)
             } else {
                 List(model.selectedSubscriptions) { subscription in

@@ -62,6 +62,7 @@ usage:
   rogerthat [options]                  # run the local hub (default)
   rogerthat listen-here [options]      # open an SSE receiver for a channel (see --help)
   rogerthat receive-recipe [options]   # print copy-paste recipe: listener + Monitor cmd
+  rogerthat host-create [options]      # create a new Host conversation
   rogerthat host-preflight [options]   # verify a Host conversation without a turn
   rogerthat host-conversations [opts]  # search local Host conversations
   rogerthat channel-mcp [options]      # run the local one-tool channel MCP over stdio
@@ -118,6 +119,49 @@ async function main(): Promise<void> {
     const { runReceiveRecipe } = await import("./receive-recipe.js");
     const code = runReceiveRecipe(process.argv.slice(3));
     process.exit(code);
+  }
+  if (first === "host-create") {
+    const { parseArgs } = await import("node:util");
+    let parsed;
+    try {
+      parsed = parseArgs({
+        args: process.argv.slice(3),
+        options: {
+          "host-provider": { type: "string" },
+          "host-workspace": { type: "string" },
+          "host-title": { type: "string" },
+          "codex-executable": { type: "string" },
+          help: { type: "boolean", short: "h" },
+        },
+        strict: true,
+        allowPositionals: false,
+      });
+    } catch (error) {
+      console.error(`error: ${(error as Error).message}`);
+      process.exit(2);
+    }
+    if (parsed.values.help) {
+      console.log("usage: rogerthat host-create --host-provider codex --host-workspace <directory> --host-title <title> --codex-executable <path>");
+      process.exit(0);
+    }
+    const provider = parsed.values["host-provider"];
+    const workspace = parsed.values["host-workspace"];
+    const title = parsed.values["host-title"];
+    const executable = parsed.values["codex-executable"];
+    if (!provider || !workspace || !title || !executable) {
+      console.error("error: --host-provider, --host-workspace, --host-title and --codex-executable are required");
+      process.exit(2);
+    }
+    try {
+      if (provider !== "codex") throw new Error(`Unsupported Host provider: ${provider}`);
+      const { createCodexThread } = await import("./codex-turn.js");
+      const threadId = await createCodexThread({ cwd: workspace, codexExecutable: executable, title });
+      console.log(JSON.stringify({ ok: true, provider, conversation_id: threadId }));
+      process.exit(0);
+    } catch (error) {
+      console.error(`error: ${(error as Error).message}`);
+      process.exit(1);
+    }
   }
   if (first === "host-preflight") {
     const { parseArgs } = await import("node:util");

@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { lstatSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import {
   DeliveryOutcomeUnknownError,
   formatChannelMessage,
@@ -91,6 +91,136 @@ export async function listCodexConversations(options: {
     );
   });
   return parseCodexConversationListOutput(output);
+}
+
+export async function createCodexThread(options: {
+  cwd: string;
+  codexExecutable: string;
+  title: string;
+  timeoutMs?: number;
+}): Promise<string> {
+  const cwd = options.cwd.trim();
+  const executable = options.codexExecutable.trim();
+  const title = options.title.trim().replace(/\s+/g, " ").slice(0, 200);
+  if (!isAbsolute(cwd) || !lstatSync(cwd).isDirectory()) {
+    throw new Error("Codex workspace must be an existing absolute directory");
+  }
+  if (!isAbsolute(executable) || !lstatSync(executable).isFile()) {
+    throw new Error("Codex executable must be an existing absolute file");
+  }
+  if (!title) throw new Error("Codex task title is required");
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, ["app-server", "--stdio"], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let buffer = "";
+    let stderr = "";
+    let threadId = "";
+    let settled = false;
+    const timer = setTimeout(
+      () => fail(new Error("Codex app-server thread/start timed out")),
+      options.timeoutMs ?? 15_000,
+    );
+
+    const finish = (threadId: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.stdin.end();
+      const killTimer = setTimeout(() => child.kill(), 1_000);
+      child.once("close", () => clearTimeout(killTimer));
+      resolve(threadId);
+    };
+    function fail(error: Error): void {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      reject(error);
+    }
+    const send = (message: object) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    const responseErrorMessage = (value: unknown): string => {
+      if (isRecord(value) && typeof value.message === "string") return value.message;
+      return typeof value === "string" ? value : JSON.stringify(value);
+    };
+
+    child.once("error", (error) => fail(error));
+    child.stdin.once("error", (error) => fail(error));
+    child.once("close", (code) => {
+      if (!settled) {
+        fail(new Error(`Codex app-server exited before creating a task (${code ?? "unknown"})${stderr ? `: ${stderr}` : ""}`));
+      }
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr = `${stderr}${chunk}`.slice(-64 * 1024).trim();
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      buffer += chunk;
+      if (buffer.length > MAX_IPC_FRAME_BYTES) {
+        fail(new Error("Codex app-server response exceeds the supported size"));
+        return;
+      }
+      for (;;) {
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) break;
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        let message: unknown;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          fail(new Error("Codex app-server returned invalid JSON"));
+          return;
+        }
+        if (!isRecord(message)) continue;
+        if (message.id === 1) {
+          if (message.error !== undefined) {
+            fail(new Error(`Codex app-server initialize failed: ${responseErrorMessage(message.error)}`));
+            return;
+          }
+          send({ method: "initialized", params: {} });
+          send({
+            id: 2,
+            method: "thread/start",
+            params: { cwd, ephemeral: false, threadSource: "user" },
+          });
+        } else if (message.id === 2) {
+          if (message.error !== undefined) {
+            fail(new Error(`Codex app-server thread/start failed: ${responseErrorMessage(message.error)}`));
+            return;
+          }
+          const result = isRecord(message.result) ? message.result : undefined;
+          const thread = isRecord(result?.thread) ? result.thread : undefined;
+          if (typeof thread?.id !== "string" || !THREAD_ID.test(thread.id)) {
+            fail(new Error("Codex app-server thread/start returned an incompatible response"));
+            return;
+          }
+          threadId = thread.id.toLowerCase();
+          send({
+            id: 3,
+            method: "thread/name/set",
+            params: { threadId, name: title },
+          });
+        } else if (message.id === 3) {
+          if (message.error !== undefined) {
+            fail(new Error(`Codex app-server thread/name/set failed: ${responseErrorMessage(message.error)}`));
+            return;
+          }
+          finish(threadId);
+        }
+      }
+    });
+
+    send({
+      id: 1,
+      method: "initialize",
+      params: { clientInfo: { name: "pijoo", title: "Pijoo", version: "1" } },
+    });
+  });
 }
 
 export function formatCodexDelegationMessage(sourceThreadId: string, input: string): string {

@@ -142,6 +142,14 @@ Gatekeeper gates pass. Clean-install, two-machine, real-Host and security inspec
 - 匹配结果以搜索框下方按内容高度收缩的浮层展示，整行点选即绑定，不再挤压下方页面布局。
 - Swift warnings-as-errors typecheck、OpenSpec strict validation 与 diff checks 通过；未构建、安装或发布 App 包。
 
+## 2026-08-25 Create Dedicated Codex Conversation
+
+- “转发到会话”仅有一个可用 Host 时直接显示其完整操作，不显示 AI App 选择器；未支持的 Claude 不展示，也不调用 Codex 路径或出现假操作。
+- “转发到会话”以“新建专属会话”为主操作，使用原生目录选择器；搜索和按 ID 连接已有会话仍可用。
+- Sidecar 通过 ChatGPT Codex 自带 app-server 执行 `initialize -> thread/start -> thread/name/set`，以“Pijoo · 频道名”持久化空白 user task并校验返回 UUID；创建本身不发送输入。
+- App 打开精确 `codex://threads/<id>`，等待 owner preflight 后才复用既有 TaskBinding 与 Subscription；超时错误保留 id 供恢复。
+- 隔离临时 `CODEX_HOME` 的真实 Codex CLI 探针可从现有会话搜索读回新 id 与标题；全量 11 个 server 测试文件 / 98 项测试、TypeScript typecheck/build、Swift warnings-as-errors typecheck 与本机 IPC 自测、OpenSpec strict 8/8 和 diff checks 均通过。本地 App-only 开发版已构建并启动，未创建 DMG、安装或发布。
+
 ## 2026-08-25 Beta.12 Local Package
 
 - `codex-search-conversations` commit `5868088` was merged into local `main`; the package includes on-demand floating conversation results and aligned invitation/member rows.

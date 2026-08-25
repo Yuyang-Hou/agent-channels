@@ -1,10 +1,11 @@
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createCodexDelivery,
+  createCodexThread,
   formatCodexDelegationMessage,
   parseCodexThreadId,
   parseCodexConversationListOutput,
@@ -53,6 +54,46 @@ describe("Codex task bridge", () => {
       { id: THREAD_ID, title: "  API design\nreview  ", updated_at: 123 },
       { id: "bad", title: "ignored", updated_at: 456 },
     ]))).toEqual([{ id: THREAD_ID, title: "API design review", updatedAt: 123 }]);
+  });
+
+  it("creates a persistent user task through Codex app-server", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "pijoo-codex-create-"));
+    const executable = join(directory, "codex");
+    writeFileSync(executable, `#!${process.execPath}
+let buffer = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  for (;;) {
+    const newline = buffer.indexOf("\\n");
+    if (newline < 0) break;
+    const message = JSON.parse(buffer.slice(0, newline));
+    buffer = buffer.slice(newline + 1);
+    if (message.id === 1) {
+      process.stdout.write(JSON.stringify({ id: 1, result: { userAgent: "fake" } }) + "\\n");
+    } else if (message.id === 2) {
+      const valid = message.method === "thread/start"
+        && message.params.cwd === ${JSON.stringify(directory)}
+        && message.params.ephemeral === false
+        && message.params.threadSource === "user";
+      process.stdout.write(JSON.stringify(valid
+        ? { id: 2, result: { thread: { id: ${JSON.stringify(THREAD_ID)} } } }
+        : { id: 2, error: { message: "invalid params" } }) + "\\n");
+    } else if (message.id === 3) {
+      const valid = message.method === "thread/name/set"
+        && message.params.threadId === ${JSON.stringify(THREAD_ID)}
+        && message.params.name === "Pijoo · frontend";
+      process.stdout.write(JSON.stringify(valid ? { id: 3, result: {} } : { id: 3, error: { message: "invalid name" } }) + "\\n");
+    }
+  }
+});
+`);
+    chmodSync(executable, 0o700);
+
+    await expect(createCodexThread({ cwd: directory, codexExecutable: executable, title: "Pijoo · frontend" })).resolves.toBe(THREAD_ID);
+    await expect(createCodexThread({ cwd: "relative", codexExecutable: executable, title: "Pijoo" })).rejects.toThrow(
+      "existing absolute directory",
+    );
   });
 
   it("wraps trusted source metadata and escapes untrusted message text", () => {

@@ -301,6 +301,24 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** 用户按标题或 id 搜索，或直接输入会话 id/链接
 - **THEN** App 不自动展示最近会话，仅在用户输入非空关键词后从全部未归档用户主会话索引中匹配，并排除 subagent/reviewer；匹配项在搜索框下方以不透出底层内容的系统实色浮层按内容高度展开，浮层位于同一区域的说明文字之上，整行点选即绑定且不改变页面布局；用户也可直接发起绑定，创建 Subscription 前执行 Host preflight，搜索标题不写入 Binding
 
+#### Scenario: 先选择 AI App 再操作
+
+- **GIVEN** 本机同时安装 ChatGPT 与 Claude
+- **WHEN** 用户进入“转发到会话”
+- **THEN** App 只展示具备完整投递 Connector 的 ChatGPT 操作，不展示尚未支持的 Claude，也不为单个可用 Host 显示选择器；未来存在多个可用 Host 时才先提供 AI App 选择
+
+#### Scenario: 新建专属 Codex 会话并自动连接
+
+- **GIVEN** 用户在“转发到会话”中选择为当前频道新建专属会话
+- **WHEN** 用户通过原生目录选择器确认工作目录
+- **THEN** App 调用本机 ChatGPT Codex 创建持久 user task，以“Pijoo · 频道名”保存空白 task，取得 id 后打开精确会话，Desktop owner preflight 成功后自动创建当前频道的 TaskBinding 与 Subscription；创建过程不发送输入或创建 turn
+
+#### Scenario: 新建后 Desktop 暂未就绪
+
+- **GIVEN** Codex 已返回新会话 id，但 App 在等待期内无法完成 Desktop owner preflight
+- **WHEN** 自动连接结束
+- **THEN** App 不创建未经校验的 Subscription，向用户展示可通过“按 ID 连接”恢复的精确会话 id，且保留连接已有会话入口
+
 #### Scenario: 服务端成员身份重建后恢复监听
 
 - **GIVEN** 本机 ChannelConnection 保存的旧 `member_id` 与当前凭证在服务端鉴权得到的 Member 不同

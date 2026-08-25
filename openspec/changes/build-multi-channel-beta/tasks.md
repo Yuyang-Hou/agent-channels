@@ -46,6 +46,8 @@
 
 - [x] 实现 TaskBinding 的显式创建、兼容性状态和删除保护
 - [x] 支持按 Host 会话标题/id 搜索点选绑定，标题不落盘，同时保留 id/链接直绑与最终 preflight
+- [x] 支持选择工作目录后新建持久 Codex user task，打开并通过 owner preflight 后自动连接当前频道
+- [x] “转发到会话”只展示已闭环的本机 AI App；单个 Host 不显示选择器，Claude 未支持时不展示
 - [x] 实现 TaskBinding × ChannelConnection Subscription 管理及唯一默认出站约束
 - [x] 为每条 enabled Subscription 监管独立 listen-here sidecar、游标和错误状态
 - [x] 扩展本机 App IPC：sidecar 在 Host delivery 前 `record_received` 并等待持久化 ack，结束后记录 outcome
