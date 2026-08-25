@@ -136,6 +136,19 @@ publication remain pending.
 - `macos/build/Agent-Channels-0.3.0-beta.12-arm64.dmg` is 28,489,756 bytes with SHA-256 `1e908db89ab1d41f2dd498d2eae60f3cdfea589455351661915b2d0170dc4903`.
 - The mounted DMG contains release version `0.3.0-beta.12`, bundle build `12`, a deep/strict-valid fixed internal signature and MCP `serverInfo.version` `0.3.0-beta.12`; `hdiutil verify` passes. It is not notarized, installed, pushed or published.
 
+## 2026-08-25 Opaque Search Overlay And Member Identity Recovery
+
+- Conversation search results and empty-state feedback now use the opaque system window background instead of translucent material, so content below the overlay does not show through.
+- A read-only production member lookup confirmed the saved local owner id had drifted from the Member authenticated by the same Keychain credential. Successful send, channel-feed and Subscription-listener joins now atomically persist the authenticated `member_id` while still requiring a non-empty server `endpoint_id`.
+- Swift warnings-as-errors typecheck, the focused self-test, strict OpenSpec validation and diff checks pass. No App package was rebuilt or installed.
+
+## 2026-08-25 Client Diagnostic Log Export
+
+- SwiftUI and URLSession cancellation now ends history, member and invitation refreshes silently instead of becoming a persistent global health error.
+- The App keeps two local 1 MB client diagnostic logs for lifecycle, UI errors, channel reconnects and Subscription listener failures; it does not log channel text, invitation tokens or member credentials.
+- Settings exposes “导出客户端日志…” and combines the previous and current rolling logs into one user-selected `.log` file without deleting the originals.
+- Swift warnings-as-errors typecheck, the focused macOS self-test, strict OpenSpec validation (4/4) and diff checks pass. No App package was built, installed or published.
+
 ## 2026-08-24 Configurable Invitations
 
 - Owner invitation creation accepts an optional 64-character label, 1–100 uses and 1–720 hours in the App;
