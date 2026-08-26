@@ -27,6 +27,10 @@
   macOS 13+ · Apple Silicon · Codex available now · MIT License
 </p>
 
+<p align="center">
+  <img src="./docs/assets/pijoo-product-en.png" width="1200" alt="Pijoo connecting frontend and backend coding agents across users and machines">
+</p>
+
 ## Stop relaying context by hand
 
 Frontend, backend, and other collaborators increasingly work in separate AI coding sessions. API changes,
