@@ -161,6 +161,9 @@ private struct PijooV2SelfTest {
         precondition(bridgeErrorShouldReplace(current: "connection", incoming: "delivery"))
         precondition(!bridgeErrorAffectsGlobalHealthImmediately("connection"))
         precondition(bridgeErrorAffectsGlobalHealthImmediately("delivery"))
+        precondition(isDisconnectedHostError("Codex task abc needs rebind: open it once"))
+        precondition(isDisconnectedHostError("Could not connect to ChatGPT Desktop IPC (/tmp/ipc.sock)"))
+        precondition(!isDisconnectedHostError("Host delivery outcome is unknown"))
         precondition(clientLogField("a\tb\nc") == "a b c")
         precondition(isCancellationError(CancellationError()))
         precondition(isCancellationError(URLError(.cancelled)))
@@ -169,6 +172,29 @@ private struct PijooV2SelfTest {
         let subscriptionID = UUID()
         let channelID = UUID()
         let taskID = UUID()
+        let disconnectedTask = TaskBinding(id: taskID, provider: "codex", conversationID: "01900000-0000-7000-8000-000000000001")
+        let disconnectedSubscription = ChannelSubscription(
+            id: subscriptionID,
+            channelID: channelID,
+            taskID: taskID,
+            enabled: true,
+            template: defaultMessageTemplate,
+            selfMessagePolicy: .excludeMember,
+            defaultSend: false
+        )
+        let disconnectedState = HostConversationRuntimeState(connected: false, workspace: nil, permission: "unknown")
+        precondition(disconnectedHostTaskIDs(
+            tasks: [disconnectedTask],
+            subscriptions: [disconnectedSubscription],
+            states: [taskID: disconnectedState]
+        ) == [taskID])
+        var pausedSubscription = disconnectedSubscription
+        pausedSubscription.enabled = false
+        precondition(disconnectedHostTaskIDs(
+            tasks: [disconnectedTask],
+            subscriptions: [pausedSubscription],
+            states: [taskID: disconnectedState]
+        ).isEmpty)
         let confirmed = SubscriptionDeliveryRecord(
             subscriptionID: subscriptionID,
             channelID: channelID,

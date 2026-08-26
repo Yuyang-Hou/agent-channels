@@ -211,6 +211,13 @@ P0 每条启用的 Subscription 监管一个现有 `listen-here` sidecar，保�
 错误和不确定投递状态。一个 Subscription 失败不得暂停其他 Subscription。App 可以为频道
 时间线维护独立 feed；重复抵达由本地消息唯一键去重。本轮不把这些进程合并为 daemon。
 
+Host owner 不存在时，enabled Subscription 保持启用，但运行态显示“会话未连接”，不得与用户主动
+关闭接收的“已暂停”混用。主窗口集中显示未连接的关联会话数量，并复用已有
+`codex://threads/<id>` 深链在首次检测到断连时自动以不激活 Host App 的方式打开目标；现有监听重试在
+owner 状态确认后自动续接并移除提示。主窗口只保留状态提示，不提供全局连接操作；受影响频道及其
+“转发到会话”入口显示红点，每张会话卡提供独立状态刷新。自动重连期间不重复打开或抢占焦点，
+不新增恢复协议或后台服务。
+
 系统休眠前，App 暂停所有 enabled Subscription；休眠超过 60 秒且唤醒补齐后存在积压时进入
 `recovery_pending`。App 展示待检查投递数量；只有“发送到会话”会恢复这些 Subscription，随后
 复用既有模板、过滤、顺序、失败和 unknown 语义。暂不发送继续暂停，等待期间的新消息加入计数。

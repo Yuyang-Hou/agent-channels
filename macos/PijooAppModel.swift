@@ -51,6 +51,7 @@ final class AppModel: ObservableObject {
 
     private var listeners: [UUID: SubscriptionListener] = [:]
     private var startingListeners: Set<UUID> = []
+    private var automaticallyReconnectingTaskIDs: Set<UUID> = []
     private var listenerGenerations: [UUID: Int] = [:]
     private var bridgeErrorKinds: [UUID: String] = [:]
     private var bridgeErrorMessages: [UUID: String] = [:]
@@ -176,6 +177,21 @@ final class AppModel: ObservableObject {
     var menuIcon: String { lastError.isEmpty ? "paperplane.circle" : "exclamationmark.triangle.fill" }
     var runningListenerCount: Int { listeners.count }
     var enabledSubscriptionCount: Int { state.subscriptions.filter(\.enabled).count }
+    var disconnectedConversationTaskIDs: [UUID] {
+        disconnectedHostTaskIDs(
+            tasks: state.tasks,
+            subscriptions: state.subscriptions,
+            states: hostConversationStates
+        )
+    }
+    var disconnectedConversationCount: Int { disconnectedConversationTaskIDs.count }
+    func channelHasDisconnectedConversation(_ channelID: UUID) -> Bool {
+        !disconnectedHostTaskIDs(
+            tasks: state.tasks,
+            subscriptions: state.subscriptions.filter { $0.channelID == channelID },
+            states: hostConversationStates
+        ).isEmpty
+    }
     var codexReadiness: CodexIntegrationReadiness {
         codexIntegrationReadiness(
             configured: codexIntegrationConfigured,
@@ -518,7 +534,7 @@ extension AppModel {
                   let state = try? JSONDecoder().decode(HostConversationRuntimeState.self, from: data) else {
                 throw AppFailure("无法读取 ChatGPT 会话状态")
             }
-            hostConversationStates[task.id] = state
+            updateHostConversationState(state, taskID: task.id, automaticallyReconnect: true)
             return state
         } catch {
             hostConversationStates[task.id] = HostConversationRuntimeState(
@@ -554,7 +570,7 @@ extension AppModel {
     func updateHostPermission(_ taskID: UUID, permission: HostPermissionChoice) async {
         guard let task = state.tasks.first(where: { $0.id == taskID }) else { return }
         guard hostPermissionCanChange(taskID) else {
-            showNotice(title: "会话未加载", message: "请先在 ChatGPT 中打开该会话，再修改权限。")
+            showNotice(title: "会话未连接", message: "请先打开并连接该会话，再修改权限。")
             return
         }
         busy = true
@@ -771,6 +787,7 @@ extension AppModel {
         if !state.subscriptions.contains(where: { $0.taskID == removed.taskID }) {
             state.tasks.removeAll { $0.id == removed.taskID }
             hostConversationStates.removeValue(forKey: removed.taskID)
+            automaticallyReconnectingTaskIDs.remove(removed.taskID)
         }
         persistState()
     }
@@ -780,16 +797,54 @@ extension AppModel {
         return "\(hostDisplayName(task.provider)) · \(task.conversationID.prefix(8))…"
     }
 
-    func openTask(_ taskID: UUID) {
+    @discardableResult
+    func openTask(_ taskID: UUID, activates: Bool = true) -> Bool {
         guard let task = state.tasks.first(where: { $0.id == taskID }) else {
             fail(AppFailure("AI 会话不存在"))
-            return
+            return false
         }
         guard task.provider == "codex",
-              let url = URL(string: "codex://threads/\(task.conversationID)"),
-              NSWorkspace.shared.open(url) else {
+              let url = URL(string: "codex://threads/\(task.conversationID)") else {
             fail(AppFailure("无法打开 \(hostDisplayName(task.provider)) 会话，请确认对应 AI 应用已安装且会话仍存在"))
-            return
+            return false
+        }
+
+        if activates {
+            guard NSWorkspace.shared.open(url) else {
+                fail(AppFailure("无法打开 \(hostDisplayName(task.provider)) 会话，请确认对应 AI 应用已安装且会话仍存在"))
+                return false
+            }
+        } else {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = false
+            NSWorkspace.shared.open(url, configuration: configuration)
+        }
+        return true
+    }
+
+    private func updateHostConversationState(
+        _ state: HostConversationRuntimeState,
+        taskID: UUID,
+        automaticallyReconnect: Bool = false
+    ) {
+        hostConversationStates[taskID] = state
+        if state.connected {
+            automaticallyReconnectingTaskIDs.remove(taskID)
+        } else if automaticallyReconnect, automaticallyReconnectingTaskIDs.insert(taskID).inserted {
+            ClientLog.record("info", "host_conversation_auto_reconnect_requested")
+            if !openTask(taskID, activates: false) {
+                automaticallyReconnectingTaskIDs.remove(taskID)
+            }
+        }
+    }
+
+    func refreshHostConversation(_ taskID: UUID) async {
+        guard let task = state.tasks.first(where: { $0.id == taskID }) else { return }
+        automaticallyReconnectingTaskIDs.remove(taskID)
+        await refreshHostConversationState(task)
+        for subscription in state.subscriptions
+            where subscription.taskID == taskID && subscription.enabled && listeners[subscription.id] == nil {
+            restartListenerIfNeeded(subscription.id)
         }
     }
 
@@ -990,9 +1045,26 @@ extension AppModel {
             guard listenerCanStart(id, generation: generation) else { return }
             guard preflight.status == 0 else {
                 let detail = preflight.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-                throw AppFailure(detail.contains("needs rebind")
-                    ? "ChatGPT 尚未加载该会话；请打开一次，Pijoo 会自动重连"
-                    : (detail.isEmpty ? "AI 会话当前不可用" : detail))
+                if isDisconnectedHostError(detail) {
+                    updateHostConversationState(HostConversationRuntimeState(
+                        connected: false,
+                        workspace: nil,
+                        permission: "unknown"
+                    ), taskID: task.id, automaticallyReconnect: true)
+                    listenerStatus[id] = "会话未连接"
+                    ClientLog.record("info", "listener_waiting_for_host_conversation")
+                    scheduleListenerRestart(id)
+                    return
+                }
+                throw AppFailure(detail.isEmpty ? "AI 会话当前不可用" : detail)
+            }
+            automaticallyReconnectingTaskIDs.remove(task.id)
+            if hostConversationStates[task.id]?.connected != true {
+                hostConversationStates[task.id] = HostConversationRuntimeState(
+                    connected: true,
+                    workspace: nil,
+                    permission: "unknown"
+                )
             }
             guard let credential = try KeychainStore.get(service: keychainService, account: profile.credentialAccount),
                   !credential.isEmpty else { throw AppFailure("Keychain 中没有频道成员凭证") }
@@ -1229,6 +1301,14 @@ extension AppModel {
             case "joined", "connecting": listenerStatus[id] = "正在连接…"
             case "connected":
                 listenerStatus[id] = "正在接收"
+                if let taskID = self.state.subscriptions.first(where: { $0.id == id })?.taskID {
+                    let previous = hostConversationStates[taskID]
+                    updateHostConversationState(HostConversationRuntimeState(
+                        connected: true,
+                        workspace: previous?.workspace,
+                        permission: previous?.permission ?? "unknown"
+                    ), taskID: taskID)
+                }
                 if let diagnostic = event["diagnostic"] as? String, !diagnostic.isEmpty {
                     ClientLog.record("info", "listener_connected", detail: clientLogField(diagnostic))
                 }
@@ -1242,8 +1322,19 @@ extension AppModel {
             case "filtered": listenerStatus[id] = "已过滤自消息"
             case "error":
                 let detail = (event["error"] as? String) ?? (event["kind"] as? String) ?? "未知错误"
-                listenerStatus[id] = "异常：\(detail)"
                 let kind = (event["kind"] as? String) ?? "unknown"
+                if isDisconnectedHostError(detail),
+                   let taskID = self.state.subscriptions.first(where: { $0.id == id })?.taskID {
+                    updateHostConversationState(HostConversationRuntimeState(
+                        connected: false,
+                        workspace: nil,
+                        permission: "unknown"
+                    ), taskID: taskID, automaticallyReconnect: true)
+                    listenerStatus[id] = "会话未连接"
+                    ClientLog.record("info", "listener_waiting_for_host_conversation")
+                    continue
+                }
+                listenerStatus[id] = "异常：\(detail)"
                 let diagnostic = (event["diagnostic"] as? String).map { " \(clientLogField($0))" } ?? ""
                 ClientLog.record("error", "listener_error", detail: "kind=\(kind) \(detail)\(diagnostic)")
                 if bridgeErrorShouldReplace(current: bridgeErrorKinds[id], incoming: kind) {
@@ -1726,6 +1817,7 @@ extension AppModel {
         invitations = []
         listenerStatus = [:]
         hostConversationStates = [:]
+        automaticallyReconnectingTaskIDs.removeAll()
         channelStatus = [:]
         try? FileManager.default.removeItem(at: AppPaths.state)
         removeCodexIntegration()
@@ -2006,6 +2098,10 @@ extension AppModel {
         state.channels.removeAll { $0.id == profile.id }
         state.tasks.removeAll { task in
             removedTaskIDs.contains(task.id) && !state.subscriptions.contains { $0.taskID == task.id }
+        }
+        for taskID in removedTaskIDs where !state.tasks.contains(where: { $0.id == taskID }) {
+            hostConversationStates.removeValue(forKey: taskID)
+            automaticallyReconnectingTaskIDs.remove(taskID)
         }
         selectedChannelID = state.channels.first?.id
         persistState()

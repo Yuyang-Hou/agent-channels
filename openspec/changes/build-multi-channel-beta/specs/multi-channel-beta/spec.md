@@ -320,6 +320,16 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** 用户点击“打开会话”
 - **THEN** App 启动 ChatGPT 并通过该 TaskBinding 的 `codex://threads/<id>` 打开目标会话
 
+#### Scenario: 已启用的关联会话未连接
+
+- **GIVEN** 一条或多条 enabled Subscription 的 Host 会话当前没有可用 owner
+- **WHEN** App 检查会话状态或启动对应监听
+- **THEN** App 保持接收开关开启，将运行态显示为红色“会话未连接”而不是“已暂停”，并在主窗口集中显示未连接会话数量
+- **AND** 受影响的频道列表入口与该频道“转发到会话”入口显示红点，每条 Subscription 在“打开会话”旁提供独立的状态刷新操作，不提供全局“连接全部”操作
+- **AND** 会话卡右侧的打开、刷新和展开操作只显示同规格图标，通过悬浮标题和无障碍标签说明用途
+- **AND** App 首次检测到未连接时通过对应 TaskBinding 的精确深链在后台请求连接，不激活 Host App、不重复打扰用户
+- **AND** owner 状态重新可用后，App 无需用户操作即可继续对应监听并移除未连接提示
+
 #### Scenario: 已绑定会话不缓存标题
 
 - **GIVEN** Codex 本机元数据包含可能被用户修改的目标会话名称

@@ -73,6 +73,14 @@ func bridgeErrorAffectsGlobalHealthImmediately(_ kind: String?) -> Bool {
     kind != "connection"
 }
 
+func isDisconnectedHostError(_ detail: String) -> Bool {
+    let normalized = detail.lowercased()
+    return normalized.contains("needs rebind") ||
+        normalized.contains("no-client-found") ||
+        normalized.contains("could not connect to chatgpt desktop ipc") ||
+        normalized.contains("chatgpt desktop ipc closed")
+}
+
 func clientLogField(_ value: String) -> String {
     String(value.replacingOccurrences(of: "\t", with: " ")
         .replacingOccurrences(of: "\r", with: " ")
@@ -196,10 +204,19 @@ struct HostConversationRuntimeState: Decodable, Equatable {
     let permission: String
 
     var label: String {
-        guard connected else { return "会话未加载 · 权限未知 · 目录未知" }
+        guard connected else { return "权限未知 · 目录未知" }
         let permissionLabel = HostPermissionChoice(rawValue: permission)?.title ?? "权限未知"
         return "\(permissionLabel)" + (workspace.map { " · \($0)" } ?? " · 目录未知")
     }
+}
+
+func disconnectedHostTaskIDs(
+    tasks: [TaskBinding],
+    subscriptions: [ChannelSubscription],
+    states: [UUID: HostConversationRuntimeState]
+) -> [UUID] {
+    let enabledTaskIDs = Set(subscriptions.lazy.filter(\.enabled).map(\.taskID))
+    return tasks.filter { enabledTaskIDs.contains($0.id) && states[$0.id]?.connected == false }.map(\.id)
 }
 
 struct HostConversationSearchResponse: Decodable {

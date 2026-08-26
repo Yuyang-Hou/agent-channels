@@ -11,6 +11,7 @@ struct V2MenuPanel: View {
     private var statusColor: Color {
         if !model.lastError.isEmpty { return .red }
         if model.enabledSubscriptionCount == 0 { return .secondary }
+        if model.disconnectedConversationCount > 0 { return .orange }
         return model.runningListenerCount == model.enabledSubscriptionCount ? .green : .orange
     }
 
@@ -34,7 +35,9 @@ struct V2MenuPanel: View {
                     Text("Pijoo").font(.headline)
                     HStack(spacing: 5) {
                         Circle().fill(statusColor).frame(width: 7, height: 7)
-                        Text("\(model.state.channels.count) 个频道 · \(model.runningListenerCount)/\(model.enabledSubscriptionCount) 个监听")
+                        Text(model.disconnectedConversationCount > 0
+                            ? "\(model.state.channels.count) 个频道 · \(model.disconnectedConversationCount) 个会话未连接"
+                            : "\(model.state.channels.count) 个频道 · \(model.runningListenerCount)/\(model.enabledSubscriptionCount) 个监听")
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -112,6 +115,22 @@ struct MainWindowView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if model.disconnectedConversationCount > 0 {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label("\(model.disconnectedConversationCount) 个关联会话未连接", systemImage: "link.badge.plus")
+                            .font(.callout.bold())
+                        Text("频道消息暂时无法转发，正在后台自动连接。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.orange.opacity(0.12))
+                Divider()
+            }
             if model.recoveryPendingMessageCount > 0 {
                 HStack {
                     Label("休眠恢复：\(model.recoveryPendingMessageCount) 条消息等待发送到 AI 会话", systemImage: "moon.zzz")
@@ -145,6 +164,12 @@ struct MainWindowView: View {
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
                             Spacer()
+                            if model.channelHasDisconnectedConversation(channel.id) {
+                                Circle()
+                                    .fill(.red)
+                                    .frame(width: 8, height: 8)
+                                    .accessibilityLabel("此频道有会话未连接")
+                            }
                             let unread = model.unreadCount(channel.id)
                             if unread > 0 {
                                 Text("\(unread)")
@@ -411,11 +436,19 @@ struct ChannelDetailView: View {
     @State private var showCreateInvitation = false
 
     @ViewBuilder
-    private func tabButton(_ title: String, tab: ChannelDetailTab) -> some View {
+    private func tabButton(_ title: String, tab: ChannelDetailTab, showsAttention: Bool = false) -> some View {
         Button {
             selectedTab = tab
         } label: {
-            Text(title)
+            HStack(spacing: 5) {
+                Text(title)
+                if showsAttention {
+                    Circle()
+                        .fill(.red)
+                        .frame(width: 7, height: 7)
+                        .accessibilityLabel("有会话未连接")
+                }
+            }
                 .fontWeight(selectedTab == tab ? .semibold : .regular)
                 .foregroundStyle(selectedTab == tab ? Color.primary : Color.secondary)
                 .padding(.horizontal, 2)
@@ -472,7 +505,11 @@ struct ChannelDetailView: View {
             HStack(spacing: 24) {
                 tabButton("消息", tab: .messages)
                 tabButton("成员", tab: .members)
-                tabButton("转发到会话", tab: .subscriptions)
+                tabButton(
+                    "转发到会话",
+                    tab: .subscriptions,
+                    showsAttention: model.channelHasDisconnectedConversation(channel.id)
+                )
                 Spacer()
             }
             .padding(.horizontal, 20)
@@ -903,9 +940,20 @@ struct SubscriptionCard: View {
 
     private func statusColor(_ status: String) -> Color {
         if status.contains("已连接") || status.contains("正在接收") { return .green }
-        if status.contains("异常") || status.contains("不可用") || status.contains("失败") { return .red }
+        if status.contains("未连接") || status.contains("异常") ||
+            status.contains("不可用") || status.contains("失败") { return .red }
         if status.contains("暂停") { return .secondary }
         return .orange
+    }
+
+    private func actionIcon(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .labelStyle(.iconOnly)
+            .symbolRenderingMode(.monochrome)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 24, height: 24)
+            .contentShape(Rectangle())
     }
 
     private var templatePreview: AttributedString {
@@ -928,7 +976,12 @@ struct SubscriptionCard: View {
 
     var body: some View {
         if let subscription {
-            let status = model.listenerStatus[subscription.id] ?? (subscription.enabled ? "准备接收" : "已暂停")
+            let isDisconnected = model.hostConversationStates[subscription.taskID]?.connected == false
+            let status = !subscription.enabled
+                ? "已暂停"
+                : isDisconnected
+                    ? "会话未连接"
+                    : model.listenerStatus[subscription.id] ?? "准备接收"
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 10) {
                     Button {
@@ -950,20 +1003,30 @@ struct SubscriptionCard: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    Button {
-                        model.openTask(subscription.taskID)
-                    } label: {
-                        Label("打开会话", systemImage: "arrow.up.forward.app")
+                    HStack(spacing: 2) {
+                        Button {
+                            model.openTask(subscription.taskID)
+                        } label: {
+                            actionIcon("打开会话", systemImage: "arrow.up.right")
+                        }
+                        .help("打开会话")
+                        Button {
+                            Task { await model.refreshHostConversation(subscription.taskID) }
+                        } label: {
+                            actionIcon("刷新会话状态", systemImage: "arrow.clockwise")
+                        }
+                        .help("刷新会话状态")
+                        Button {
+                            isExpanded.toggle()
+                        } label: {
+                            actionIcon(
+                                isExpanded ? "收起详情" : "展开详情",
+                                systemImage: isExpanded ? "chevron.up" : "chevron.down"
+                            )
+                        }
+                        .help(isExpanded ? "收起详情" : "展开详情")
                     }
                     .buttonStyle(.borderless)
-                    Button {
-                        isExpanded.toggle()
-                    } label: {
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
                 }
                 if isExpanded {
                     Divider().padding(.vertical, 12)

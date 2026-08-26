@@ -69,6 +69,7 @@
 - [x] 一个 Subscription 的 failed/unknown/restart 不影响其他 Subscription
 - [x] App 重启恢复 enabled Subscription；成员撤权停止对应 feed 和全部 Subscription
 - [x] Subscription 列表可通过 `codex://threads/<id>` 启动 ChatGPT 并打开目标会话
+- [x] 区分用户主动暂停与 Host 会话未连接，首次断连时后台自动请求连接，恢复后自动续接；频道和会话入口显示红点，每张会话卡以统一图标提供打开、刷新和展开操作
 - [x] Subscription 添加或恢复监听时读取 Codex 本机会话名称，失败时回退缩短的会话 ID
 - [x] 确保空闲频道、filtered 消息和 App 状态事件不创建 Host turn
 
