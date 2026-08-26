@@ -359,7 +359,7 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 
 - **GIVEN** 用户在“转发到会话”中选择为当前频道新建专属会话
 - **WHEN** 用户通过原生目录选择器确认工作目录
-- **THEN** App 调用本机 ChatGPT Codex 创建持久 user task，以“Pijoo · 频道名”保存空白 task，取得 id 后打开精确会话，Desktop owner preflight 成功后自动创建当前频道的 TaskBinding 与 Subscription；创建过程不发送输入或创建 turn
+- **THEN** App 调用本机 ChatGPT Codex 创建持久 user task，以“Pijoo · 频道名”保存空白 task，取得 id 后以不激活 Host App 的方式打开精确会话，Desktop owner preflight 成功后自动创建当前频道的 TaskBinding 与 Subscription；创建过程不发送输入、不创建 turn，也不抢占用户当前窗口焦点
 
 #### Scenario: 新建后 Desktop 暂未就绪
 

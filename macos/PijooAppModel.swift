@@ -647,10 +647,12 @@ extension AppModel {
                 throw AppFailure(detail.isEmpty ? "无法新建 AI 会话" : detail)
             }
             let conversationID = response.conversationID.lowercased()
-            guard let url = URL(string: "codex://threads/\(conversationID)"),
-                  NSWorkspace.shared.open(url) else {
+            guard let url = URL(string: "codex://threads/\(conversationID)") else {
                 throw AppFailure("会话已创建（\(conversationID)），但无法在 \(provider.displayName) 中打开")
             }
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = false
+            _ = try await NSWorkspace.shared.open(url, configuration: configuration)
 
             var lastPreflightError = ""
             var verified: (provider: String, conversationID: String)?
