@@ -329,6 +329,7 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **AND** 会话卡右侧的打开、刷新和展开操作只显示同规格图标，通过悬浮标题和无障碍标签说明用途
 - **AND** App 首次检测到未连接时通过对应 TaskBinding 的精确深链在后台请求连接，不激活 Host App、不重复打扰用户
 - **AND** owner 状态重新可用后，App 无需用户操作即可继续对应监听并移除未连接提示
+- **AND** 用户进入“转发到会话”时 App 只执行一次全量状态刷新，不因多张会话卡出现而重复查询；单卡刷新只查询对应会话
 
 #### Scenario: 已绑定会话不缓存标题
 

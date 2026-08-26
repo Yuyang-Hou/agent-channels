@@ -930,6 +930,9 @@ struct ChannelSubscriptionsView: View {
                 .listStyle(.plain)
             }
         }
+        .task(id: model.selectedChannelID) {
+            await model.refreshHostConversationStates()
+        }
     }
 }
 
@@ -1182,7 +1185,6 @@ struct SubscriptionCard: View {
             .onAppear {
                 templateDraft = subscription.template
                 sentMessageTemplateDraft = subscription.sentMessageTemplate ?? defaultSentMessageTemplate
-                Task { await model.refreshHostConversationStates() }
             }
             .alert("启用完全访问权限？", isPresented: $isConfirmingFullAccess) {
                 Button("取消", role: .cancel) {}
