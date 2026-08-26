@@ -12,7 +12,7 @@ private let defaultOrigin = "https://rogerthat-production-fff6.up.railway.app"
 private let keychainService = "dev.pijoo.channel"
 private let managedConfigStart = "# >>> Pijoo managed MCP >>>"
 private let managedConfigEnd = "# <<< Pijoo managed MCP <<<"
-private let githubReleasesURL = URL(string: "https://api.github.com/repos/Yuyang-Hou/agent-channels/releases?per_page=100")!
+private let githubReleasesURL = URL(string: "https://api.github.com/repos/Yuyang-Hou/pijoo/releases?per_page=100")!
 private let automaticUpdateChecksKey = "automaticUpdateChecks"
 private let loadedCodexMCPVersionKey = "loadedCodexMCPVersion"
 private let shownCodexRestartVersionKey = "shownCodexRestartVersion"

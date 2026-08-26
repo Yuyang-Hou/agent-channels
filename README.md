@@ -34,7 +34,7 @@ App 与 AI 发送均支持不@、@所有人和@多名频道成员；每条“转
 ## macOS 0.3 Beta 验收包
 
 Pijoo `0.3.0-beta.20` 已使用 Developer ID 签名、通过 Apple 公证并作为
-[GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.20) 发布。
+[GitHub prerelease](https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.20) 发布。
 安装包内嵌自包含 Bridge，不要求用户安装 Node、npm 或 Codex CLI；也可从源码构建：
 
 ```bash
@@ -102,3 +102,8 @@ turn；用户确认目标任务后，再选择跳过该 message id 或重启重�
 请求已发出、但 Desktop 回执丢失的异常窗口。
 
 `server/README.md` 是上游 RogerThat 服务端说明，不代表 Pijoo 当前产品承诺。
+
+## 开源协议
+
+Pijoo 使用 [MIT License](./LICENSE)。`server/` 中的 RogerThat 上游代码保留其
+[原版权声明](./server/LICENSE)。

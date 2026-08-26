@@ -10,7 +10,7 @@
 - Gatekeeper: DMG 与挂载后的 `Pijoo.app` 均为 `accepted / Notarized Developer ID`
 - Artifact: `Pijoo-0.3.0-beta.18-arm64.dmg`, `28,571,929` bytes
 - SHA-256: `52b8294a3e9b1b759f5deec2f7531abbc86536fbecd589fa6abbe77da063177e`
-- Release: https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.18
+- Release: https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.18
 - 公开资产已回下载并通过 SHA-256、签名、staple、Gatekeeper、DMG、Skill 与 MCP 版本校验。
 
 ## Automated Checks

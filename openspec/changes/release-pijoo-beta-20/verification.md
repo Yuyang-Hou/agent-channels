@@ -27,7 +27,7 @@ Status: notarized GitHub prerelease published and public asset verified; not ins
 - Apple notarization submission `f28547e4-5cfc-4173-9641-13dbe467b792` is `Accepted`；
   `stapler validate` 通过。
 - DMG 与挂载后 App 均为 Gatekeeper `accepted`，source `Notarized Developer ID`。
-- GitHub prerelease: https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.20；
+- GitHub prerelease: https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.20；
   tag 指向构建源码提交 `69eed4099362eaffb11037ac0e3cd5587d2db368`。
 - 公开资产已重新下载，SHA-256、大小、staple、Gatekeeper、App deep/strict 签名、Skill、MCP
   和只读会话状态均与本地产物一致。

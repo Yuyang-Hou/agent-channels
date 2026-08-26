@@ -4,7 +4,7 @@
 
 当前处于 **Pijoo 0.3 Beta 外部试用**：多频道 App、Host 无关边界和 Codex 公网入站链路已经完成；
 包含冷会话绑定、实时目录与权限展示及三档权限管理的 `0.3.0-beta.20` 已从 `main` 构建，使用
-Developer ID 签名、通过 Apple 公证并作为 [GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.20) 发布；本机未安装该包。
+Developer ID 签名、通过 Apple 公证并作为 [GitHub prerelease](https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.20) 发布；本机未安装该包。
 
 ## 已完成
 

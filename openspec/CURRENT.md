@@ -21,6 +21,10 @@
    `main` 确定提交构建、公证并发布 `0.3.0-beta.19` Apple Silicon GitHub prerelease。
 9. [`changes/release-pijoo-beta-20`](./changes/release-pijoo-beta-20/)：从当前 `main` 的确定提交构建、
    公证并发布包含冷会话绑定与会话权限管理的 `0.3.0-beta.20` Apple Silicon GitHub prerelease。
+10. [`changes/add-project-license`](./changes/add-project-license/)：以 MIT License 明确 Pijoo 的开源授权，
+    并保留 `server/` 中 RogerThat 上游代码的原版权声明。
+11. [`changes/rename-github-repository-pijoo`](./changes/rename-github-repository-pijoo/)：将公开 GitHub
+    仓库统一为 `Yuyang-Hou/pijoo`，并同步 App 自动更新地址、文档链接与本地 remote。
 
 已完成设计、尚未进入实现的 change：
 
@@ -41,7 +45,7 @@ IPC Connector 已完成。0.2 的发送凭证与断线状态修复继续作为�
 4. [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
 5. [`../docs/OPEN_QUESTIONS.md`](../docs/OPEN_QUESTIONS.md)
 
-当前只执行上述九个活动 change；账号 change 仅作为下一阶段设计。当前不建设通用插件框架、其他 Host Connector、独立模型
+当前只执行上述十一个活动 change；账号 change 仅作为下一阶段设计。当前不建设通用插件框架、其他 Host Connector、独立模型
 Runtime 或完整聊天客户端。已完成的 Codex 验证记录保留在
 [`changes/archive/2026-08-19-add-codex-thread-bridge`](./changes/archive/2026-08-19-add-codex-thread-bridge/)。
 

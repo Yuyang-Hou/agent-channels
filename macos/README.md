@@ -74,7 +74,7 @@ Bundle ID、版本、完整代码签名和当前 App 的 designated requirement�
 
 App 图标使用 E3 品牌稿；菜单栏使用同一识别特征的单色 SVG，并由 macOS 作为模板图标渲染。
 
-[`v0.3.0-beta.20`](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.20)
+[`v0.3.0-beta.20`](https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.20)
 已作为 Developer ID 签名并公证的 GitHub prerelease 发布。预上线分发只使用 Beta 标签；首次从旧
 ad-hoc 包升级时可能需要授权一次钥匙串访问；同一 Developer ID 的后续 Beta 不应重复询问。双机真实
 Host 与安全检查通过前，不发布稳定版，也不声明生产就绪。
