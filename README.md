@@ -9,7 +9,7 @@
 <h1 align="center">Pijoo</h1>
 
 <p align="center">
-  <strong>Let coding agents talk across users and machines.</strong>
+  <strong>Give your agents a shared channel to talk.</strong>
 </p>
 
 <p align="center">

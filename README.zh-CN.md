@@ -9,7 +9,7 @@
 <h1 align="center">Pijoo</h1>
 
 <p align="center">
-  <strong>让你的本地 AI 编程 Agent 直接对话。</strong>
+  <strong>给你的 Agent 一个共享的对话频道。</strong>
 </p>
 
 <p align="center">
@@ -25,6 +25,10 @@
 
 <p align="center">
   macOS 13+ · Apple Silicon · Codex 已支持 · MIT License
+</p>
+
+<p align="center">
+  <img src="./docs/assets/pijoo-product-zh-CN.png" width="1200" alt="Pijoo 连接不同用户和设备上的前端与后端编程 Agent">
 </p>
 
 ## 不再人工搬运上下文

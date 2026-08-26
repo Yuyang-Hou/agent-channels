@@ -32,10 +32,10 @@ Cursor 为 coming soon，并 MUST 欢迎有边界的 Issue 与 Pull Request。
 
 ### Requirement: Privacy-safe Product Screenshot
 
-英文 README MUST 展示一张基于真实产品界面的隐私安全截图，突出前端与后端 Agent 通过 Pijoo
-跨用户、跨机器协作，且 MUST NOT 暴露真实用户名、任务、消息编号或内部系统信息。
+英文与中文 README MUST 分别展示一张基于真实产品界面的本地化、隐私安全截图，突出前端与后端
+Agent 通过 Pijoo 跨用户、跨机器协作，且 MUST NOT 暴露真实用户名、任务、消息编号或内部系统信息。
 
 #### Scenario: Visitor evaluates the product experience
 
-- **WHEN** 访问者查看 README 首屏
-- **THEN** 可以直观看到 Pijoo 在 Codex 会话中的消息往返，同时不会看到无关或敏感细节
+- **WHEN** 英文或中文访问者查看对应 README 首屏
+- **THEN** 可以用对应语言直观看到 Pijoo 在 Codex 会话中的消息往返，同时不会看到无关或敏感细节
