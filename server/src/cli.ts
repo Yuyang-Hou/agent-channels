@@ -65,6 +65,7 @@ usage:
   rogerthat host-create [options]      # create a new Host conversation
   rogerthat host-preflight [options]   # verify a Host conversation without a turn
   rogerthat host-conversations [opts]  # search local Host conversations
+  rogerthat host-state [options]       # read or update a loaded Host conversation
   rogerthat channel-mcp [options]      # run the local one-tool channel MCP over stdio
 
 options:
@@ -173,6 +174,7 @@ async function main(): Promise<void> {
           "host-provider": { type: "string" },
           "host-conversation": { type: "string" },
           "codex-socket": { type: "string" },
+          "require-owner": { type: "boolean" },
           help: { type: "boolean", short: "h" },
         },
         strict: true,
@@ -183,7 +185,7 @@ async function main(): Promise<void> {
       process.exit(2);
     }
     if (parsed.values.help) {
-      console.log("usage: rogerthat host-preflight --host-provider codex --host-conversation <id|codex://threads/id> [--codex-socket <path>]");
+      console.log("usage: rogerthat host-preflight --host-provider codex --host-conversation <id|codex://threads/id> [--require-owner] [--codex-socket <path>]");
       process.exit(0);
     }
     const provider = parsed.values["host-provider"];
@@ -199,6 +201,7 @@ async function main(): Promise<void> {
       await preflightCodexThread({
         threadId,
         socketPath: parsed.values["codex-socket"],
+        requireOwner: parsed.values["require-owner"],
       });
       console.log(JSON.stringify({
         ok: true,
@@ -255,7 +258,75 @@ async function main(): Promise<void> {
           conversation_id: item.id,
           title: item.title,
           updated_at: item.updatedAt,
+          workspace: item.workspace,
         })),
+      }));
+      process.exit(0);
+    } catch (error) {
+      console.error(`error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  }
+  if (first === "host-state") {
+    const { parseArgs } = await import("node:util");
+    let parsed;
+    try {
+      parsed = parseArgs({
+        args: process.argv.slice(3),
+        options: {
+          "host-provider": { type: "string" },
+          "host-conversation": { type: "string" },
+          permission: { type: "string" },
+          "codex-socket": { type: "string" },
+          help: { type: "boolean", short: "h" },
+        },
+        strict: true,
+        allowPositionals: false,
+      });
+    } catch (error) {
+      console.error(`error: ${(error as Error).message}`);
+      process.exit(2);
+    }
+    if (parsed.values.help) {
+      console.log("usage: rogerthat host-state --host-provider codex --host-conversation <id> [--permission <request-approval|approve-for-me|full-access>] [--codex-socket <path>]");
+      process.exit(0);
+    }
+    const provider = parsed.values["host-provider"];
+    const conversation = parsed.values["host-conversation"];
+    const permission = parsed.values.permission;
+    if (!provider || !conversation) {
+      console.error("error: --host-provider and --host-conversation are required");
+      process.exit(2);
+    }
+    if (permission !== undefined && !["request-approval", "approve-for-me", "full-access"].includes(permission)) {
+      console.error("error: --permission must be request-approval, approve-for-me or full-access");
+      process.exit(2);
+    }
+    try {
+      if (provider !== "codex") throw new Error(`Unsupported Host provider: ${provider}`);
+      const {
+        getCodexConversationState,
+        parseCodexThreadId,
+        setCodexConversationPermission,
+      } = await import("./codex-turn.js");
+      const threadId = parseCodexThreadId(conversation);
+      const state = permission === undefined
+        ? await getCodexConversationState({
+            threadId,
+            socketPath: parsed.values["codex-socket"],
+          })
+        : await setCodexConversationPermission({
+            threadId,
+            permission: permission as "request-approval" | "approve-for-me" | "full-access",
+            socketPath: parsed.values["codex-socket"],
+          });
+      console.log(JSON.stringify({
+        ok: true,
+        provider,
+        conversation_id: threadId,
+        connected: state.connected,
+        workspace: state.workspace,
+        permission: state.permission,
       }));
       process.exit(0);
     } catch (error) {

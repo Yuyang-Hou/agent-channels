@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -7,14 +8,17 @@ import {
   createCodexDelivery,
   createCodexThread,
   formatCodexDelegationMessage,
+  getCodexConversationState,
   parseCodexThreadId,
   parseCodexConversationListOutput,
   preflightCodexThread,
+  setCodexConversationPermission,
 } from "../src/codex-turn.js";
 import { formatChannelMessage } from "../src/host-connector.js";
 
 const THREAD_ID = "01900000-0000-7000-8000-000000000001";
 const UNBOUND_THREAD_ID = "01900000-0000-7000-8000-000000000002";
+const COLD_THREAD_ID = "01900000-0000-7000-8000-000000000003";
 const closers: Array<() => Promise<void>> = [];
 
 function frame(message: object): Buffer {
@@ -52,8 +56,14 @@ describe("Codex task bridge", () => {
   it("reads searchable conversation summaries without conversation content", () => {
     expect(parseCodexConversationListOutput(JSON.stringify([
       { id: THREAD_ID, title: "  API design\nreview  ", updated_at: 123 },
+      { id: UNBOUND_THREAD_ID, title: "Risk", updated_at: 124, approval_mode: "on-request", approvals_reviewer: "auto_review" },
+      { id: COLD_THREAD_ID, title: "Full", updated_at: 125, sandbox_policy: '{"type":"dangerFullAccess"}' },
       { id: "bad", title: "ignored", updated_at: 456 },
-    ]))).toEqual([{ id: THREAD_ID, title: "API design review", updatedAt: 123 }]);
+    ]))).toEqual([
+      { id: THREAD_ID, title: "API design review", updatedAt: 123 },
+      { id: UNBOUND_THREAD_ID, title: "Risk", updatedAt: 124 },
+      { id: COLD_THREAD_ID, title: "Full", updatedAt: 125 },
+    ]);
   });
 
   it("creates a persistent user task through Codex app-server", async () => {
@@ -136,8 +146,20 @@ process.stdin.on("data", (chunk) => {
     }, "{message_source}")).toBe("backend");
   });
 
-  it("preflights only owner discovery and explains when the task needs rebind", async () => {
-    const socketPath = join(mkdtempSync(join(tmpdir(), "rogerthat-codex-")), "ipc.sock");
+  it("binds indexed cold tasks but still requires a Desktop owner before listening", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "rogerthat-codex-"));
+    const socketPath = join(directory, "ipc.sock");
+    execFileSync("/usr/bin/sqlite3", [join(directory, "state_5.sqlite"), `
+      CREATE TABLE threads (
+        id TEXT, name TEXT, title TEXT, updated_at INTEGER, updated_at_ms INTEGER,
+        recency_at_ms INTEGER, archived INTEGER, thread_source TEXT, agent_role TEXT,
+        cwd TEXT, sandbox_policy TEXT, approval_mode TEXT, rollout_path TEXT
+      );
+      INSERT INTO threads VALUES
+        ('${THREAD_ID}', 'ready', '', 1, 1000, 1000, 0, 'user', NULL, '${directory}', '{"type":"workspace-write"}', 'on-request', NULL),
+        ('${UNBOUND_THREAD_ID}', 'unbound', '', 1, 1000, 1000, 0, 'user', NULL, '${directory}', '{"type":"workspace-write"}', 'on-request', NULL),
+        ('${COLD_THREAD_ID}', 'cold', '', 1, 1000, 1000, 0, 'user', NULL, '${directory}', '{"type":"workspace-write"}', 'on-request', NULL);
+    `]);
     const server = createServer();
     const methods: string[] = [];
     const sockets = new Set<Socket>();
@@ -158,6 +180,7 @@ process.stdin.on("data", (chunk) => {
           }));
         } else if (message.method === "thread-owner-discovery") {
           const params = message.params as { conversationId?: string };
+          if (params.conversationId === COLD_THREAD_ID) return;
           socket.write(frame(params.conversationId === THREAD_ID
             ? {
                 type: "response",
@@ -186,16 +209,163 @@ process.stdin.on("data", (chunk) => {
         }),
     );
 
-    await expect(preflightCodexThread({ threadId: THREAD_ID, socketPath })).resolves.toBeUndefined();
-    await expect(preflightCodexThread({ threadId: UNBOUND_THREAD_ID, socketPath })).rejects.toThrow(
+    await expect(preflightCodexThread({ threadId: COLD_THREAD_ID, codexHome: directory })).resolves.toBeUndefined();
+    await expect(preflightCodexThread({ threadId: THREAD_ID, socketPath, codexHome: directory, requireOwner: true })).resolves.toBeUndefined();
+    await expect(preflightCodexThread({ threadId: UNBOUND_THREAD_ID, socketPath, codexHome: directory, requireOwner: true })).rejects.toThrow(
       `Codex task ${UNBOUND_THREAD_ID} needs rebind: open it once in ChatGPT Desktop, then retry`,
     );
+    await expect(preflightCodexThread({
+      threadId: COLD_THREAD_ID,
+      socketPath,
+      codexHome: directory,
+      requireOwner: true,
+      timeoutMs: 20,
+    })).rejects.toThrow(`Codex task ${COLD_THREAD_ID} needs rebind: open it once in ChatGPT Desktop, then retry`);
+    await expect(getCodexConversationState({
+      threadId: COLD_THREAD_ID,
+      socketPath,
+      timeoutMs: 20,
+    })).resolves.toEqual({ connected: false, permission: "unknown" });
     expect(methods).toEqual([
       "initialize",
       "thread-owner-discovery",
       "initialize",
       "thread-owner-discovery",
+      "initialize",
+      "thread-owner-discovery",
+      "initialize",
+      "thread-owner-discovery",
     ]);
+  });
+
+  it("reads and updates only a loaded task's live permission state", async () => {
+    const socketPath = join(mkdtempSync(join(tmpdir(), "rogerthat-codex-")), "ipc.sock");
+    const server = createServer();
+    const sockets = new Set<Socket>();
+    const methods: string[] = [];
+    const following: boolean[] = [];
+    let permission = "request-approval";
+    let clientId = "";
+    const ownerId = "desktop-owner";
+
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+      readFrames(socket, (message) => {
+        if (message.type === "broadcast" && message.method === "thread-stream-following-changed") {
+          const params = message.params as { following?: boolean };
+          following.push(params.following === true);
+          if (!params.following) return;
+          socket.write(frame({
+            type: "broadcast",
+            method: "thread-stream-state-changed",
+            sourceClientId: ownerId,
+            targetClientIds: [clientId],
+            version: 11,
+            params: {
+              hostId: "local",
+              conversationId: THREAD_ID,
+              change: {
+                type: "snapshot",
+                revision: 1,
+                conversationState: {
+                  cwd: "/tmp/workspace",
+                  latestThreadSettings: permission === "approve-for-me"
+                    ? {
+                        cwd: "/tmp/workspace",
+                        approvalPolicy: "on-request",
+                        approvalsReviewer: "guardian_subagent",
+                        sandboxPolicy: { type: "workspaceWrite" },
+                        activePermissionProfile: { id: ":workspace", extends: null },
+                      }
+                    : {
+                        cwd: "/tmp/workspace",
+                        approvalPolicy: "on-request",
+                        approvalsReviewer: "user",
+                        sandboxPolicy: { type: "workspaceWrite" },
+                        activePermissionProfile: { id: ":workspace", extends: null },
+                      },
+                },
+              },
+            },
+          }));
+          return;
+        }
+        if (message.type !== "request" || typeof message.method !== "string") return;
+        methods.push(message.method);
+        const requestId = String(message.requestId);
+        if (message.method === "initialize") {
+          clientId = "bridge-client";
+          socket.write(frame({
+            type: "response",
+            requestId,
+            resultType: "success",
+            method: "initialize",
+            result: { clientId },
+          }));
+        } else if (message.method === "thread-owner-discovery") {
+          socket.write(frame({
+            type: "response",
+            requestId,
+            resultType: "success",
+            method: "thread-owner-discovery",
+            handledByClientId: ownerId,
+            result: {},
+          }));
+        } else if (message.method === "thread-follower-update-thread-settings") {
+          expect(message.targetClientId).toBe(ownerId);
+          expect(message.version).toBe(1);
+          expect(message.params).toEqual({
+            conversationId: THREAD_ID,
+            threadSettings: {
+              permissions: ":workspace",
+              approvalPolicy: "on-request",
+              approvalsReviewer: "guardian_subagent",
+            },
+          });
+          permission = "approve-for-me";
+          socket.write(frame({
+            type: "response",
+            requestId,
+            resultType: "success",
+            method: "thread-follower-update-thread-settings",
+            handledByClientId: ownerId,
+            result: { ok: true },
+          }));
+        }
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    closers.push(
+      () => new Promise<void>((resolve) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => resolve());
+      }),
+    );
+
+    await expect(getCodexConversationState({ threadId: THREAD_ID, socketPath })).resolves.toEqual({
+      connected: true,
+      workspace: "/tmp/workspace",
+      permission: "request-approval",
+    });
+    await expect(setCodexConversationPermission({
+      threadId: THREAD_ID,
+      socketPath,
+      permission: "approve-for-me",
+    })).resolves.toEqual({
+      connected: true,
+      workspace: "/tmp/workspace",
+      permission: "approve-for-me",
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(methods).toEqual([
+      "initialize",
+      "thread-owner-discovery",
+      "initialize",
+      "thread-owner-discovery",
+      "thread-follower-update-thread-settings",
+    ]);
+    expect(following).toEqual([true, false, true, false]);
   });
 
   it("discovers the Desktop owner and starts exactly one targeted turn", async () => {

@@ -44,11 +44,40 @@ export function parseCodexThreadId(value: string): string {
   return id;
 }
 
+export type CodexPermission = "request-approval" | "approve-for-me" | "full-access" | "unknown";
+
 export type CodexConversationSummary = {
   id: string;
   title: string;
   updatedAt: number;
+  workspace?: string;
 };
+
+export type CodexConversationState = {
+  connected: boolean;
+  workspace?: string;
+  permission: CodexPermission;
+};
+
+function permissionState(
+  approvalMode: unknown,
+  approvalsReviewer: unknown,
+  sandboxPolicy: unknown,
+  activePermissionProfile?: unknown,
+): CodexPermission {
+  const sandboxType = isRecord(sandboxPolicy) ? sandboxPolicy.type : undefined;
+  const profileId = isRecord(activePermissionProfile) ? activePermissionProfile.id : undefined;
+  if (
+    approvalMode === "never" &&
+    (sandboxType === "dangerFullAccess" || sandboxType === "danger-full-access" || profileId === ":danger-full-access")
+  ) return "full-access";
+  if (
+    approvalMode === "on-request" &&
+    (approvalsReviewer === "auto_review" || approvalsReviewer === "guardian_subagent")
+  ) return "approve-for-me";
+  if (approvalMode === "on-request" && approvalsReviewer === "user") return "request-approval";
+  return "unknown";
+}
 
 export function parseCodexConversationListOutput(output: string): CodexConversationSummary[] {
   try {
@@ -63,6 +92,7 @@ export function parseCodexConversationListOutput(output: string): CodexConversat
         id: row.id.toLowerCase(),
         title: title || row.id,
         updatedAt: typeof row.updated_at === "number" ? row.updated_at : 0,
+        workspace: typeof row.cwd === "string" && isAbsolute(row.cwd) ? row.cwd : undefined,
       }];
     });
   } catch {
@@ -81,7 +111,7 @@ export async function listCodexConversations(options: {
   const filter = query
     ? ` AND (LOWER(id) LIKE '%' || LOWER('${query}') || '%' OR LOWER(COALESCE(NULLIF(TRIM(name), ''), NULLIF(TRIM(title), ''), id)) LIKE '%' || LOWER('${query}') || '%')`
     : "";
-  const sql = `SELECT id, COALESCE(NULLIF(TRIM(name), ''), NULLIF(TRIM(title), ''), id) AS title, COALESCE(updated_at_ms, updated_at * 1000) AS updated_at FROM threads WHERE archived = 0 AND (thread_source IS NULL OR thread_source = 'user') AND agent_role IS NULL${filter} ORDER BY recency_at_ms DESC, id DESC LIMIT ${limit}`;
+  const sql = `SELECT id, COALESCE(NULLIF(TRIM(name), ''), NULLIF(TRIM(title), ''), id) AS title, COALESCE(updated_at_ms, updated_at * 1000) AS updated_at, cwd FROM threads WHERE archived = 0 AND (thread_source IS NULL OR thread_source = 'user') AND agent_role IS NULL${filter} ORDER BY recency_at_ms DESC, id DESC LIMIT ${limit}`;
   const output = await new Promise<string>((resolve, reject) => {
     execFile(
       "/usr/bin/sqlite3",
@@ -283,6 +313,12 @@ type PendingRequest = {
   reject: (error: Error) => void;
 };
 
+type PendingSnapshot = {
+  timer: NodeJS.Timeout;
+  resolve: (state: CodexConversationState) => void;
+  reject: (error: Error) => void;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -360,7 +396,7 @@ async function connectCodexSocket(explicitPath: string | undefined, timeoutMs: n
   throw new Error(`Could not connect to ChatGPT Desktop IPC (${errors.join("; ")})`);
 }
 
-function writeFrame(socket: Socket, message: object): void {
+function writeFrame(socket: Socket, message: object, flushed?: () => void): void {
   const payload = Buffer.from(JSON.stringify(message), "utf8");
   if (payload.length === 0 || payload.length > MAX_IPC_FRAME_BYTES) {
     throw new Error("Codex Desktop IPC frame exceeds the supported size");
@@ -368,7 +404,7 @@ function writeFrame(socket: Socket, message: object): void {
   const frame = Buffer.allocUnsafe(4 + payload.length);
   frame.writeUInt32LE(payload.length, 0);
   payload.copy(frame, 4);
-  socket.write(frame);
+  socket.write(frame, flushed);
 }
 
 function threadNeedsRebindError(threadId: string): Error {
@@ -406,15 +442,63 @@ type DesktopTurnOptions = DesktopSessionBaseOptions & {
   turnTimeoutMs: number;
 };
 
+type DesktopStateOptions = DesktopSessionBaseOptions & {
+  mode: "state";
+};
+
+type DesktopPermissionOptions = DesktopSessionBaseOptions & {
+  mode: "permission";
+  permission: Exclude<CodexPermission, "unknown">;
+};
+
+function permissionSettings(permission: DesktopPermissionOptions["permission"]): Record<string, unknown> {
+  switch (permission) {
+    case "request-approval":
+      return { permissions: ":workspace", approvalPolicy: "on-request", approvalsReviewer: "user" };
+    case "approve-for-me":
+      return { permissions: ":workspace", approvalPolicy: "on-request", approvalsReviewer: "guardian_subagent" };
+    case "full-access":
+      return { permissions: ":danger-full-access", approvalPolicy: "never", approvalsReviewer: "user" };
+  }
+}
+
+function snapshotState(message: Record<string, unknown>, threadId: string): CodexConversationState | undefined {
+  if (message.type !== "broadcast" || message.method !== "thread-stream-state-changed") return undefined;
+  const params = isRecord(message.params) ? message.params : undefined;
+  const change = isRecord(params?.change) ? params.change : undefined;
+  const conversation = isRecord(change?.conversationState) ? change.conversationState : undefined;
+  if (params?.hostId !== "local" || params?.conversationId !== threadId || change?.type !== "snapshot" || !conversation) {
+    return undefined;
+  }
+  const settings = isRecord(conversation.latestThreadSettings) ? conversation.latestThreadSettings : undefined;
+  const workspace = typeof settings?.cwd === "string" && isAbsolute(settings.cwd)
+    ? settings.cwd
+    : typeof conversation.cwd === "string" && isAbsolute(conversation.cwd)
+      ? conversation.cwd
+      : undefined;
+  return {
+    connected: true,
+    workspace,
+    permission: permissionState(
+      settings?.approvalPolicy,
+      settings?.approvalsReviewer,
+      settings?.sandboxPolicy,
+      settings?.activePermissionProfile,
+    ),
+  };
+}
+
 async function runDesktopSession(socket: Socket, options: DesktopPreflightOptions): Promise<void>;
 async function runDesktopSession(socket: Socket, options: DesktopTurnOptions): Promise<string>;
+async function runDesktopSession(socket: Socket, options: DesktopStateOptions | DesktopPermissionOptions): Promise<CodexConversationState>;
 async function runDesktopSession(
   socket: Socket,
-  options: DesktopPreflightOptions | DesktopTurnOptions,
-): Promise<string | void> {
+  options: DesktopPreflightOptions | DesktopTurnOptions | DesktopStateOptions | DesktopPermissionOptions,
+): Promise<string | void | CodexConversationState> {
   let clientId = INITIALIZING_CLIENT_ID;
   let buffer: Buffer = Buffer.alloc(0);
   let pending: PendingRequest | undefined;
+  let pendingSnapshot: PendingSnapshot | undefined;
   let terminalError: Error | undefined;
 
   const fail = (error: Error) => {
@@ -425,11 +509,26 @@ async function runDesktopSession(
       pending.reject(error);
       pending = undefined;
     }
+    if (pendingSnapshot) {
+      clearTimeout(pendingSnapshot.timer);
+      pendingSnapshot.reject(error);
+      pendingSnapshot = undefined;
+    }
     socket.destroy();
   };
 
   const onMessage = (message: unknown) => {
     if (!isRecord(message)) return;
+    if (pendingSnapshot) {
+      const state = snapshotState(message, options.threadId);
+      if (state) {
+        clearTimeout(pendingSnapshot.timer);
+        const resolve = pendingSnapshot.resolve;
+        pendingSnapshot = undefined;
+        resolve(state);
+        return;
+      }
+    }
     if (message.type === "client-discovery-request" && typeof message.requestId === "string") {
       writeFrame(socket, {
         type: "client-discovery-response",
@@ -506,6 +605,43 @@ async function runDesktopSession(
     });
   };
 
+  const readState = async (ownerClientId: string): Promise<CodexConversationState> => {
+    if (pendingSnapshot) throw new Error("Codex Desktop IPC snapshot request already pending");
+    const state = new Promise<CodexConversationState>((resolve, reject) => {
+      const timer = setTimeout(
+        () => fail(new Error("Codex Desktop IPC thread settings snapshot timed out")),
+        options.discoveryTimeoutMs,
+      );
+      pendingSnapshot = { timer, resolve, reject };
+    });
+    writeFrame(socket, {
+      type: "broadcast",
+      method: "thread-stream-following-changed",
+      sourceClientId: clientId,
+      targetClientIds: [ownerClientId],
+      version: 1,
+      params: { hostId: "local", conversationId: options.threadId, following: true },
+    });
+    try {
+      return await state;
+    } finally {
+      if (!socket.destroyed) {
+        await new Promise<void>((resolve) => writeFrame(
+          socket,
+          {
+            type: "broadcast",
+            method: "thread-stream-following-changed",
+            sourceClientId: clientId,
+            targetClientIds: [ownerClientId],
+            version: 1,
+            params: { hostId: "local", conversationId: options.threadId, following: false },
+          },
+          resolve,
+        ));
+      }
+    }
+  };
+
   try {
     const initialized = await request(
       "initialize",
@@ -521,18 +657,45 @@ async function runDesktopSession(
     }
     clientId = initializedResult.clientId;
 
-    const owner = await request(
-      "thread-owner-discovery",
-      { hostId: "local", conversationId: options.threadId },
-      1,
-      undefined,
-      options.discoveryTimeoutMs,
-    );
+    let owner: IpcResponse;
+    try {
+      owner = await request(
+        "thread-owner-discovery",
+        { hostId: "local", conversationId: options.threadId },
+        1,
+        undefined,
+        options.discoveryTimeoutMs,
+      );
+    } catch (error) {
+      if ((error as Error).message === "Codex Desktop IPC thread-owner-discovery timed out") {
+        throw threadNeedsRebindError(options.threadId);
+      }
+      throw error;
+    }
     if (owner.resultType !== "success") throw responseError("thread-owner-discovery", owner, options.threadId);
     if (typeof owner.handledByClientId !== "string") {
       throw threadNeedsRebindError(options.threadId);
     }
     if (options.mode === "preflight") return;
+    if (options.mode === "state") return await readState(owner.handledByClientId);
+    if (options.mode === "permission") {
+      const updated = await request(
+        "thread-follower-update-thread-settings",
+        {
+          conversationId: options.threadId,
+          threadSettings: permissionSettings(options.permission),
+        },
+        1,
+        owner.handledByClientId,
+        options.discoveryTimeoutMs,
+      );
+      assertMutatingOutcomeKnown("update-thread-settings", updated);
+      const receipt = isRecord(updated.result) ? updated.result : undefined;
+      if (updated.resultType !== "success" || receipt?.ok !== true) {
+        throw responseError("thread-follower-update-thread-settings", updated, options.threadId);
+      }
+      return await readState(owner.handledByClientId);
+    }
 
     const input = [{ type: "text", text: options.text, text_elements: [] }];
     const steer = async (): Promise<IpcResponse> => {
@@ -638,6 +801,10 @@ async function runDesktopSession(
       clearTimeout(pending.timer);
       pending = undefined;
     }
+    if (pendingSnapshot) {
+      clearTimeout(pendingSnapshot.timer);
+      pendingSnapshot = undefined;
+    }
     socket.destroy();
   }
 }
@@ -665,13 +832,56 @@ export async function preflightCodexThread(options: {
   threadId: string;
   socketPath?: string;
   timeoutMs?: number;
+  codexHome?: string;
+  requireOwner?: boolean;
 }): Promise<void> {
   const threadId = parseCodexThreadId(options.threadId);
+  const indexed = await listCodexConversations({ query: threadId, limit: 1, codexHome: options.codexHome });
+  if (!indexed.some((conversation) => conversation.id === threadId)) {
+    throw new Error(`Codex task ${threadId} was not found`);
+  }
+  if (!options.requireOwner) return;
   const timeoutMs = options.timeoutMs ?? 5_000;
   const socket = await connectCodexSocket(options.socketPath, timeoutMs);
   await runDesktopSession(socket, {
     mode: "preflight",
     threadId,
     discoveryTimeoutMs: timeoutMs,
+  });
+}
+
+export async function getCodexConversationState(options: {
+  threadId: string;
+  socketPath?: string;
+  timeoutMs?: number;
+}): Promise<CodexConversationState> {
+  const threadId = parseCodexThreadId(options.threadId);
+  const timeoutMs = options.timeoutMs ?? 1_000;
+  try {
+    const socket = await connectCodexSocket(options.socketPath, timeoutMs);
+    return await runDesktopSession(socket, {
+      mode: "state",
+      threadId,
+      discoveryTimeoutMs: timeoutMs,
+    });
+  } catch {
+    return { connected: false, permission: "unknown" };
+  }
+}
+
+export async function setCodexConversationPermission(options: {
+  threadId: string;
+  permission: Exclude<CodexPermission, "unknown">;
+  socketPath?: string;
+  timeoutMs?: number;
+}): Promise<CodexConversationState> {
+  const threadId = parseCodexThreadId(options.threadId);
+  const timeoutMs = options.timeoutMs ?? 5_000;
+  const socket = await connectCodexSocket(options.socketPath, timeoutMs);
+  return runDesktopSession(socket, {
+    mode: "permission",
+    threadId,
+    discoveryTimeoutMs: timeoutMs,
+    permission: options.permission,
   });
 }

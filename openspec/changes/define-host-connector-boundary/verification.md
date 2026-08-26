@@ -9,9 +9,50 @@
   `send_to_channel(message)`，主动广播与入站消息相互独立。
 - 公共 Binding 参数统一为 `--host-provider + --host-conversation`；当前内置分派只支持 `codex`，
   `--codex-socket` 仅保留为该 Connector 的诊断参数。
-- `host-conversations` 可按 Codex 标题或 id 搜索未归档用户主会话；标题只在当次结果中返回，
-  TaskBinding 不保存标题，点选或直接输入 id 最终都执行 owner preflight。
+- `host-conversations` 可按 Codex 标题或 id 搜索未归档用户主会话，返回上次目录但权限统一为
+  未知；点选或直接输入 id 只复验本机身份，因此冷会话可以先绑定。
+- `host-state` 仅对已加载 owner 短暂 following，读取当前目录与权限后立即解除；三档权限修改
+  复用 ChatGPT 内置 profile，完全访问在 App 内二次确认，频道与 MCP 没有该入口。
 - 不声称已经支持非 Codex Host。
+
+## Automated — 2026-08-26
+
+- `npm test`: 11 files, 101 tests passed；覆盖冷会话返回未知、实时 snapshot 读取、三档参数、
+  owner 更新回执、修改后回读及解除 following。
+- `npm run typecheck`、`npm run build`、Swift warnings-as-errors typecheck：passed；macOS v2 self-test
+  在沙箱内因 Unix socket `Operation not permitted` 失败，未改代码在允许 IPC 的环境重跑后 passed。
+- 真实 ChatGPT Desktop IPC 只读验收返回当前会话 `connected=true`、目录
+  `/Users/hyy/project/agent-channels`、权限 `request-approval`；未执行真实权限修改。
+- `openspec validate define-host-connector-boundary --strict` 与 `git diff --check`: passed。
+- 源码检查完成后已重建本地验收包；结果见下方 2026-08-26 Local Package。
+
+## Local Package — 2026-08-26
+
+- 基于当前未提交源码覆盖重建 `macos/build/Pijoo-0.3.0-beta.19-arm64.dmg`；新包为
+  28,666,081 bytes，SHA-256 `7ffe2c69071a0e373e0cfee8b50d7014c7d5cb5803a0168d7d906c69d4a3d5fa`。
+- `hdiutil verify`、DMG 签名与挂载后 App deep/strict 签名均通过；身份为内部
+  `Agent Channels Beta Signing`，未公证、未安装、未发布。
+- 挂载包内版本为 `0.3.0-beta.19` / build `19`，MCP `serverInfo.version` 同为
+  `0.3.0-beta.19`；包内 `host-state` 实际返回当前会话 `connected=true`、目录
+  `/Users/hyy/project/agent-channels`、权限 `approve-for-me`。
+
+## Automated — 2026-08-25
+
+- `npm test`: 11 files, 100 tests passed；覆盖冷会话本机身份复验、owner 缺失与 discovery 超时。
+- `npm run typecheck`、服务端 build、Swift typecheck 与 macOS v2 self-test：passed。
+- 真实 `host-conversations` 读取当前会话，返回正确工作目录及 `approve-for-me` 权限摘要。
+- `openspec validate define-host-connector-boundary --strict`: passed。
+
+## Local Package — 2026-08-25
+
+- 基于当前未提交源码重建同版本本地验收包 `macos/build/Pijoo-0.3.0-beta.19-arm64.dmg`；它覆盖
+  工作区旧同名文件，不替代已发布、公证的 beta.19 资产。
+- 新包为 28,647,893 bytes，SHA-256 `ba5285aa4a041f7a22f19d07d6ce7538206e4baff9e544f8e3a14abf8bd861c6`；
+  `hdiutil verify`、DMG 签名和挂载后 App deep/strict 签名均通过，身份为内部
+  `Agent Channels Beta Signing`，未公证、未安装、未发布。
+- 挂载包内版本为 `0.3.0-beta.19` / build `19`，MCP `serverInfo.version` 同为
+  `0.3.0-beta.19`；实际 `host-conversations` 返回当前会话的目录与 `approve-for-me` 权限，
+  默认 `host-preflight` 在不请求 Desktop owner 时通过。
 
 ## Automated — 2026-08-24
 

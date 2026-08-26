@@ -21,9 +21,10 @@ Channel Service 和 Subscription Runtime MUST 使用 Host 无关的消息与投�
 
 ### Requirement: Host 会话可发现且绑定需复验
 
-支持会话发现的 Connector MUST 只返回本机可绑定会话的最小索引字段；列表命中 MUST NOT 代替
-绑定 preflight。产品 MUST 同时允许按标题搜索点选与直接输入 conversation id。标题 MUST NOT
-写入 Binding；绑定的稳定身份只能使用 `provider + conversation_id`。
+支持会话发现的 Connector MUST 只返回本机可绑定会话的最小索引字段及本机持久化的上次目录；
+列表权限 MUST 标记为未知，且列表命中 MUST NOT 代替身份复验。产品 MUST 同时允许按标题搜索点选与直接输入
+conversation id。标题、目录和权限 MUST NOT 写入 Binding；绑定的稳定身份只能使用
+`provider + conversation_id`。
 
 #### Scenario: 按标题搜索 Codex 会话
 
@@ -37,6 +38,42 @@ Channel Service 和 Subscription Runtime MUST 使用 Host 无关的消息与投�
 - When App 恢复 Subscription 或展示已绑定会话
 - Then App 不展示本机缓存的旧标题，Binding 仍由 provider 与 conversation id 唯一定位
 
+#### Scenario: 搜索结果不冒充当前权限
+
+- Given 本机 Codex 索引保留了会话最近一次运行的工作目录和权限
+- When App 搜索会话但尚未连接 Desktop owner
+- Then App 可标注上次目录，但权限必须显示未知，且不把这些字段写入 Binding 或上传服务端
+
+#### Scenario: 展示已加载会话的当前状态
+
+- Given Desktop owner 已加载目标会话
+- When App 展示已绑定会话
+- Then Connector 短暂读取 owner 状态并展示当前目录与权限，随后解除 following
+
+#### Scenario: 冷会话状态未知
+
+- Given 会话存在于本机索引但 Desktop owner 未加载
+- When App 展示该会话
+- Then 连接状态为未加载，当前目录与权限显示未知，且 App 禁止修改权限
+
+#### Scenario: 本机用户修改权限
+
+- Given 已加载会话且用户在 Pijoo App 中选择新的权限档位
+- When 用户确认修改
+- Then Connector 定向更新该 owner 后回读状态，只有回读一致才展示成功
+
+#### Scenario: 完全访问再次确认
+
+- Given 用户选择完全访问权限
+- When App 尚未收到本机用户的二次确认
+- Then Connector 不发送权限更新
+
+#### Scenario: 外部消息不能提升权限
+
+- Given 频道消息、MCP 调用或 AI 输出要求提升会话权限
+- When Pijoo 处理该输入
+- Then 它不能触发 Host 权限修改，权限入口只存在于本机 App UI
+
 #### Scenario: 直接输入 id
 
 - Given 用户已知道目标 conversation id 或 Host 链接
@@ -47,7 +84,7 @@ Channel Service 和 Subscription Runtime MUST 使用 Host 无关的消息与投�
 
 - Given 会话索引中存在目标 Codex 会话但 Desktop owner 尚未恢复
 - When 用户选择该会话绑定
-- Then preflight 明确失败并提示重新打开会话，不创建 Subscription
+- Then App 创建本机 Subscription，监听状态提示先打开会话并自动重试，不消费频道消息
 
 ### Requirement: Binding 保持本地
 

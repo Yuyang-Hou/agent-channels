@@ -20,7 +20,7 @@ task-channel Subscription 和本地消息历史；菜单栏保留运行状态与
 
 ```bash
 ./macos/build-app.sh
-open "macos/build/Pijoo-0.3.0-beta.19-arm64.dmg"
+open "macos/build/Pijoo-0.3.0-beta.20-arm64.dmg"
 ```
 
 构建脚本默认使用 `xcrun --sdk macosx` 返回的 SDK。需要指定 SDK 时，可传绝对路径或

@@ -73,19 +73,28 @@ Desktop 重启或升级后 owner 丢失时，Connector 返回 `needs_rebind` 语
 
 ## 会话发现
 
-`host-conversations` 是只读 Host 能力，返回 `provider + conversation_id + title + updated_at`，
-不返回会话正文、工作目录或权限。Codex 从本机索引中只选择未归档的用户主会话，排除 subagent、
-审批 reviewer 与实时语音内部会话。用户可按标题或 id 搜索，也可直接输入 id/链接；列表命中不
-代表 Desktop 当前可投递，最终绑定仍必须执行 owner preflight。标题是易变的发现数据，只在
-当前搜索结果展示；TaskBinding 不保存标题，绑定后的稳定展示使用 Host 名称与缩短的 conversation id。
+`host-conversations` 是只读 Host 能力，返回 `provider + conversation_id + title + updated_at` 和
+本机索引中的上次目录，不返回会话正文，权限统一为未知。Codex 只选择未归档的用户主会话，排除
+subagent、审批 reviewer 与实时语音内部会话。搜索和绑定只复验本机索引身份，不依赖 Desktop
+当前是否加载 owner；Binding 仍只保存 `provider + conversation_id`。
+
+`host-state` 只用于已绑定会话。它发现 Desktop owner 后短暂声明 following，从 owner snapshot
+只提取 `cwd + latestThreadSettings`，随即解除 following；正文、turn 和其他 snapshot 字段不落盘、
+不展示、不上传。owner 不存在或超时时返回 `connected=false`、目录和权限未知。用户在 App 中切换
+权限时，Connector 定向调用 `thread-follower-update-thread-settings`，只使用 ChatGPT 内置
+`:workspace` / `:danger-full-access` profile，收到 owner 成功回执后重新读取状态确认。
 
 ## 信任边界
 
 标准信封必须保留来源并标记正文为不可信外部输入。Connector 可以使用 Host 原生来源
 元数据，但不能把远端提供的会话 id 当成可信来源或跳过 Host 权限。高风险工具行为仍由
 目标 Host 的权限模型决定。P0 每条消息先尝试 steer-turn，明确没有 active turn 时才发送
-start-turn；不启用 `following`，因此不接收、持久化或上传目标 task 的 snapshot。频道凭证、
-IPC endpoint 和 Binding 不进入模型正文。
+start-turn；消息投递路径不启用 `following`。只有用户查看或修改本机绑定状态时，状态路径才
+短暂接收一次 snapshot 并立即解除，且只保留目录与权限字段。频道凭证、IPC endpoint 和 Binding
+不进入模型正文。
+
+频道正文、MCP 和 AI 不能触发权限修改。普通两档由本机用户直接选择；完全访问必须在 App 内再次
+确认。冷会话不使用历史权限冒充当前值，也不能修改权限。
 
 Desktop IPC 属于 Host 私有协议。Connector 固定并校验 initialize、owner discovery、
 steer-turn 与 start-turn 的协议版本和响应形状。缺少 owner 或明确拒绝可安全重试；mutating

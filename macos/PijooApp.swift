@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import CryptoKit
 import Darwin
 import Foundation
@@ -147,13 +148,44 @@ struct HostConversationSummary: Codable, Equatable, Identifiable {
     var conversationID: String
     var title: String
     var updatedAt: Double
+    var workspace: String?
 
     var id: String { "\(provider):\(conversationID)" }
+    var searchStateLabel: String {
+        "权限未知" + (workspace.map { " · 上次目录：\($0)" } ?? " · 目录未知")
+    }
 
     enum CodingKeys: String, CodingKey {
-        case provider, title
+        case provider, title, workspace
         case conversationID = "conversation_id"
         case updatedAt = "updated_at"
+    }
+}
+
+enum HostPermissionChoice: String, CaseIterable, Identifiable {
+    case requestApproval = "request-approval"
+    case approveForMe = "approve-for-me"
+    case fullAccess = "full-access"
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .requestApproval: "请求批准"
+        case .approveForMe: "仅风险操作请求批准"
+        case .fullAccess: "完全访问权限"
+        }
+    }
+}
+
+struct HostConversationRuntimeState: Decodable, Equatable {
+    let connected: Bool
+    let workspace: String?
+    let permission: String
+
+    var label: String {
+        guard connected else { return "会话未加载 · 权限未知 · 目录未知" }
+        let permissionLabel = HostPermissionChoice(rawValue: permission)?.title ?? "权限未知"
+        return "\(permissionLabel)" + (workspace.map { " · \($0)" } ?? " · 目录未知")
     }
 }
 
@@ -2335,6 +2367,7 @@ final class AppModel: ObservableObject {
     @Published var selectedHostProvider = HostProviderChoice.codex
     @Published var conversationSearchResults: [HostConversationSummary] = []
     @Published var conversationSearchStatus = ""
+    @Published var hostConversationStates: [UUID: HostConversationRuntimeState] = [:]
     @Published var composerText = ""
     @Published var composerMentionAll = false
     @Published var composerMentionMemberIDs: [String] = []
@@ -2772,6 +2805,82 @@ extension AppModel {
         }
     }
 
+    @discardableResult
+    private func refreshHostConversationState(_ task: TaskBinding) async -> HostConversationRuntimeState? {
+        guard let provider = HostProviderChoice(rawValue: task.provider), provider.supportsForwarding else { return nil }
+        do {
+            let result = try await Sidecar.run([
+                "host-state", "--host-provider", task.provider,
+                "--host-conversation", task.conversationID,
+            ])
+            guard result.status == 0,
+                  let data = result.stdout.data(using: .utf8),
+                  let state = try? JSONDecoder().decode(HostConversationRuntimeState.self, from: data) else {
+                throw AppFailure("无法读取 ChatGPT 会话状态")
+            }
+            hostConversationStates[task.id] = state
+            return state
+        } catch {
+            hostConversationStates[task.id] = HostConversationRuntimeState(
+                connected: false,
+                workspace: nil,
+                permission: "unknown"
+            )
+            ClientLog.record("warning", "host_state_refresh_failed", detail: error.localizedDescription)
+            return nil
+        }
+    }
+
+    func refreshHostConversationStates() async {
+        for task in state.tasks { await refreshHostConversationState(task) }
+        for subscription in state.subscriptions where subscription.enabled && listeners[subscription.id] == nil {
+            restartListenerIfNeeded(subscription.id)
+        }
+    }
+
+    func hostStateLabel(_ taskID: UUID) -> String {
+        hostConversationStates[taskID]?.label ?? "正在读取会话目录与权限…"
+    }
+
+    func hostPermission(_ taskID: UUID) -> HostPermissionChoice? {
+        guard let state = hostConversationStates[taskID], state.connected else { return nil }
+        return HostPermissionChoice(rawValue: state.permission)
+    }
+
+    func hostPermissionCanChange(_ taskID: UUID) -> Bool {
+        hostConversationStates[taskID]?.connected == true
+    }
+
+    func updateHostPermission(_ taskID: UUID, permission: HostPermissionChoice) async {
+        guard let task = state.tasks.first(where: { $0.id == taskID }) else { return }
+        guard hostPermissionCanChange(taskID) else {
+            showNotice(title: "会话未加载", message: "请先在 ChatGPT 中打开该会话，再修改权限。")
+            return
+        }
+        busy = true
+        defer { busy = false }
+        do {
+            let result = try await Sidecar.run([
+                "host-state", "--host-provider", task.provider,
+                "--host-conversation", task.conversationID,
+                "--permission", permission.rawValue,
+            ])
+            guard result.status == 0,
+                  let data = result.stdout.data(using: .utf8),
+                  let updated = try? JSONDecoder().decode(HostConversationRuntimeState.self, from: data),
+                  updated.connected,
+                  updated.permission == permission.rawValue else {
+                let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                throw AppFailure(detail.isEmpty ? "ChatGPT 未确认权限修改" : detail)
+            }
+            hostConversationStates[taskID] = updated
+            lastError = ""
+        } catch {
+            await refreshHostConversationState(task)
+            fail(error)
+        }
+    }
+
     func bindHostConversation(_ conversation: HostConversationSummary) async {
         if let provider = HostProviderChoice(rawValue: conversation.provider) {
             selectedHostProvider = provider
@@ -2959,6 +3068,7 @@ extension AppModel {
         state.subscriptions.removeAll { $0.id == id }
         if !state.subscriptions.contains(where: { $0.taskID == removed.taskID }) {
             state.tasks.removeAll { $0.id == removed.taskID }
+            hostConversationStates.removeValue(forKey: removed.taskID)
         }
         persistState()
     }
@@ -3182,11 +3292,14 @@ extension AppModel {
                 "host-preflight",
                 "--host-provider", task.provider,
                 "--host-conversation", task.conversationID,
+                "--require-owner",
             ])
             guard listenerCanStart(id, generation: generation) else { return }
             guard preflight.status == 0 else {
                 let detail = preflight.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-                throw AppFailure(detail.isEmpty ? "AI 会话当前不可用" : detail)
+                throw AppFailure(detail.contains("needs rebind")
+                    ? "ChatGPT 尚未加载该会话；请打开一次，Pijoo 会自动重连"
+                    : (detail.isEmpty ? "AI 会话当前不可用" : detail))
             }
             guard let credential = try KeychainStore.get(service: keychainService, account: profile.credentialAccount),
                   !credential.isEmpty else { throw AppFailure("Keychain 中没有频道成员凭证") }
@@ -3935,6 +4048,7 @@ extension AppModel {
         members = []
         invitations = []
         listenerStatus = [:]
+        hostConversationStates = [:]
         channelStatus = [:]
         try? FileManager.default.removeItem(at: AppPaths.state)
         removeCodexIntegration()
@@ -4238,6 +4352,9 @@ private struct MainWindowView: View {
                 .padding(8)
                 .background(.yellow.opacity(0.15))
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await model.refreshHostConversationStates() }
         }
     }
 }
@@ -4811,6 +4928,8 @@ private struct ChannelSubscriptionsView: View {
                                                         Text(conversation.title).lineLimit(1)
                                                         Text("\(hostDisplayName(conversation.provider)) · \(conversation.conversationID)")
                                                             .font(.caption2).foregroundStyle(.secondary)
+                                                        Text(conversation.searchStateLabel)
+                                                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                                                     }
                                                     .frame(maxWidth: .infinity, alignment: .leading)
                                                     .padding(.horizontal, 10)
@@ -4823,7 +4942,7 @@ private struct ChannelSubscriptionsView: View {
                                             }
                                         }
                                     }
-                                    .frame(height: min(CGFloat(model.conversationSearchResults.count) * 48, 210))
+                                    .frame(height: min(CGFloat(model.conversationSearchResults.count) * 64, 240))
                                     .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
                                     .overlay { RoundedRectangle(cornerRadius: 7).stroke(.separator) }
                                     .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
@@ -4877,6 +4996,7 @@ private struct SubscriptionCard: View {
     @State private var isExpanded = false
     @State private var isPreviewingTemplate = false
     @State private var isEditingSentMessageTemplate = false
+    @State private var isConfirmingFullAccess = false
 
     private var subscription: ChannelSubscription? {
         model.state.subscriptions.first { $0.id == subscriptionID }
@@ -4920,6 +5040,8 @@ private struct SubscriptionCard: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(model.taskLabel(subscription.taskID)).font(.headline)
                                 Text(status).font(.caption).foregroundStyle(.secondary)
+                                Text(model.hostStateLabel(subscription.taskID))
+                                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                             }
                             Spacer()
                             if subscription.uncertainMessageID != nil {
@@ -4947,6 +5069,26 @@ private struct SubscriptionCard: View {
                 if isExpanded {
                     Divider().padding(.vertical, 12)
                     VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 8) {
+                            Text("ChatGPT 权限").font(.caption.bold())
+                            Menu(model.hostPermission(subscription.taskID)?.title ?? "权限未知") {
+                                Button(HostPermissionChoice.requestApproval.title) {
+                                    Task { await model.updateHostPermission(subscription.taskID, permission: .requestApproval) }
+                                }
+                                Button(HostPermissionChoice.approveForMe.title) {
+                                    Task { await model.updateHostPermission(subscription.taskID, permission: .approveForMe) }
+                                }
+                                Divider()
+                                Button(HostPermissionChoice.fullAccess.title) {
+                                    isConfirmingFullAccess = true
+                                }
+                            }
+                            .disabled(!model.hostPermissionCanChange(subscription.taskID) || model.busy)
+                            Text(model.hostPermissionCanChange(subscription.taskID)
+                                ? "修改后同步到 ChatGPT 当前会话"
+                                : "请先在 ChatGPT 中打开会话")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                         HStack(spacing: 24) {
                             Toggle("接收消息", isOn: Binding(
                                 get: { subscription.enabled },
@@ -5069,6 +5211,15 @@ private struct SubscriptionCard: View {
             .onAppear {
                 templateDraft = subscription.template
                 sentMessageTemplateDraft = subscription.sentMessageTemplate ?? defaultSentMessageTemplate
+                Task { await model.refreshHostConversationStates() }
+            }
+            .alert("启用完全访问权限？", isPresented: $isConfirmingFullAccess) {
+                Button("取消", role: .cancel) {}
+                Button("启用", role: .destructive) {
+                    Task { await model.updateHostPermission(subscription.taskID, permission: .fullAccess) }
+                }
+            } message: {
+                Text("ChatGPT 将可不受限制地访问互联网和电脑上的任何文件。")
             }
         }
     }
