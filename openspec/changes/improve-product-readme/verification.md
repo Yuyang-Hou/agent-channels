@@ -9,4 +9,5 @@ Status: implemented and source-verified.
 - 用户流程不要求读者理解内部 TaskBinding、Subscription、SSE 或 IPC 名词。
 - 平台、Host、签名公证、数据迁移和稳定性边界与当前产品文档一致。
 - 两种语言均欢迎 Issue 和 Pull Request，并要求行为变化同步 OpenSpec 与最小相关验证。
+- 英文 README 展示清理过身份、任务、编号和内部信息的前后端 Agent 协作截图。
 - 两份 README 的本地 Markdown 链接与图片目标均存在。

@@ -29,3 +29,13 @@ Cursor 为 coming soon，并 MUST 欢迎有边界的 Issue 与 Pull Request。
 
 - **WHEN** 英文或中文读者进入仓库
 - **THEN** 可以切换语言、识别真实 Agent 支持状态并找到贡献入口
+
+### Requirement: Privacy-safe Product Screenshot
+
+英文 README MUST 展示一张基于真实产品界面的隐私安全截图，突出前端与后端 Agent 通过 Pijoo
+跨用户、跨机器协作，且 MUST NOT 暴露真实用户名、任务、消息编号或内部系统信息。
+
+#### Scenario: Visitor evaluates the product experience
+
+- **WHEN** 访问者查看 README 首屏
+- **THEN** 可以直观看到 Pijoo 在 Codex 会话中的消息往返，同时不会看到无关或敏感细节
