@@ -6,6 +6,7 @@
 - [x] 保持状态、协议和用户行为不变，通过 focused self-test 与 App-only 构建
 - [x] 首次启动自动生成并持久化可编辑的随机本机昵称，频道工作区不再依赖昵称或 Codex 配置
 - [x] 以 MCP/Skill 配置和当前版本 `mcp_ready` 门禁会话搜索、创建、preflight 与绑定
+- [x] 在设置页两个 Codex 状态刷新入口间共享 loading 与重复点击保护
 - [x] 所有频道 feed 独立实时接收，并在启动、唤醒、网络恢复、前台恢复时补齐服务端保留窗口
 - [x] 移除频道切换导致的重复 history 请求，以携带本地 cursor 的长轮询实时接收并统一 upsert 去重
 - [x] 系统长时间休眠积压进入 `recovery_pending`，App 明确同意后才恢复 Subscription

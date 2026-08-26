@@ -1216,6 +1216,7 @@ struct EmptyStateView<Actions: View>: View {
 
 struct PijooSettingsView: View {
     @ObservedObject var model: AppModel
+    @State private var refreshingCodexIntegration = false
     var initialSetup = false
 
     var body: some View {
@@ -1241,12 +1242,43 @@ struct PijooSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 Section("AI 集成") {
-                    LabeledContent("ChatGPT Codex", value: model.codexIntegrationStatus)
+                    LabeledContent("ChatGPT Codex") {
+                        HStack(spacing: 6) {
+                            Text(model.codexIntegrationStatus)
+                            Button {
+                                refreshCodexIntegration()
+                            } label: {
+                                if refreshingCodexIntegration {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                            }
+                            .buttonStyle(.borderless)
+                            .help("刷新")
+                            .accessibilityLabel(refreshingCodexIntegration ? "正在刷新" : "刷新")
+                            .disabled(refreshingCodexIntegration)
+                        }
+                    }
                     if model.codexIntegrationNeedsRestart {
                         VStack(alignment: .leading, spacing: 4) {
-                            Label("需要完全重启 ChatGPT", systemImage: "arrow.clockwise.circle.fill")
-                                .font(.subheadline.bold())
-                                .foregroundStyle(.orange)
+                            HStack {
+                                Label("需要完全重启 ChatGPT", systemImage: "arrow.clockwise.circle.fill")
+                                    .font(.subheadline.bold())
+                                    .foregroundStyle(.orange)
+                                Spacer()
+                                Button {
+                                    refreshCodexIntegration()
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        if refreshingCodexIntegration {
+                                            ProgressView().controlSize(.small)
+                                        }
+                                        Text("刷新")
+                                    }
+                                }
+                                .disabled(refreshingCodexIntegration)
+                            }
                             Text(model.loadedCodexMCPVersion.map {
                                 "ChatGPT 仍在使用 MCP \($0)，当前 App 为 \(model.currentVersion)。重启后会自动确认。"
                             } ?? "尚未检测到 MCP \(model.currentVersion)。重启后会自动确认。")
@@ -1305,5 +1337,13 @@ struct PijooSettingsView: View {
             .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func refreshCodexIntegration() {
+        refreshingCodexIntegration = true
+        model.refreshCodexIntegrationStatus()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            refreshingCodexIntegration = false
+        }
     }
 }

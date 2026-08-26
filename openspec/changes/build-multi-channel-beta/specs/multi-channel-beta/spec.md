@@ -348,6 +348,7 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** 用户进入“转发到会话”
 - **THEN** App 禁止搜索、创建、preflight 和绑定，只显示配置、完全重启或版本修复中的唯一下一步
 - **AND** 收到当前版本 `mcp_ready` 后自动开放操作，无需手动刷新
+- **AND** 设置页的 MCP / Skill 检测结果旁提供带“刷新”悬浮提示的刷新图标，黄色重启提示卡同时提供“刷新”按钮，点击任一入口时显示 loading 并禁用重复点击
 
 #### Scenario: 先选择 AI App 再操作
 
