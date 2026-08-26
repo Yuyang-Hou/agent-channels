@@ -42,10 +42,13 @@ P1 不增加第二个 Host，先把 Codex 体验做完整。
 
 详细设计见 [`../openspec/changes/add-github-account-system`](../openspec/changes/add-github-account-system/)。
 
-## Later：按真实需求扩展 Host
+## Next：Claude Code 与 Cursor
 
-只有出现真实用户需求并完成目标 Host 能力验证后，才实现第二个 Connector。新增 Host
-必须明确它属于原生会话注入、Host 原生 Channel、CLI 恢复还是通知降级，不能降低
-Pijoo 对“持续监听”和“消息驱动”的产品承诺。
+Codex 是当前唯一可用的 Connector。完成 Codex 产品验收后，下一批计划支持 Claude Code 与
+Cursor；具体顺序取决于真实用户需求和目标 Host 的会话发现、消息注入与恢复能力验证。
+
+新增 Host 必须明确它属于原生会话注入、Host 原生 Channel、CLI 恢复还是通知降级，不能降低
+Pijoo 对“持续监听”和“消息驱动”的产品承诺。未完成真实验收前，README 与 App 必须持续标记为
+coming soon，不展示不可用操作。
 
 暂不建设 Connector 市场、通用 SDK、完整聊天客户端或自建模型 Runtime。

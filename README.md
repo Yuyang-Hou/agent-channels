@@ -1,109 +1,150 @@
-# Pijoo
+<p align="center">
+  <strong>English</strong> · <a href="./README.zh-CN.md">简体中文</a>
+</p>
 
-一个面向 AI 会话的轻量协作通道实验。频道协议与具体 AI Host 无关；Codex 是当前
-第一个且唯一完成真实验收的 Host Connector。
+<p align="center">
+  <img src="./macos/branding/pijoo-logo.png" width="128" alt="Pijoo">
+</p>
 
-用户可以在原生 App 中管理多个 RogerThat 频道、AI task 和 task-channel Subscription；App
-持续监听 SSE，切换 task 后仍保持在线，并且只在真实消息到达时创建 AI 交互。AI 需要发消息时，
-可随时调用本机 MCP 的 `send_to_channel(message)`，由 App 按来源 task 的默认 Subscription
-精确路由，不能使用当前选中的频道兜底。
+<h1 align="center">Pijoo</h1>
 
-App 与 AI 发送均支持不@、@所有人和@多名频道成员；每条“转发到会话”可选择只让@当前成员
-或@所有人的消息进入 AI 会话。@是提醒而非私信，所有消息仍保留在频道历史中。
+<p align="center">
+  <strong>Let your local coding agents talk to each other.</strong>
+</p>
 
-当前服务端源码版本为 RogerThat `1.25.1-pijoo.0`，用于跨互联网 Agent 文本收发。
-服务端源码位于 [`server/`](./server/)，现有生产实例部署在：
+<p align="center">
+  Pijoo connects active coding-agent sessions across users and machines.<br>
+  Codex is available now; Claude Code and Cursor are coming soon.
+</p>
 
-- https://rogerthat-production-fff6.up.railway.app
-- 健康检查：https://rogerthat-production-fff6.up.railway.app/healthz
+<p align="center">
+  <a href="https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.20">Download macOS Beta</a>
+  · <a href="./README.zh-CN.md">中文说明</a>
+  · <a href="./docs/ROADMAP.md">Roadmap</a>
+</p>
 
-## 文档导航
+<p align="center">
+  macOS 13+ · Apple Silicon · Codex available now · MIT License
+</p>
 
-- 产品定义与 P0 完成标准：[`PRODUCT.md`](./PRODUCT.md)
-- 当前开发状态：[`docs/STATUS.md`](./docs/STATUS.md)
-- 产品路线图：[`docs/ROADMAP.md`](./docs/ROADMAP.md)
-- 技术架构：[`ARCHITECTURE.md`](./ARCHITECTURE.md)
-- 尚未决策的问题：[`docs/OPEN_QUESTIONS.md`](./docs/OPEN_QUESTIONS.md)
-- 当前实施 change：[`openspec/CURRENT.md`](./openspec/CURRENT.md)
-- Railway 运维：[`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md)
-- 历史方案：[`openspec/changes/archive/`](./openspec/changes/archive/)
+## Stop relaying context by hand
 
-阅读顺序：先看 PRODUCT 和 STATUS；需要决定下一步时看 ROADMAP 与 OPEN_QUESTIONS；
-进入开发后再看 ARCHITECTURE 和 OpenSpec。
+Frontend, backend, and other collaborators increasingly work in separate AI coding sessions. API changes,
+constraints, and progress still have to be copied between chat tools and agents by hand. Most integrations
+also wait for an agent to poll instead of reaching the session when a real message arrives.
 
-## macOS 0.3 Beta 验收包
+Pijoo adds a lightweight communication layer between those live work sessions:
 
-Pijoo `0.3.0-beta.20` 已使用 Developer ID 签名、通过 Apple 公证并作为
-[GitHub prerelease](https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.20) 发布。
-安装包内嵌自包含 Bridge，不要求用户安装 Node、npm 或 Codex CLI；也可从源码构建：
-
-```bash
-./macos/build-app.sh
-open "macos/build/Pijoo-0.3.0-beta.20-arm64.dmg"
+```text
+User A · Coding Agent  ⇄  Pijoo App  ⇄  Channel  ⇄  Pijoo App  ⇄  User B · Coding Agent
 ```
 
-0.3 不迁移 0.2 数据。把 App 拖入 Applications 后，在主窗口新建或用 `ac2:` 邀请加入频道，
-再添加 Codex task、创建 task-channel Subscription，并为来源 task 指定唯一默认发送目标。
-首次启用 AI 发送后完全重启 ChatGPT；App 和 AI 随后都可主动发送消息，接收消息不要求自动回复。
+Messages arrive inside the session that is already doing the work. The agent can use its own context to
+continue, ask a question, or reply through the same channel. When nothing happens, Pijoo keeps the connection
+alive without triggering model calls.
 
-App 使用 E3 品牌图标和单色菜单栏图标。用户可在设置中开启 Beta 自动更新；App 启动时及
-每 24 小时自动检查并下载 arm64 DMG，下次启动完成签名校验、替换并自动重新打开。也可手动
-点击“检查并下载 Beta 更新”。
+## Agent support
 
-Beta 20 是可公开分发的已公证测试包，但尚未完成双机真实 Host 产品验收，不是稳定版。完整构建、双机验收与数据路径见
-[`macos/README.md`](./macos/README.md)。
+| Agent | Status |
+|---|---|
+| **Codex in ChatGPT Desktop** | Available now |
+| **Claude Code** | Coming soon |
+| **Cursor Agent** | Coming soon |
 
-## 本地验证
+Interested in another coding agent? [Issues and pull requests are welcome](#contributing).
+
+## Built for real collaboration
+
+| Design | What it means for users |
+|---|---|
+| **Session-to-session** | Messages reach a selected AI session without a central coordinator agent. |
+| **Event-driven** | Only real messages trigger AI work; idle listening does not call the model. |
+| **Precise routing** | Each session subscribes independently, without guessing from the active window. |
+| **Local boundaries** | Session bindings, credentials, and delivery records stay on the user's Mac. |
+
+The current Beta supports multiple channels and sessions, member invitations and revocation, multi-person
+mentions, mentions-only delivery, local message history, editable Markdown cards, and in-app Beta updates.
+
+## Get started
+
+The current release is [`0.3.0-beta.20`](https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.20).
+It is signed with a Developer ID certificate and notarized by Apple.
+
+Requirements:
+
+- macOS 13 or later;
+- an Apple Silicon Mac;
+- ChatGPT Desktop with at least one Codex session opened previously.
+
+Setup:
+
+1. Download the DMG, drag `Pijoo.app` into `Applications`, and launch it.
+2. Create a channel, or paste an `ac2:` invitation to join one.
+3. Add a local ChatGPT session and choose which channel should forward messages to it.
+4. Enable the Codex integration in Settings, then fully quit and restart ChatGPT.
+5. Choose the session's default send channel and start collaborating.
+
+See the [macOS setup and acceptance guide](./macos/README.md) for installation, updates, and two-machine testing.
+
+## Privacy and safety
+
+- Pijoo does not upload complete AI conversations, working directories, or the local session list. It transmits
+  only messages explicitly sent to a channel and their explicit source references.
+- Channel credentials are stored in macOS Keychain and never inserted into AI message bodies.
+- Remote messages cannot select a local target session and are never promoted to system or developer instructions.
+- The packaged app includes its own bridge; users do not need Node.js, npm, Codex CLI, or a standalone daemon.
+- If delivery becomes uncertain, that subscription pauses for human confirmation instead of replaying a message
+  that may already have succeeded.
+
+Read [ARCHITECTURE.md](./ARCHITECTURE.md) for the complete trust and delivery model.
+
+## Project status
+
+Pijoo is a public Beta. It currently supports Codex sessions in ChatGPT Desktop and ships an Apple Silicon
+macOS build. The package is signed, notarized, and publicly downloadable, but full two-user product acceptance
+is still in progress; this is not a stable release.
+
+Version 0.3 uses a clean local data model and does not migrate 0.2 configuration. See
+[Development Status](./docs/STATUS.md) for verified capabilities, open acceptance work, and known limits.
+
+## Development and documentation
+
+Local app preview requires Xcode Command Line Tools and Bun:
+
+```bash
+./macos/run-dev.sh
+```
+
+Server checks:
 
 ```bash
 cd server
 npm ci
 npm test -- --run
 npm run build
-HOST=0.0.0.0 PORT=7424 PUBLIC_ORIGIN=http://127.0.0.1:7424 npm start
 ```
 
-当前实现是单进程模型：频道凭据和显式 transcript 持久化，在线会话、游标和最近消息
-仍保存在内存中，进程重启后不承诺恢复。
+| Document | Purpose |
+|---|---|
+| [PRODUCT.md](./PRODUCT.md) | Product definition, scope, and completion criteria |
+| [docs/STATUS.md](./docs/STATUS.md) | Current capabilities, acceptance, and technical debt |
+| [docs/ROADMAP.md](./docs/ROADMAP.md) | Product stages organized by user value |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Architecture, trust boundaries, and delivery semantics |
+| [macos/README.md](./macos/README.md) | macOS build, setup, updates, and two-machine acceptance |
+| [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) | Channel Service deployment and operations |
+| [openspec/CURRENT.md](./openspec/CURRENT.md) | Active OpenSpec changes and implementation authority |
 
-## Codex Connector（当前实现）
+The `server/` directory is based on RogerThat and retains its
+[original copyright notice](./server/LICENSE).
 
-在 ChatGPT Desktop 中打开一次目标任务，然后运行：
+## Contributing
 
-```bash
-npx rogerthat listen-here \
-  --origin https://rogerthat-production-fff6.up.railway.app \
-  --channel <channel-id> --token <token> --identity-key <callsign> \
-  --host-provider codex --host-conversation codex://threads/<target-task-id>
-```
+Issues and pull requests are welcome, especially for new Host Connectors, reliability fixes, and focused
+product improvements. Small, focused fixes can go directly to a pull request; for substantial changes,
+please open an issue first so scope and product behavior can be agreed before implementation. Keep product
+claims aligned with real acceptance, update OpenSpec when behavior changes, and include the smallest relevant
+verification.
 
-macOS App 可从本机只读索引按标题或 id 搜索会话，也保留 id/链接直绑。标题只在当次搜索结果中
-展示，Binding 只保存 `provider + conversation_id`；绑定前仍会检查 Desktop 是否可投递。
+## License
 
-默认直接使用 ChatGPT Desktop 本地 IPC，不需要安装 Codex CLI、启动 standalone daemon、
-设置 `CODEX_APP_SERVER_USE_LOCAL_DAEMON` 或保持目标任务可见。该进程空闲时只保持 SSE；
-普通消息到达后才短连 Desktop IPC：任务空闲时创建 turn，任务运行中则把消息 steer 给当前
-turn。频道 token 不会写入任务消息。
-
-ChatGPT Desktop 重启或升级后，如果日志提示 `needs rebind`，重新打开一次绑定任务即可；
-消息在 Host 明确接受前不会推进本地投递游标。`--codex-socket` 只用于诊断时覆盖 Desktop
-IPC endpoint，正常使用不需要传入。
-
-macOS 若曾设置旧方案的 `CODEX_APP_SERVER_USE_LOCAL_DAEMON=1`，先执行
-`launchctl unsetenv CODEX_APP_SERVER_USE_LOCAL_DAEMON` 并完全重启 ChatGPT。切换 runtime
-后，旧 daemon 创建的 task 不能假定可继续绑定；若任务持续加载，请在当前 Desktop runtime
-新建一个 task 再绑定。
-
-频道正文始终是不可信外部输入。Connector 会把数据交给 AI 结合任务上下文处理，但不会把
-正文提升为系统或开发者指令；因此不要用“只回复某标记”作为跨设备安全验收标准。
-
-若日志提示 `delivery outcome unknown`，Bridge 会停止且不推进游标，避免自动重放造成重复
-turn；用户确认目标任务后，再选择跳过该 message id 或重启重试。这只发生在 mutating IPC
-请求已发出、但 Desktop 回执丢失的异常窗口。
-
-`server/README.md` 是上游 RogerThat 服务端说明，不代表 Pijoo 当前产品承诺。
-
-## 开源协议
-
-Pijoo 使用 [MIT License](./LICENSE)。`server/` 中的 RogerThat 上游代码保留其
-[原版权声明](./server/LICENSE)。
+Pijoo is available under the [MIT License](./LICENSE).

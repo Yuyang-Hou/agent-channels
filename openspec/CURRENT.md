@@ -25,6 +25,8 @@
     并保留 `server/` 中 RogerThat 上游代码的原版权声明。
 11. [`changes/rename-github-repository-pijoo`](./changes/rename-github-repository-pijoo/)：将公开 GitHub
     仓库统一为 `Yuyang-Hou/pijoo`，并同步 App 自动更新地址、文档链接与本地 remote。
+12. [`changes/improve-product-readme`](./changes/improve-product-readme/)：将仓库首页改为以产品价值、
+    下载、使用流程和信任边界为主的 Pijoo 产品入口，把开发细节收敛到文档导航。
 
 已完成设计、尚未进入实现的 change：
 
@@ -45,7 +47,7 @@ IPC Connector 已完成。0.2 的发送凭证与断线状态修复继续作为�
 4. [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
 5. [`../docs/OPEN_QUESTIONS.md`](../docs/OPEN_QUESTIONS.md)
 
-当前只执行上述十一个活动 change；账号 change 仅作为下一阶段设计。当前不建设通用插件框架、其他 Host Connector、独立模型
+当前只执行上述十二个活动 change；账号 change 仅作为下一阶段设计。当前不建设通用插件框架、其他 Host Connector、独立模型
 Runtime 或完整聊天客户端。已完成的 Codex 验证记录保留在
 [`changes/archive/2026-08-19-add-codex-thread-bridge`](./changes/archive/2026-08-19-add-codex-thread-bridge/)。
 

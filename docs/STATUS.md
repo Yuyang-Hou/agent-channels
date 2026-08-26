@@ -50,7 +50,7 @@ Developer ID 签名、通过 Apple 公证并作为 [GitHub prerelease](https://g
 - 正式 Human 账户、跨设备 Membership、邀请和撤权体验；
 - 离线未读摘要和恢复选择 UI；
 - 跨进程原子 claim 与并发孤儿 sidecar 下的严格 exactly-once；
-- Codex 之外的 Host Connector；
+- Claude Code 与 Cursor Host Connector（coming soon，尚未实现）；
 - 多副本 Channel Service 和共享运行态存储。
 
 ## 当前技术债务
