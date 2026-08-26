@@ -33,8 +33,8 @@ App 与 AI 发送均支持不@、@所有人和@多名频道成员；每条“转
 
 ## macOS 0.3 Beta 验收包
 
-Pijoo `0.3.0-beta.19` 已使用 Developer ID 签名、通过 Apple 公证并作为
-[GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.19) 发布。
+Pijoo `0.3.0-beta.20` 已使用 Developer ID 签名、通过 Apple 公证并作为
+[GitHub prerelease](https://github.com/Yuyang-Hou/agent-channels/releases/tag/v0.3.0-beta.20) 发布。
 安装包内嵌自包含 Bridge，不要求用户安装 Node、npm 或 Codex CLI；也可从源码构建：
 
 ```bash
@@ -50,7 +50,7 @@ App 使用 E3 品牌图标和单色菜单栏图标。用户可在设置中开启
 每 24 小时自动检查并下载 arm64 DMG，下次启动完成签名校验、替换并自动重新打开。也可手动
 点击“检查并下载 Beta 更新”。
 
-Beta 18 是可公开分发的已公证测试包，但尚未完成双机真实 Host 产品验收，不是稳定版。完整构建、双机验收与数据路径见
+Beta 20 是可公开分发的已公证测试包，但尚未完成双机真实 Host 产品验收，不是稳定版。完整构建、双机验收与数据路径见
 [`macos/README.md`](./macos/README.md)。
 
 ## 本地验证
