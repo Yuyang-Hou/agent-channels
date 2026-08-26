@@ -41,6 +41,7 @@ final class AppModel: ObservableObject {
     @Published var selectedHostProvider = HostProviderChoice.codex
     @Published var conversationSearchResults: [HostConversationSummary] = []
     @Published var conversationSearchStatus = ""
+    @Published private(set) var taskCreationStatus = ""
     @Published var hostConversationStates: [UUID: HostConversationRuntimeState] = [:]
     @Published private(set) var recoveryPendingMessageCount = 0
     @Published var composerText = ""
@@ -621,7 +622,11 @@ extension AppModel {
         guard panel.runModal() == .OK, let workspace = panel.url else { return }
 
         busy = true
-        defer { busy = false }
+        taskCreationStatus = "正在创建专属会话，通常需要几秒…"
+        defer {
+            busy = false
+            taskCreationStatus = ""
+        }
         do {
             let provider = selectedHostProvider
             guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: provider.bundleIdentifier) else {
@@ -647,6 +652,7 @@ extension AppModel {
                 throw AppFailure(detail.isEmpty ? "无法新建 AI 会话" : detail)
             }
             let conversationID = response.conversationID.lowercased()
+            taskCreationStatus = "会话已创建，正在等待 ChatGPT 连接…"
             guard let url = URL(string: "codex://threads/\(conversationID)") else {
                 throw AppFailure("会话已创建（\(conversationID)），但无法在 \(provider.displayName) 中打开")
             }
@@ -668,6 +674,7 @@ extension AppModel {
             guard let verified else {
                 throw AppFailure("会话已创建（\(conversationID)），但暂时无法连接。请在 Codex 中打开后按 ID 连接。\(lastPreflightError.isEmpty ? "" : "\n\(lastPreflightError)")")
             }
+            taskCreationStatus = "正在关联当前频道…"
             _ = try await subscribe(
                 source: LocalSource(provider: verified.provider, conversationId: verified.conversationID),
                 profile: profile

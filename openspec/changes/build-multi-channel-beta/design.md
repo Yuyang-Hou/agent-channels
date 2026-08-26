@@ -205,7 +205,8 @@ sidecar 调用已安装 ChatGPT Codex 自带的 `app-server thread/start`，显�
 并以“Pijoo · 频道名”调用 `thread/name/set` 持久化空白 task；取得 conversation id 后立即以不激活
 Host App 的方式打开 `codex://threads/<id>`。Desktop owner preflight 成功后才复用
 既有 `TaskBinding + Subscription` 流程。创建本身不发送输入或创建 turn。创建后若 Desktop 暂未
-就绪，App 必须显示可恢复的 conversation id；搜索、id/链接连接已有会话继续作为回退。
+就绪，App 必须显示可恢复的 conversation id；搜索、id/链接连接已有会话继续作为回退。创建期间
+主操作显示不定进度，并依次说明正在创建会话、等待 Host 连接和关联频道，避免长耗时表现为无响应。
 
 P0 每条启用的 Subscription 监管一个现有 `listen-here` sidecar，保持独立 session、游标、
 错误和不确定投递状态。一个 Subscription 失败不得暂停其他 Subscription。App 可以为频道

@@ -834,13 +834,22 @@ struct ChannelSubscriptionsView: View {
                         Button {
                             Task { await model.createTaskSubscription() }
                         } label: {
-                            Label("新建专属会话", systemImage: "plus.message")
+                            if model.taskCreationStatus.isEmpty {
+                                Label("新建专属会话", systemImage: "plus.message")
+                            } else {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    Text("正在新建…")
+                                }
+                            }
                         }
                         .buttonStyle(.borderedProminent)
                         .disabled(model.busy)
-                        Text("\(model.selectedHostProvider.displayName) · 自动连接当前频道")
+                        Text(model.taskCreationStatus.isEmpty
+                            ? "\(model.selectedHostProvider.displayName) · 自动连接当前频道"
+                            : model.taskCreationStatus)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(model.taskCreationStatus.isEmpty ? Color.secondary : Color.accentColor)
                         Spacer()
                     }
                     HStack {
