@@ -54,9 +54,9 @@ Mac 上新建频道、成员和 task 绑定，不复用 0.2 配置。
    和是否作为该 task 的默认发送目标，然后启用监听。
 4. 在设置中点击“启用或修复 Codex 集成”，然后完全退出并重启 ChatGPT；该步骤会同时安装
    MCP 与产品级 Skill。
-5. 分别用不@、@所有人和@两名成员完成 App → App、App → task、task → App 和 task → task 收发；task 调用
-   `send_to_channel(message)` 时必须按来源 task 的默认 Subscription 路由，不能使用当前选中的
-   频道或最近活跃 task 兜底。
+5. 分别用不@、@所有人和@两名成员完成 App → App、App → task、task → App 和 task → task 收发；
+   已关联和未关联 task 都能用 `send_to_channel(message, channel)` 显式发送，省略频道时只允许
+   唯一默认 Subscription 或唯一可确定的本机频道，不能使用当前选中的频道或最近活跃 task 兜底。
 6. 确认默认入站 turn 和可靠发送回执分别显示 Pijoo 收到/已发送卡片；修改两种模板后，
    标题、来源栏、正文和引用样式均使用用户保存的内容，且发送模板不改写频道正文。
 7. 重启 App，确认两个频道的本地历史、未读位置和 Subscription 独立恢复；一个 Subscription

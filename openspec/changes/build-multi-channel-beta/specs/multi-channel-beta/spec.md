@@ -11,20 +11,20 @@
 
 - **GIVEN** 用户目录没有 0.3 store
 - **WHEN** 0.3 App 首次启动
-- **THEN** App 创建空的 0.3 store，并先展示名字和 AI 集成设置，不展示频道工作区
+- **THEN** App 创建 0.3 store，生成并持久化不读取系统或硬件标识的随机本机昵称，并展示频道工作区
+- **AND** 默认昵称可编辑但不参与身份或鉴权
 
 #### Scenario: 完成首次使用设置
 
-- **GIVEN** 用户尚未进入频道工作区
-- **WHEN** 用户保存非空全局昵称，并成功配置 Codex MCP 与 Pijoo Skill
-- **THEN** App 自动进入频道主界面，后续创建或加入频道均使用该昵称
-- **AND** 若 ChatGPT 尚未加载当前 MCP 版本，App 提示完全重启，但不阻止进入主界面
+- **GIVEN** 用户使用自动生成或自行修改的全局昵称
+- **WHEN** 用户创建或加入频道
+- **THEN** App 使用该昵称且不要求先配置 Codex
 
 #### Scenario: 首次使用设置未完成
 
-- **GIVEN** 全局昵称为空，或 Codex MCP 与 Pijoo Skill 任一未配置
+- **GIVEN** Codex MCP 与 Pijoo Skill 未配置或尚未加载当前版本
 - **WHEN** 用户打开 Pijoo 主窗口
-- **THEN** App 继续展示仅包含身份与 AI 集成的设置内容，不提供频道操作
+- **THEN** App 仍提供频道和 App 内消息操作，只在“转发到会话”中门禁 AI 会话操作
 
 #### Scenario: 检测到 0.2 数据
 
@@ -126,6 +126,24 @@ App MUST 以主窗口展示多个 ChannelConnection，并为当前频道提供�
 - **THEN** App 自动拉取最新服务端历史并与本机消息合并，相邻同发送者消息按时间聚合显示，正文
   优先，发送框固定在底部，普通接收状态不逐条强调，失败或结果未知保持可见
 
+#### Scenario: 未选中的频道实时收到消息
+
+- **GIVEN** 用户停留在频道 A、其他页面或隐藏窗口，且频道 B 已加入
+- **WHEN** 频道 B 收到普通消息
+- **THEN** App 通过 B 的独立 feed 立即写入本地历史并更新未读，不需要切换到 B 或手动刷新
+
+#### Scenario: 当前频道实时刷新消息
+
+- **GIVEN** 用户停留在当前频道的消息页
+- **WHEN** App、AI 会话或其他成员发送的新消息到达
+- **THEN** 当前消息列表立即显示该消息，不需要切换频道、切出 App、重新聚焦或手动刷新
+
+#### Scenario: 生命周期恢复补齐
+
+- **GIVEN** App 从系统休眠、网络中断或后台挂起恢复
+- **WHEN** App 回到可运行状态
+- **THEN** App 拉取各频道完整服务端保留窗口并按本地消息 id 统一去重，在线长轮询显式携带本地 cursor
+
 #### Scenario: 回车发送消息
 
 - **GIVEN** 发送框包含非空文本且当前没有消息正在发送
@@ -183,7 +201,7 @@ owner MUST 可以移除、封禁和解除封禁普通成员；撤权 MUST 立即
 
 App MUST 在尝试任何 Host delivery 前保存普通频道消息，并按 Subscription 单独记录后续状态。
 App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完成投递进行幂等处理，
-并在 SSE 异常断开后从本连接最后成功处理的消息继续。
+并在 Subscription SSE 异常断开后从本连接最后成功处理的消息继续。
 
 #### Scenario: Host 不可用
 
@@ -230,9 +248,22 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 
 #### Scenario: Railway SSE 定期轮换
 
-- **GIVEN** 频道消息流或 Subscription 已在 Railway 上健康连接接近 15 分钟请求上限
+- **GIVEN** Subscription 已在 Railway 上健康连接接近 15 分钟请求上限
 - **WHEN** Railway 关闭该 SSE 请求
 - **THEN** 客户端保留游标、把退避恢复为 1 秒并自动续接，将该次关闭记录为正常轮换而非全局异常
+
+#### Scenario: 休眠积压等待确认
+
+- **GIVEN** App 进入系统休眠超过 60 秒并在唤醒后发现 Subscription 积压
+- **WHEN** App 收到积压消息
+- **THEN** App 先保存消息并暂停对应 Host 投递，展示待恢复数量，未经用户同意不创建 turn
+
+#### Scenario: 用户同意恢复
+
+- **GIVEN** 一条 Subscription 有一条或多条 `recovery_pending` 消息
+- **WHEN** 用户在 App 选择“发送到会话”
+- **THEN** App 恢复对应 Subscription，并按既有模板、过滤和顺序投递积压消息
+- **AND** failed 不推进游标，unknown 暂停且不自动重试
 
 ### Requirement: App 可以直接收发简单文本消息
 
@@ -301,6 +332,13 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 - **WHEN** 用户按标题或 id 搜索，或直接输入会话 id/链接
 - **THEN** App 不自动展示最近会话，仅在用户输入非空关键词后从全部未归档用户主会话索引中匹配，并排除 subagent/reviewer；匹配项在搜索框下方以不透出底层内容的系统实色浮层按内容高度展开，浮层位于同一区域的说明文字之上，整行点选即绑定且不改变页面布局；用户也可直接发起绑定，创建 Subscription 前执行 Host preflight，搜索标题不写入 Binding
 
+#### Scenario: Codex 集成未就绪时阻止绑定试错
+
+- **GIVEN** MCP 或 Skill 未配置，当前 App 版本未收到 `mcp_ready`，或 ChatGPT 仍加载旧 MCP 版本
+- **WHEN** 用户进入“转发到会话”
+- **THEN** App 禁止搜索、创建、preflight 和绑定，只显示配置、完全重启或版本修复中的唯一下一步
+- **AND** 收到当前版本 `mcp_ready` 后自动开放操作，无需手动刷新
+
 #### Scenario: 先选择 AI App 再操作
 
 - **GIVEN** 本机同时安装 ChatGPT 与 Claude
@@ -342,8 +380,8 @@ App 与 Runtime MUST 以 `subscription_id + channel_id + message_id` 对已完�
 Codex MCP MUST 暴露 `send_to_channel`、`list_channels`、`subscribe_to_channel`、
 `unsubscribe_from_channel`、`get_channel_settings`、`update_channel_settings` 和
 `inspect_message_source` 七个工具。每个工具 MUST 从 `tools/call params._meta.threadId` 读取来源
-task，并通过本机 socket v2 交给 App 精确匹配 TaskBinding。App 和 MCP MUST NOT 使用最近活跃
-task 或当前 UI 频道兜底。
+task，并通过本机 socket v2 交给 App。发送与频道列表不要求来源已有 TaskBinding；订阅、设置和
+来源查询仍精确匹配当前 task。App 和 MCP MUST NOT 使用最近活跃 task 或当前 UI 频道兜底。
 
 MCP MUST NOT 读取 Keychain、直接访问 Channel Service、建立频道监听、消费入站消息、保存历史
 或调用 Host Connector；这些消息接收能力 MUST 由 App 持有。`send_to_channel` MUST 可以在没有
@@ -372,8 +410,14 @@ MCP MUST NOT 读取 Keychain、直接访问 Channel Service、建立频道监听
 #### Scenario: 当前 task 管理订阅
 
 - **GIVEN** `_meta.threadId` 精确匹配 TaskBinding T
-- **WHEN** T 调用频道列表、订阅、取消订阅或设置工具
+- **WHEN** T 调用订阅、取消订阅或设置工具
 - **THEN** App 只查询或修改 T 的本机 Subscription，凭证、网络监听和消息历史仍留在 App
+
+#### Scenario: 任意 task 查询频道
+
+- **GIVEN** `_meta.threadId` 合法，无论当前 task 是否已有 TaskBinding
+- **WHEN** task 调用频道列表，或指定本机频道查询可提及成员
+- **THEN** App 返回本机频道、当前 task 的订阅状态及有效成员；未关联不阻止查询
 
 #### Scenario: 两个 task 分别发送
 
@@ -387,17 +431,23 @@ MCP MUST NOT 读取 Keychain、直接访问 Channel Service、建立频道监听
 - **WHEN** AI 调用发送工具
 - **THEN** MCP 失败关闭并提示不兼容，App 不发起频道网络请求
 
-#### Scenario: 来源尚未绑定
+#### Scenario: 未关联会话显式发送
 
-- **GIVEN** `_meta.threadId` 合法但本机没有对应 TaskBinding 或唯一默认 Subscription
-- **WHEN** AI 调用发送工具
-- **THEN** App 明确拒绝并提示用户在主窗口配置，不选择其他频道兜底
+- **GIVEN** `_meta.threadId` 合法但本机没有对应 TaskBinding
+- **WHEN** AI 显式指定本机已加入频道并调用发送工具
+- **THEN** App 使用该 task 作为来源发送，不创建 TaskBinding 或 Subscription
+
+#### Scenario: 未关联会话省略频道
+
+- **GIVEN** `_meta.threadId` 合法但本机没有对应 TaskBinding
+- **WHEN** AI 未指定频道调用发送工具
+- **THEN** 本机只有一个频道时发送到该频道；没有频道或有多个频道时失败并要求明确 channel，不使用当前 UI 频道
 
 #### Scenario: 暂停接收后主动发送
 
-- **GIVEN** 当前 task 的 Subscription 已暂停接收，但仍是合法的显式或唯一默认发送目标
+- **GIVEN** 当前 task 的 Subscription 已暂停接收
 - **WHEN** task 调用 `send_to_channel`
-- **THEN** App 仍允许主动发送；接收开关不成为出站路由条件
+- **THEN** App 仍允许向任一本机频道主动发送；接收开关和订阅关系都不成为发送权限
 
 ### Requirement: Pijoo Skill 承接完整产品语义
 

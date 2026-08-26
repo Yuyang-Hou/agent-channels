@@ -88,8 +88,8 @@ AI 会话。
   已可靠进入频道的消息，并明确是否接收同一成员其他 endpoint、是否只接收@当前成员的消息；
 - 本机 MCP 暴露 `send_to_channel`、`list_channels`、`subscribe_to_channel`、
   `unsubscribe_from_channel`、`get_channel_settings`、`update_channel_settings` 和
-  `inspect_message_source` 七个 task-scoped 工具；所有调用都必须通过 Codex `_meta.threadId`
-  精确匹配 TaskBinding；来源查询只在用户主动追问时读取当前 task 最近一条成功投递的本地记录；
+  `inspect_message_source` 七个 task-scoped 工具；所有调用都必须携带 Codex `_meta.threadId` 作为来源，
+  但显式发送和频道列表不要求匹配 TaskBinding；来源查询只在用户主动追问时读取当前 task 最近一条成功投递的本地记录；
 - AI 可以随时主动发送，不需要先收到消息；频道监听、消息接收、本地历史和 Host 投递仍由 App
   持有，收到消息也不等于 AI 必须回复；
 - App 以 Markdown 卡片作为默认收发模板；用户可编辑标题、来源栏、正文和引用样式。发送成功模板

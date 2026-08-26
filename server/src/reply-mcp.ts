@@ -124,7 +124,7 @@ const channelProperty = {
 const SEND_TOOL = {
   name: "send_to_channel",
   description:
-    "Send a text message from the current Codex task. Omit channel only when this task has one subscription or a default send channel; otherwise choose a channel returned by list_channels.",
+    "Send a text message from any current Codex task to a locally configured channel; receiving subscription is not required. Omit channel only when the app can determine one default, subscribed, or sole local channel; otherwise choose a channel returned by list_channels.",
   inputSchema: {
     type: "object",
     properties: {
@@ -153,7 +153,7 @@ const SEND_TOOL = {
 const LIST_CHANNELS_TOOL = {
   name: "list_channels",
   description:
-    "List locally configured Pijoo channels and the current Codex task's subscription/default-send state. Pass channel to include active mentionable members for that subscribed channel.",
+    "List locally configured Pijoo channels and the current Codex task's subscription/default-send state. Pass any listed channel to include active mentionable members.",
   inputSchema: {
     type: "object",
     properties: { channel: channelProperty },

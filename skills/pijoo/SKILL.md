@@ -25,9 +25,9 @@ Pijoo 连接用户正在使用的 AI task，让协作消息进入既有任务上
 
 ## 使用频道动作
 
-- `send_to_channel`：随时主动发送；`mentions` 省略表示不@，`["all"]` 表示@所有人，多个
+- `send_to_channel`：任意当前 task 都可主动向本机已加入的频道发送，无需先关联接收；未指定频道时只使用唯一可确定的频道，不猜测多频道目标。`mentions` 省略表示不@，`["all"]` 表示@所有人，多个
   member id 表示@多人。频道或成员不明确时先调用 `list_channels`，不要按昵称或当前 UI 猜测。
-- `list_channels`：查看本机频道及当前 task 的订阅和默认发送状态；传入已订阅的 `channel`
+- `list_channels`：查看本机频道及当前 task 的订阅和默认发送状态；传入任一本机频道 `channel`
   可读取其 active Member id，供 `send_to_channel.mentions` 使用。
 - `inspect_message_source`：仅当用户明确追问“这条/刚才的消息是否来自 Pijoo、由谁发送”时调用；
   它只查询当前 task 最近一条已成功投递的频道消息。未命中只表示本地没有可追溯记录，不能据此

@@ -13,6 +13,14 @@ INFO_PLIST="$SCRIPT_DIR/Info.plist"
 SOURCE_ICON="$SCRIPT_DIR/branding/pijoo-logo.png"
 MENU_ICON="$SCRIPT_DIR/branding/pijoo-menubar.svg"
 SKILL_SOURCE="$ROOT_DIR/skills/pijoo"
+APP_SOURCES=(
+  "$SCRIPT_DIR/PijooModels.swift"
+  "$SCRIPT_DIR/PijooServices.swift"
+  "$SCRIPT_DIR/PijooAppModel.swift"
+  "$SCRIPT_DIR/PijooViews.swift"
+  "$SCRIPT_DIR/PijooApp.swift"
+  "$SCRIPT_DIR/PijooSelfTest.swift"
+)
 DEFAULT_SIGN_IDENTITY="7D4A076571734A0E816D5C522FF9A7286D1C5A50"
 REQUESTED_SIGN_IDENTITY="${PIJOO_SIGN_IDENTITY:-$DEFAULT_SIGN_IDENTITY}"
 REQUIRE_SIGNING="${PIJOO_REQUIRE_SIGNING:-0}"
@@ -106,7 +114,7 @@ if [[ "$SKIP_SELF_TESTS" == "0" ]]; then
     -framework Security \
     -framework ServiceManagement \
     -framework SwiftUI \
-    "$SCRIPT_DIR/PijooApp.swift" \
+    "${APP_SOURCES[@]}" \
     -o "$BUILD_DIR/pijoo-self-test"
   "$BUILD_DIR/pijoo-self-test"
 
@@ -142,7 +150,7 @@ swiftc \
   -framework Security \
   -framework ServiceManagement \
   -framework SwiftUI \
-  "$SCRIPT_DIR/PijooApp.swift" \
+  "${APP_SOURCES[@]}" \
   -o "$MACOS_DIR/Pijoo"
 
 echo "==> Compiling native update helper"
