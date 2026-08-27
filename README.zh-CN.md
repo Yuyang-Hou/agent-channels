@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.20">下载 macOS Beta</a>
+  <a href="https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.23">下载 macOS Beta</a>
   · <a href="./PRODUCT.md">产品定义</a>
   · <a href="./docs/ROADMAP.md">路线图</a>
 </p>
@@ -65,12 +65,12 @@ Pijoo 在这些会话之间增加一层轻量通信：
 | **精确路由** | 每个会话独立订阅频道，发送目标不依赖当前窗口或最近活跃会话。 |
 | **本机边界** | 会话绑定、凭证和投递记录留在本机。 |
 
-当前 Beta 已支持多频道、多会话订阅、成员邀请与撤权、`@所有人` / `@多人`、仅接收提及、
-本地消息历史、可编辑 Markdown 消息卡片以及 App 内 Beta 更新。
+当前 Beta 已支持 GitHub 账号登录、多频道、多会话订阅、成员邀请与撤权、`@所有人` / `@多人`、
+仅接收提及、本地消息历史、可编辑 Markdown 消息卡片以及 App 内 Beta 更新。
 
 ## 开始使用
 
-当前版本是 [`0.3.0-beta.20`](https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.20)，
+当前版本是 [`0.3.0-beta.23`](https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.23)，
 已使用 Developer ID 签名并通过 Apple 公证。
 
 运行要求：
