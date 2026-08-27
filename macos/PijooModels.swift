@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
 
 let defaultOrigin = "https://rogerthat-production-fff6.up.railway.app"
 let keychainService = "dev.pijoo.channel"
+let accountSessionKey = "account:session"
 let managedConfigStart = "# >>> Pijoo managed MCP >>>"
 let managedConfigEnd = "# <<< Pijoo managed MCP <<<"
 let githubReleasesURL = URL(string: "https://api.github.com/repos/Yuyang-Hou/pijoo/releases?per_page=100")!
@@ -100,6 +101,50 @@ func requiresCodexRestart(configured: Bool, appVersion: String, loadedMCPVersion
 
 func generatedLocalNickname(id: UUID = UUID()) -> String {
     "Pijoo用户-\(id.uuidString.replacingOccurrences(of: "-", with: "").prefix(6).uppercased())"
+}
+
+struct PijooAccountSession: Equatable {
+    let accountID: String
+    let deviceID: String
+    let displayName: String
+    let expiresAt: String
+}
+
+func accountRandomValue() throws -> String {
+    var bytes = [UInt8](repeating: 0, count: 32)
+    guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+        throw AppFailure("无法生成安全登录凭证")
+    }
+    return Data(bytes).base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+}
+
+func accountPKCEChallenge(_ verifier: String) -> String {
+    Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
+}
+
+func accountExchangeCode(from callbackURL: URL, expectedState: String) throws -> String {
+    guard let values = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+          values.scheme == "pijoo", values.host == "oauth", values.path == "/callback" else {
+        throw AppFailure("登录回调地址无效")
+    }
+    var parameters: [String: String] = [:]
+    for item in values.queryItems ?? [] {
+        guard parameters[item.name] == nil else { throw AppFailure("登录回调参数无效") }
+        parameters[item.name] = item.value ?? ""
+    }
+    guard parameters["state"] == expectedState else { throw AppFailure("登录状态校验失败") }
+    if parameters["error"] == "login_cancelled" { throw CancellationError() }
+    guard let code = parameters["code"], code.count == 43,
+          code.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) else {
+        throw AppFailure("登录授权结果无效")
+    }
+    return code
 }
 
 enum CodexIntegrationReadiness: Equatable {

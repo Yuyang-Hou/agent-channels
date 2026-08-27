@@ -66,11 +66,13 @@
     "@hono/node-server": "1.19.17",
     "@types/qrcode": "^1.5.6",
     "hono": "4.13.3",
+    "pg": "^8.23.0",
     "qrcode": "^1.5.4",
     "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^20.17.10",
+    "@types/pg": "^8.23.1",
     "@types/ws": "^8.18.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

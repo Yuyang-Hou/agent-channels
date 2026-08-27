@@ -55,7 +55,8 @@ GitHub Account 不是产品内身份。Pijoo Account 使用自己的 UUID，其�
 1. App 生成一次性 `client_state`、PKCE `verifier` 和 `challenge`，调用
    `/v1/auth/github/start`，并通过 `ASWebAuthenticationSession` 打开返回的 HTTPS URL。
 2. 服务端创建 10 分钟 LoginAttempt，保存 App challenge、回调 scheme、设备名、随机 GitHub
-   `state` 和服务端生成的 GitHub PKCE verifier，再重定向到 GitHub。
+   `state` 和服务端生成的 GitHub PKCE verifier，再重定向到 GitHub；App callback 固定在服务端，
+   不接收客户端传入的 return URI。
 3. GitHub 回调服务端。服务端校验 `state`，交换 code，调用 GitHub authenticated-user API，读取
    稳定 numeric user id 与公开名称，然后立即丢弃 provider token。
 4. 服务端为该 LoginAttempt 生成一次性 exchange code，只保存 hash，并重定向
@@ -63,8 +64,8 @@ GitHub Account 不是产品内身份。Pijoo Account 使用自己的 UUID，其�
 5. App 校验 `client_state`，把 exchange code 和原始 App verifier 发送到
    `/v1/auth/device/exchange`。服务端原子消费 LoginAttempt，创建或读取 Account，创建 Device 和
    90 天 Session，只返回一次 Session credential。
-6. App 把 Session credential 写入 Keychain，再读取 `/v1/session` 与 `/v1/channels`；任一步失败
-   都撤销新 Session 并清理本次 Keychain 写入。
+6. App 校验完整 Session 响应后才把 credential 写入 Keychain，并读取 `/v1/session`。频道
+   Membership 接入后再增加 `/v1/channels` 激活与失败回滚。
 
 LoginAttempt 的 GitHub PKCE verifier 最多保留 10 分钟，成功、取消或过期后删除。exchange code
 只能使用一次。所有登录响应使用 `Cache-Control: no-store`；日志不得记录 provider code/token、
@@ -105,7 +106,7 @@ Session
 
 LoginAttempt
   id, github_state_hash UNIQUE, github_pkce_verifier,
-  app_code_challenge, callback_uri, client_state, device_name,
+  app_code_challenge, client_state, device_name,
   github_user_id, github_display_name, exchange_code_hash UNIQUE,
   expires_at, authenticated_at, consumed_at
 
@@ -198,7 +199,8 @@ Account 是核心授权数据，不能继续落在多个 JSON 文件。实施时
 readiness，再切换频道授权；消息环形缓冲与在线 Session 仍可留在单进程内存，直到真实规模要求
 共享运行态。
 
-账号版按 clean-slate Beta 发布，不自动把旧 Member credential 猜成 Human。切换前必须只读核对
+登录与 Session 先通过服务端配置开关增量上线，旧频道授权保持不变。账号版切换时不自动把旧
+Member credential 猜成 Human。切换前必须只读核对
 线上账号版发布范围、频道和成员数量：确认全为测试数据才允许清空；若存在真实用户，暂停并另做
 一次性“登录后用旧 credential 认领 Membership”方案。该认领端点在迁移窗口结束后删除，不进入
 长期协议。

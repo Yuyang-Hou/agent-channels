@@ -29,12 +29,9 @@
     下载、使用流程和信任边界为主的 Pijoo 产品入口，把开发细节收敛到文档导航。
 13. [`changes/automate-beta-release`](./changes/automate-beta-release/)：为 PR/main 增加统一 CI，
     在合并后保存下一 Beta 候选包，并通过人工触发的受保护流水线完成签名、公证和 GitHub prerelease。
-
-已完成设计、尚未进入实现的 change：
-
-- [`changes/add-github-account-system`](./changes/add-github-account-system/)：以 GitHub OAuth + PKCE
-  建立稳定 Human、设备 Session 和账号级 Membership；当前不改代码、不部署，也不阻塞 0.3 Beta
-  双用户真实 Host 验收。
+14. [`changes/add-github-account-system`](./changes/add-github-account-system/)：以 GitHub OAuth + PKCE
+    建立稳定 Human 与设备 Session。当前先以服务端配置开关增加登录闭环，保持旧频道授权不变；
+    生产数据核对与真实登录验收后再切换账号级 Membership。
 
 该 change 把已验证的 Codex 投递链路定义为第一个 Host Connector，确保频道服务、
 订阅恢复与消息语义不依赖 Codex。方案、运行时代码边界和无需 daemon/env 的 Desktop
@@ -49,7 +46,7 @@ IPC Connector 已完成。0.2 的发送凭证与断线状态修复继续作为�
 4. [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
 5. [`../docs/OPEN_QUESTIONS.md`](../docs/OPEN_QUESTIONS.md)
 
-当前只执行上述十三个活动 change；账号 change 仅作为下一阶段设计。当前不建设通用插件框架、其他 Host Connector、独立模型
+当前只执行上述十四个活动 change。当前不建设通用插件框架、其他 Host Connector、独立模型
 Runtime 或完整聊天客户端。已完成的 Codex 验证记录保留在
 [`changes/archive/2026-08-19-add-codex-thread-bridge`](./changes/archive/2026-08-19-add-codex-thread-bridge/)。
 

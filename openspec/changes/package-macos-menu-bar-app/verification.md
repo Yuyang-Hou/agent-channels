@@ -52,4 +52,14 @@ connection error after a confirmed reconnect.
 - `npm run typecheck` and `npm run build`: passed.
 - Swift `-typecheck -warnings-as-errors` and the focused source self-test: passed.
 - `openspec validate --strict --all`: 3 items passed.
-- No replacement App or DMG has been built yet.
+- At that checkpoint, no replacement App or DMG had been built.
+
+## 2026-08-27 Branding Candidate Verification
+
+- `pijoo-app-icon.png` now supplies the opaque App icon, while `pijoo-logo.png` remains the transparent
+  product/README mark; both use the approved round-bodied carrier pigeon.
+- The new single-path `pijoo-menubar.svg` was rendered at menu-bar scale and keeps a recognizable body,
+  beak, eye and tail silhouette on a transparent background.
+- An ad-hoc `Pijoo-0.3.0-beta.23-arm64.dmg` source build passed focused Swift and updater self-tests,
+  `hdiutil`, mounted App signature, embedded Skill and MCP version verification. Public Developer ID,
+  notarization, stapling and fresh-download verification remain release-workflow gates.

@@ -415,7 +415,7 @@ export function mcpDescriptor(origin: string) {
   };
 }
 
-export function serviceInfo(origin: string) {
+export function serviceInfo(origin: string, features: string[] = []) {
   return {
     service: "rogerthat",
     version: VERSION,
@@ -423,6 +423,7 @@ export function serviceInfo(origin: string) {
     homepage: "https://rogerthat.chat",
     repository: "https://github.com/opcastil11/rogerthat",
     license: "MIT",
+    features,
     discovery: {
       llms_txt: `${origin}/llms.txt`,
       mcp_descriptor: `${origin}/.well-known/mcp.json`,

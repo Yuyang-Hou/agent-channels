@@ -10,7 +10,7 @@ MACOS_DIR="$CONTENTS/MacOS"
 RESOURCES_DIR="$CONTENTS/Resources"
 STAGING="$BUILD_DIR/dmg"
 INFO_PLIST="$SCRIPT_DIR/Info.plist"
-SOURCE_ICON="$SCRIPT_DIR/branding/pijoo-logo.png"
+SOURCE_ICON="$SCRIPT_DIR/branding/pijoo-app-icon.png"
 MENU_ICON="$SCRIPT_DIR/branding/pijoo-menubar.svg"
 SKILL_SOURCE="$ROOT_DIR/skills/pijoo"
 APP_SOURCES=(
@@ -120,6 +120,7 @@ if [[ "$SKIP_SELF_TESTS" == "0" ]]; then
     -target arm64-apple-macos13.0 \
     -sdk "$SDK" \
     -framework AppKit \
+    -framework AuthenticationServices \
     -framework Security \
     -framework ServiceManagement \
     -framework SwiftUI \
@@ -156,6 +157,7 @@ swiftc \
   -target arm64-apple-macos13.0 \
   -sdk "$SDK" \
   -framework AppKit \
+  -framework AuthenticationServices \
   -framework Security \
   -framework ServiceManagement \
   -framework SwiftUI \
