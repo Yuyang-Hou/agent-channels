@@ -8,6 +8,7 @@
 ## What Changes
 
 - PR 与 `main` push 统一执行 server、OpenSpec、Swift 自测和 arm64 App/DMG 构建校验。
+- Hosted CI 与 release 使用 macOS 26 runner，并拒绝由 macOS 26 以前 SDK 编译的包，避免系统回退到旧兼容外观。
 - `main` push 根据最新正式 Beta tag 计算下一 `beta.N`，保存七天候选 DMG，但不公开发布。
 - 维护者人工触发受保护的 release workflow；流水线从 `origin/main` 精确提交重新验证，完成
   Developer ID 签名、Apple notarization、staple、Gatekeeper、GitHub prerelease 和公开回下载校验。
