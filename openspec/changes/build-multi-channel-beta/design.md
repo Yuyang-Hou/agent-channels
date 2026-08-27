@@ -131,8 +131,8 @@ Codex 集成改为“连接 AI 会话”入口的能力门禁。只有 MCP 配�
 
 本地开发使用独立的 App-only 构建入口，跳过 DMG 和重复 self-test，完成后直接启动固定路径下的
 `macos/build/Pijoo.app`。开发标记只放入该 App 的 Info.plist，使用户主动启用集成时可引用固定的
-本地 bundle 路径；正式构建不包含该标记，继续要求位于 Applications。开发 App 修复 Skill 时，
-只允许把 bundle id 同为 `dev.pijoo.menubar` 的旧 Pijoo bundle 内 Skill 链接切到当前开发 bundle；
+本地 bundle 路径；正式构建不包含该标记，继续要求位于 Applications。开发或正式 App 修复 Skill
+时，只允许把 bundle id 同为 `dev.pijoo.menubar` 的旧 Pijoo bundle 内 Skill 链接切到当前 bundle；
 普通目录、外来链接和其他 bundle 仍拒绝，后续 Codex 配置写入失败时恢复旧链接。
 
 ### 频道工作区交互方案
