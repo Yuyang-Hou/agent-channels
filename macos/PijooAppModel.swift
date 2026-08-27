@@ -1855,7 +1855,7 @@ extension AppModel {
             loadedCodexMCPVersion = nil
             UserDefaults.standard.removeObject(forKey: loadedCodexMCPVersionKey)
             UserDefaults.standard.set(currentVersion, forKey: shownCodexRestartVersionKey)
-            showNotice(title: "Codex 集成已启用", message: "请完全退出并重新打开 ChatGPT，让所有 task 加载 Pijoo 工具与 Skill。")
+            showNotice(title: "Codex 集成已启用", message: "请完全退出并重新打开 ChatGPT，让所有 task 加载 Pijoo MCP。")
         } catch {
             fail(error)
         }

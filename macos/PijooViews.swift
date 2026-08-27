@@ -1360,7 +1360,7 @@ struct PijooSettingsView: View {
                             Button("移除 Codex 集成", role: .destructive) { model.removeCodexIntegration() }
                         }
                     }
-                    Text("MCP 提供当前会话的频道动作，Skill 负责识别外部消息和协作规则；频道凭证仍只保存在 App Keychain。配置后需完全重启 ChatGPT。")
+                    Text("MCP 提供当前会话的频道动作，Skill 负责识别外部消息和协作规则；频道凭证仍只保存在 App Keychain。首次配置 MCP 后需完全重启 ChatGPT。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if !initialSetup {
