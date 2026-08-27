@@ -1,7 +1,7 @@
 # Verification
 
-Status: additive login/session source implementation and local checks complete; database provisioning, deployment,
-real GitHub login and Membership cutover are not started.
+Status: additive login/session implementation is deployed; production PostgreSQL, one real GitHub login and
+Keychain-backed App restart recovery are verified. Membership cutover is not started.
 
 ## Implementation Evidence
 
@@ -12,6 +12,11 @@ real GitHub login and Membership cutover are not started.
 - macOS 设置页使用 `ASWebAuthenticationSession`，只在完整响应校验后把 Pijoo Session 写入 Keychain；
   登录取消、Session 失效和退出都有可见状态，已有频道与本地 Host 数据不受影响。
 - `npm run typecheck` 与账号 Vitest 通过；macOS focused self-test、原生 App 编译和签名通过，未创建 DMG。
+- 2026-08-27 生产验收中，GitHub 授权页明确显示仅访问公开资料；真实账号完成授权后，Pijoo 显示
+  已登录状态。退出并重启 App 后，Keychain Session 经生产 `/v1/session` 校验恢复，原有频道和
+  本地数据保持不变。
+- Railway `Postgres` 与 `rogerthat` 均 Online；生产 readiness、账号 schema 启动迁移和真实 OAuth
+  code/exchange/session 闭环通过。OAuth App badge 已替换为 Pijoo 品牌 Logo。
 
 ## Design Evidence
 
@@ -27,9 +32,7 @@ real GitHub login and Membership cutover are not started.
 
 ## Not Yet Verified
 
-- GitHub OAuth App 注册、callback domain、client id/secret 与真实账号登录；
-- PostgreSQL schema 在真实 Railway 数据库上的迁移、事务与重启恢复；
-- Railway PostgreSQL 的备份、恢复、连接上限和部署 readiness；
+- Railway PostgreSQL 的备份、恢复和连接上限；
 - 两个真实 GitHub 账号、两台 Mac 的 Membership 恢复与设备撤销；
 - 生产环境是否仍只有可清理的测试频道和 Member；
 - Mac App Store 分发是否进入路线图，及其 Sign in with Apple/账号删除审核要求。

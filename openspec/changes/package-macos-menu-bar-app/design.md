@@ -78,14 +78,14 @@ App 使用 GitHub Release 公共 API 手动检查更新，不引入 updater 依�
 - mutating IPC 回执不确定时停止自动重放，并让用户选择跳过或重试。
 - SSE 临时断开时显示重连状态；重新连接成功必须清除该连接错误，不能保留过期警告。
 
-## 视觉方向：圆头传信鸽
+## 视觉方向：圆身传信鸽
 
-源图：[`pijoo-logo.png`](../../../macos/branding/pijoo-logo.png)
+App icon 源图：[`pijoo-app-icon.png`](../../../macos/branding/pijoo-app-icon.png)；README 透明品牌图：[`pijoo-logo.png`](../../../macos/branding/pijoo-logo.png)
 
 - **传信鸽**：用最直接的“可靠传递消息”意象表达 Pijoo 连接不同 AI 会话的核心价值。
-- **圆头与短圆喙**：只保留侧面头部、眼睛和喙，在 `18 × 18` 下仍能辨认，适合菜单栏软件的小尺寸场景。
+- **圆身、小头与短圆喙**：用接近皮球的圆身体承载亲和力；菜单栏只保留外轮廓和单点眼睛，在 `18 × 18` 下仍能辨认。
 - **冷灰、钢蓝、暖白**：冷灰主体保持克制，钢蓝承担识别与可信感，暖白背景降低工具软件的距离感。
 - **彩色与单色分工**：App icon 保留柔和色彩与轻微层次；菜单栏使用同轮廓的单色 Template Image，由 macOS 自动适配明暗状态。
 
-该图作为当前 App icon 来源；菜单栏使用从同一轮廓派生的 18×18 单色 SVG Template Image，
+不透明背景图作为当前 App icon 来源；菜单栏使用从同一轮廓派生的 18×18 单色 SVG Template Image，
 保持透明背景并由 macOS 自动适配明暗菜单栏。异常状态仍使用系统警告图标。
