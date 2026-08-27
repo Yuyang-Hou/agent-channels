@@ -789,6 +789,7 @@ struct ChannelMembersView: View {
 
 struct ChannelSubscriptionsView: View {
     @ObservedObject var model: AppModel
+    @State private var refreshingCodexIntegration = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -799,14 +800,24 @@ struct ChannelSubscriptionsView: View {
                     Text(model.codexIntegrationBlockingMessage)
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    Button(model.codexReadiness == .notConfigured ? "配置 Codex 集成" : "重新检查") {
+                    Button {
                         if model.codexReadiness == .notConfigured {
                             model.enableCodexIntegration()
                         } else {
-                            model.refreshCodexIntegrationStatus()
+                            refreshCodexIntegration()
+                        }
+                    } label: {
+                        if refreshingCodexIntegration {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("正在检查…")
+                            }
+                        } else {
+                            Text(model.codexReadiness == .notConfigured ? "配置 Codex 集成" : "重新检查")
                         }
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(refreshingCodexIntegration)
                 } else {
                 if HostProviderChoice.available.count > 1 {
                     HStack {
@@ -934,6 +945,14 @@ struct ChannelSubscriptionsView: View {
             await model.refreshHostConversationStates()
         }
     }
+
+    private func refreshCodexIntegration() {
+        refreshingCodexIntegration = true
+        model.refreshCodexIntegrationStatus()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            refreshingCodexIntegration = false
+        }
+    }
 }
 
 struct SubscriptionCard: View {
@@ -945,6 +964,7 @@ struct SubscriptionCard: View {
     @State private var isPreviewingTemplate = false
     @State private var isEditingSentMessageTemplate = false
     @State private var isConfirmingFullAccess = false
+    @State private var isRefreshingHostConversation = false
 
     private var subscription: ChannelSubscription? {
         model.state.subscriptions.first { $0.id == subscriptionID }
@@ -1023,11 +1043,23 @@ struct SubscriptionCard: View {
                         }
                         .help("打开会话")
                         Button {
-                            Task { await model.refreshHostConversation(subscription.taskID) }
+                            isRefreshingHostConversation = true
+                            Task {
+                                await model.refreshHostConversation(subscription.taskID)
+                                isRefreshingHostConversation = false
+                            }
                         } label: {
-                            actionIcon("刷新会话状态", systemImage: "arrow.clockwise")
+                            if isRefreshingHostConversation {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .frame(width: 24, height: 24)
+                            } else {
+                                actionIcon("刷新会话状态", systemImage: "arrow.clockwise")
+                            }
                         }
                         .help("刷新会话状态")
+                        .accessibilityLabel(isRefreshingHostConversation ? "正在刷新会话状态" : "刷新会话状态")
+                        .disabled(isRefreshingHostConversation)
                         Button {
                             isExpanded.toggle()
                         } label: {

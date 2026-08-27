@@ -22,6 +22,8 @@ Gatekeeper gates pass. Clean-install, two-machine, real-Host and security inspec
 - 添加频道弹窗已改为创建时只填频道名称、加入时只填邀请口令；“我的昵称”在设置中全局维护，
   App 的所有 join/send 路径显式使用该昵称，服务端持久化并随邀请返回频道名称。
 - 双击频道详情标题与现有编辑按钮复用同一改名流程。
+- 会话卡刷新在真实异步查询期间显示进度并阻止重复点击；Codex 集成“重新检查”复用设置页既有的
+  0.5 秒可感知反馈，不增加新的网络或 Host 探测。
 - `npm test` 通过 11 个文件 / 97 项测试；TypeScript typecheck、Swift 编译与本机 self-test、
   `openspec validate --strict --all` 和 `git diff --check` 通过。
 - 本节后续的 beta.18 记录对应提交 `bf499d8` 及已发布的公证资产；未在本机安装。
