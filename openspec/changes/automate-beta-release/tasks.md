@@ -11,6 +11,7 @@
 - [x] PR 与 `main` push 执行 server、OpenSpec、Swift 和 arm64 package 检查
 - [x] 仅为 `main` push 上传短期候选 DMG，不使用发布凭据
 - [x] CI 与 release 切换到 macOS 26 runner，并校验产物的实际 SDK 主版本不低于 26
+- [x] 官方 GitHub Actions 升级为 Node 24 运行时版本，并继续固定到精确提交
 
 ## 3. Protected release
 

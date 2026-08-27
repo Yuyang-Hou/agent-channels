@@ -13,6 +13,8 @@ Status: complete; GitHub Environment、hosted CI 与首次正式发布均已验�
 
 ## Hosted checks
 
+- `checkout v7.0.1`、`setup-node v7.0.0` 与 `upload-artifact v7.0.1` 均固定到官方精确提交，
+  其 `action.yml` 声明使用 Node 24 runtime。
 - GitHub `release` Environment 已配置审批规则和五项签名、公证 secrets。
 - PR #3 与 `main` CI 均通过；`main` run `33036692439` 上传了七天候选 artifact。
 - `0.3.0-beta.21` 已完成临时 Keychain、Apple notarization、draft/public asset 回下载链路；
