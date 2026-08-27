@@ -44,9 +44,8 @@
   客户端持有的 GitHub token。Session 固定 90 天，到期重新登录。
 - 账号与 Membership 是云端稳定授权；消息历史、TaskBinding、Subscription 和 Host 私有数据
   继续只在本机。
-- 0.3 Beta 已进入外部试用，登录能力先以服务端配置开关增量上线，不立即替换现有 Member credential。
-  Membership 切换前必须再次核对线上真实用户和频道数据；若已有真实用户，
-  单独设计一次性认领，而不是把兼容逻辑塞进常规请求。
+- 当前仍处于内部测试，账号版采用 clean-slate 切换：新频道只接受 Account Session，不迁移或继续
+  签发旧 Member credential。旧测试频道可直接废弃，不建设一次性认领流程。
 - 当前公开分发方向是 Developer ID 公证 DMG。若改为 Mac App Store，发布前必须补充符合 Apple
   Review Guideline 4.8 的等价隐私登录选项，并在 App 内提供账号删除。
 
@@ -62,7 +61,6 @@
 
 ## Impact
 
-首个实现切片只增加可关闭的登录与 Session API，不改变既有频道。最终账号体系会把服务端授权主语
-从“频道 credential”改为“Account Session + active Membership”，并把
-当前 JSON 文件中的频道授权数据迁到关系数据库。Channel Service 仍不知道本机 TaskBinding；
-GitHub 身份也不会进入消息正文、成员列表或 Host 输入。
+账号版服务端授权主语已切换为“Account Session + active Membership”；登录后可恢复云端
+Membership 对应的频道卡片。Channel Service 仍不知道本机 TaskBinding；GitHub 身份也不会进入
+消息正文、成员列表或 Host 输入。Channel 与 Invite 的 PostgreSQL 迁移继续作为后续持久化收口。

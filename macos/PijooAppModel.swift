@@ -79,11 +79,7 @@ final class AppModel: ObservableObject {
 
     private init() {
         try? AppPaths.prepare()
-        var loaded = Self.loadState()
-        Self.recoverDeliveryState(&loaded)
-        if loaded.defaultCallsign.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            loaded.defaultCallsign = generatedLocalNickname()
-        }
+        let loaded = AppStateV2(defaultCallsign: generatedLocalNickname())
         state = loaded
         selectedChannelID = state.selectedChannelID ?? state.channels.first?.id
         draftNickname = state.defaultCallsign
@@ -122,10 +118,6 @@ final class AppModel: ObservableObject {
         showCodexRestartNoticeIfNeeded()
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            for channel in self.state.channels { self.startChannelFeed(channel.id) }
-            for subscription in self.state.subscriptions where subscription.enabled {
-                Task { await self.startListener(subscription.id) }
-            }
             self.configureAutomaticUpdateChecks()
             Task { await self.refreshAccount() }
         }
@@ -254,10 +246,12 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private static func loadState() -> AppStateV2 {
-        guard let data = try? Data(contentsOf: AppPaths.state),
+    private static func loadState(accountID: String) -> AppStateV2 {
+        guard let data = try? Data(contentsOf: AppPaths.accountState(accountID)),
               let decoded = try? JSONDecoder().decode(AppStateV2.self, from: data),
-              decoded.version == 2 else { return AppStateV2() }
+              decoded.version == 2, decoded.accountID == accountID else {
+            return AppStateV2(accountID: accountID)
+        }
         return decoded
     }
 
@@ -281,8 +275,47 @@ final class AppModel: ObservableObject {
         state.selectedChannelID = selectedChannelID
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(state).write(to: AppPaths.state, options: .atomic)
+        let data = try encoder.encode(state)
+        if let accountID = state.accountID {
+            let accountURL = AppPaths.accountState(accountID)
+            try data.write(to: accountURL, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: accountURL.path)
+        }
+        try data.write(to: AppPaths.state, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: AppPaths.state.path)
+    }
+
+    private func replaceVisibleState(_ replacement: AppStateV2) {
+        state = replacement
+        selectedChannelID = state.selectedChannelID ?? state.channels.first?.id
+        draftNickname = state.defaultCallsign
+        messages = selectedChannelID.map(MessageLedger.load) ?? []
+        members = []
+        invitations = []
+        listenerStatus = [:]
+        channelStatus = [:]
+        hostConversationStates = [:]
+        automaticallyReconnectingTaskIDs.removeAll()
+        refreshRecoveryPendingMessageCount()
+    }
+
+    private func activateAccountState(_ session: PijooAccountSession) {
+        guard state.accountID != session.accountID else { return }
+        pauseAccountChannels()
+        var loaded = Self.loadState(accountID: session.accountID)
+        Self.recoverDeliveryState(&loaded)
+        if loaded.defaultCallsign.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            loaded.defaultCallsign = session.displayName
+        }
+        replaceVisibleState(loaded)
+        persistState()
+    }
+
+    private func lockAccountState() {
+        pauseAccountChannels()
+        guard state.accountID != nil || !state.channels.isEmpty else { return }
+        replaceVisibleState(AppStateV2(defaultCallsign: generatedLocalNickname()))
+        persistState()
     }
 
     private func reconcileChannelMemberIdentity(
@@ -1038,7 +1071,8 @@ extension AppModel {
 
 extension AppModel {
     func startListener(_ id: UUID) async {
-        guard listeners[id] == nil,
+        guard accountSession != nil,
+              listeners[id] == nil,
               !recoveryPausedSubscriptionIDs.contains(id),
               let subscription = state.subscriptions.first(where: { $0.id == id }), subscription.enabled,
               let profile = state.channels.first(where: { $0.id == subscription.channelID }),
@@ -1531,7 +1565,9 @@ extension AppModel {
 
 extension AppModel {
     func startChannelFeed(_ channelID: UUID) {
-        guard feedTasks[channelID] == nil, state.channels.contains(where: { $0.id == channelID }) else { return }
+        guard accountSession != nil,
+              feedTasks[channelID] == nil,
+              state.channels.contains(where: { $0.id == channelID }) else { return }
         channelStatus[channelID] = "正在连接…"
         feedTasks[channelID] = Task { @MainActor [weak self] in
             await self?.runChannelFeed(channelID)
@@ -1657,12 +1693,14 @@ extension AppModel {
             guard accountFeatureAvailable else {
                 accountSession = nil
                 accountStatus = "当前服务端尚未启用账号登录"
+                lockAccountState()
                 return
             }
             guard let credential = try KeychainStore.get(service: keychainService, account: accountSessionKey),
                   !credential.isEmpty else {
                 accountSession = nil
                 accountStatus = "未登录"
+                lockAccountState()
                 return
             }
             do {
@@ -1671,12 +1709,21 @@ extension AppModel {
                     method: "GET",
                     bearer: credential
                 )
-                accountSession = try accountSessionValue(json)
-                accountStatus = "已登录"
+                let session = try accountSessionValue(json)
+                accountSession = session
+                activateAccountState(session)
+                do {
+                    try await syncAccountChannels(credential: credential)
+                    accountStatus = "已登录"
+                } catch {
+                    accountStatus = "已登录，频道恢复失败"
+                    lastError = "恢复账号频道失败：\(error.localizedDescription)"
+                }
             } catch is ChannelAuthorizationFailure {
                 try? KeychainStore.delete(service: keychainService, account: accountSessionKey)
                 accountSession = nil
                 accountStatus = "登录已失效，请重新登录"
+                lockAccountState()
             }
         } catch {
             accountStatus = "暂时无法连接账号服务"
@@ -1722,6 +1769,7 @@ extension AppModel {
                   !credential.isEmpty else {
                 accountSession = nil
                 accountStatus = "未登录"
+                lockAccountState()
                 return
             }
             _ = try await requestJSON(
@@ -1732,6 +1780,7 @@ extension AppModel {
             try KeychainStore.delete(service: keychainService, account: accountSessionKey)
             accountSession = nil
             accountStatus = "未登录"
+            lockAccountState()
         } catch {
             accountStatus = "退出失败，登录仍然有效"
             fail(error)
@@ -1766,7 +1815,14 @@ extension AppModel {
             let session = try accountSessionValue(json)
             try KeychainStore.set(credential, service: keychainService, account: accountSessionKey)
             accountSession = session
-            accountStatus = "已登录"
+            activateAccountState(session)
+            do {
+                try await syncAccountChannels(credential: credential)
+                accountStatus = "已登录"
+            } catch {
+                accountStatus = "已登录，频道恢复失败"
+                lastError = "恢复账号频道失败：\(error.localizedDescription)"
+            }
         } catch is CancellationError {
             accountStatus = "已取消登录"
         } catch {
@@ -1832,6 +1888,69 @@ extension AppModel {
                 message: "请完全退出并重新打开 ChatGPT，加载 Pijoo MCP \(self.currentVersion)。此提示会在新 MCP 连接后自动消失。"
             )
         }
+    }
+
+    private func syncAccountChannels(credential: String) async throws {
+        let json = try await requestJSON(
+            url: URL(string: "\(defaultOrigin)/v1/channels")!,
+            method: "GET",
+            bearer: credential
+        )
+        guard let rawChannels = json["channels"] as? [[String: Any]] else {
+            throw AppFailure("服务端未返回账号频道")
+        }
+        let snapshots = try rawChannels.map { raw -> AccountChannelSnapshot in
+            guard let channel = raw["channel_id"] as? String, !channel.isEmpty,
+                  let membershipID = raw["membership_id"] as? String, !membershipID.isEmpty,
+                  let role = raw["role"] as? String, role == "owner" || role == "member" else {
+                throw AppFailure("账号频道数据无效")
+            }
+            let displayName = (raw["channel_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let memberName = (raw["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return AccountChannelSnapshot(
+                channel: channel,
+                displayName: displayName?.isEmpty == false ? displayName! : channel,
+                membershipID: membershipID,
+                role: role,
+                memberName: memberName?.isEmpty == false ? memberName! : (accountSession?.displayName ?? "Pijoo 用户")
+            )
+        }
+        if state.channels.isEmpty, let restoredName = snapshots.first?.memberName {
+            state.defaultCallsign = restoredName
+            draftNickname = restoredName
+        }
+        let merged = mergedAccountChannels(
+            state.channels,
+            snapshots: snapshots,
+            origin: defaultOrigin,
+            credentialAccount: accountSessionKey
+        )
+        if merged != state.channels {
+            let activeChannelIDs = Set(merged.map(\.id))
+            let removedChannelIDs = Set(state.channels.map(\.id)).subtracting(activeChannelIDs)
+            for channelID in removedChannelIDs { feedTasks.removeValue(forKey: channelID)?.cancel() }
+            for subscription in state.subscriptions where removedChannelIDs.contains(subscription.channelID) {
+                stopListener(subscription.id)
+            }
+            state.channels = merged
+            state.subscriptions.removeAll { !activeChannelIDs.contains($0.channelID) }
+            if selectedChannelID.map({ !activeChannelIDs.contains($0) }) ?? true {
+                selectedChannelID = merged.first?.id
+            }
+            try persistStateOrThrow()
+            refreshSelectedChannel()
+        }
+        for profile in merged { startChannelFeed(profile.id) }
+        for subscription in state.subscriptions where subscription.enabled {
+            Task { await startListener(subscription.id) }
+        }
+    }
+
+    private func pauseAccountChannels() {
+        for task in feedTasks.values { task.cancel() }
+        feedTasks.removeAll()
+        for id in Set(listeners.keys).union(startingListeners) { stopListener(id) }
+        for profile in state.channels { channelStatus[profile.id] = "需要登录" }
     }
 
     private func recordLoadedCodexMCPVersion(_ version: String) {
@@ -1961,7 +2080,7 @@ extension AppModel {
     func removeAllV2Data() {
         let alert = NSAlert()
         alert.messageText = "移除 0.3 Beta 本机配置？"
-        alert.informativeText = "将停止监听并删除 0.3 频道凭证、订阅和本地消息。旧 0.2 数据不会被修改。"
+        alert.informativeText = "将停止监听并删除 0.3 本机频道连接、订阅和本地消息。账号与云端 Membership 不会被删除。"
         alert.addButton(withTitle: "移除")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -1969,7 +2088,9 @@ extension AppModel {
         for task in feedTasks.values { task.cancel() }
         feedTasks.removeAll()
         for profile in state.channels {
-            try? KeychainStore.delete(service: keychainService, account: profile.credentialAccount)
+            if profile.credentialAccount != accountSessionKey {
+                try? KeychainStore.delete(service: keychainService, account: profile.credentialAccount)
+            }
             try? MessageLedger.remove(profile.id)
         }
         for subscription in state.subscriptions { try? MessageLedger.removeDeliveries(subscription.id) }
@@ -1983,6 +2104,9 @@ extension AppModel {
         hostConversationStates = [:]
         automaticallyReconnectingTaskIDs.removeAll()
         channelStatus = [:]
+        try? FileManager.default.removeItem(at: AppPaths.accountStates)
+        try? FileManager.default.removeItem(at: AppPaths.messages)
+        try? AppPaths.prepare()
         try? FileManager.default.removeItem(at: AppPaths.state)
         removeCodexIntegration()
     }
@@ -2068,12 +2192,14 @@ extension AppModel {
         busy = true
         defer { busy = false }
         do {
+            let credential = try accountCredential()
             let nickname = try normalizedDisplayName(state.defaultCallsign, label: "昵称")
             let channelName = try normalizedDisplayName(draftChannelName, label: "频道名称")
             let url = URL(string: "\(defaultOrigin)/api/channels")!
             let json = try await requestJSON(
                 url: url,
                 method: "POST",
+                bearer: credential,
                 body: [
                     "api_version": 2,
                     "retention": "none",
@@ -2083,22 +2209,19 @@ extension AppModel {
                 ]
             )
             guard let channel = json["channel_id"] as? String,
-                  let credential = (json["member_credential"] as? String) ?? (json["join_token"] as? String) else {
-                throw AppFailure("服务端未返回频道成员凭证")
+                  let memberID = json["member_id"] as? String else {
+                throw AppFailure("服务端未返回频道 Membership")
             }
-            let memberID = (json["member_id"] as? String) ?? "owner"
             let profileID = UUID()
-            let account = "channel:\(profileID.uuidString):credential"
-            try KeychainStore.set(credential, service: keychainService, account: account)
             let profile = ChannelProfile(
                 id: profileID,
                 origin: defaultOrigin,
                 channel: channel,
                 displayName: (json["channel_name"] as? String) ?? channelName,
-                callsign: internalCallsign(memberID),
+                callsign: channelCallsign(memberID),
                 memberID: memberID,
                 role: (json["role"] as? String) ?? "owner",
-                credentialAccount: account,
+                credentialAccount: accountSessionKey,
                 lastViewedMessageID: nil
             )
             state.channels.append(profile)
@@ -2118,6 +2241,7 @@ extension AppModel {
         busy = true
         defer { busy = false }
         do {
+            let credential = try accountCredential()
             let nickname = try normalizedDisplayName(state.defaultCallsign, label: "昵称")
             let invitation = try InvitationCodec.decode(invitationInput)
             guard !alreadyJoinedChannel(state.channels, invitation: invitation) else {
@@ -2130,24 +2254,22 @@ extension AppModel {
             let json = try await requestJSON(
                 url: url,
                 method: "POST",
+                bearer: credential,
                 body: ["invite_token": invitation.inviteToken, "name": nickname]
             )
-            guard let credential = json["member_credential"] as? String,
-                  let memberID = json["member_id"] as? String else {
-                throw AppFailure("邀请兑换失败：服务端未返回成员凭证")
+            guard let memberID = json["member_id"] as? String else {
+                throw AppFailure("邀请兑换失败：服务端未返回 Membership")
             }
             let profileID = UUID()
-            let account = "channel:\(profileID.uuidString):credential"
-            try KeychainStore.set(credential, service: keychainService, account: account)
             let profile = ChannelProfile(
                 id: profileID,
                 origin: invitation.origin,
                 channel: invitation.channel,
                 displayName: (json["channel_name"] as? String) ?? invitation.channel,
-                callsign: internalCallsign(memberID),
+                callsign: channelCallsign(memberID),
                 memberID: memberID,
                 role: (json["role"] as? String) ?? "member",
-                credentialAccount: account,
+                credentialAccount: accountSessionKey,
                 lastViewedMessageID: nil
             )
             state.channels.append(profile)
@@ -2245,7 +2367,7 @@ extension AppModel {
         guard let profile = selectedChannel else { return }
         let alert = NSAlert()
         alert.messageText = "从本机移除 \(profile.displayName)？"
-        alert.informativeText = "将停止该频道向全部会话的消息转发，并删除本机成员凭证与消息历史。"
+        alert.informativeText = "将停止该频道向全部会话的消息转发，并删除本机频道连接与消息历史；云端 Membership 仍会保留。"
         alert.addButton(withTitle: "移除")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -2255,7 +2377,9 @@ extension AppModel {
             stopListener(subscription.id)
             try? MessageLedger.removeDeliveries(subscription.id)
         }
-        try? KeychainStore.delete(service: keychainService, account: profile.credentialAccount)
+        if profile.credentialAccount != accountSessionKey {
+            try? KeychainStore.delete(service: keychainService, account: profile.credentialAccount)
+        }
         try? MessageLedger.remove(profile.id)
         let removedTaskIDs = Set(state.subscriptions.filter { $0.channelID == profile.id }.map(\.taskID))
         state.subscriptions.removeAll { $0.channelID == profile.id }
@@ -2418,8 +2542,8 @@ extension AppModel {
         let alert = NSAlert()
         alert.messageText = ban ? "封禁成员 \(member.name)？" : "移除成员 \(member.name)？"
         alert.informativeText = ban
-            ? "该成员的现有凭证、Session 和消息流会立即失效；对方仍可持新邀请创建新成员。"
-            : "该成员的现有凭证、Session 和消息流会立即失效。"
+            ? "该账号在所有设备上的频道访问和消息流会立即失效，新邀请也不能绕过封禁。"
+            : "该账号的频道访问和消息流会立即失效，以后可使用新邀请重新加入。"
         alert.addButton(withTitle: ban ? "封禁" : "移除")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -2634,8 +2758,11 @@ extension AppModel {
         return value
     }
 
-    private func internalCallsign(_ memberID: String) -> String {
-        "agent-\(memberID.lowercased().filter { $0.isLetter || $0.isNumber }.prefix(10))"
+    private func accountCredential() throws -> String {
+        guard accountSession != nil,
+              let credential = try KeychainStore.get(service: keychainService, account: accountSessionKey),
+              !credential.isEmpty else { throw AppFailure("请先登录 GitHub") }
+        return credential
     }
 
     private func memberEndpointPrefix(_ profile: ChannelProfile) -> String {

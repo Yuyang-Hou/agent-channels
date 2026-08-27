@@ -771,6 +771,7 @@ export async function handleMcpRequest(
   incomingSessionId: string | undefined,
   publicOrigin: string,
   mode: Mode = "default",
+  allowChannelCreation = true,
 ): Promise<McpResult> {
   const id = rawMessage.id ?? null;
   const method = rawMessage.method;
@@ -781,7 +782,9 @@ export async function handleMcpRequest(
     sessions.set(sessionId, { initialized: true, channelId, boundChannel: null });
     const instructions =
       channelId === null
-        ? "Connected to the RogerThat hub. Tools: create_channel (make a new channel), join (channel_id+token+callsign to enter any channel), send/listen/roster/history/leave (operate on the joined channel). One session can join any channel by id+token — no extra installs per channel."
+        ? allowChannelCreation
+          ? "Connected to the RogerThat hub. Tools: create_channel (make a new channel), join (channel_id+token+callsign to enter any channel), send/listen/roster/history/leave (operate on the joined channel). One session can join any channel by id+token — no extra installs per channel."
+          : "Connected to Pijoo. Create and join managed channels in the signed-in Pijoo app; this MCP session can operate on channels already available to the app."
         : describeLegacyChannel(channelId, publicOrigin);
     return {
       status: 200,
@@ -857,15 +860,17 @@ export async function handleMcpRequest(
   }
 
   if (method === "tools/list") {
+    const available = (tools: typeof UNIFIED_TOOLS) =>
+      allowChannelCreation ? tools : tools.filter((tool) => tool.name !== "create_channel");
     if (channelId === null) {
-      return { status: 200, body: ok(id, { tools: thinUnifiedTools(mode) }) };
+      return { status: 200, body: ok(id, { tools: available(thinUnifiedTools(mode)) }) };
     }
     // Per-channel endpoints expose the 7 channel-scoped tools (which operate on
     // the bound channel) PLUS the channel-agnostic creators from the unified set
     // — so an agent installed against /mcp/<id> can still help its operator
     // open NEW channels without forcing them to reinstall the MCP. The session stays bound to the original channel for
     // join/send/listen/roster/history/leave.
-    const extras = UNIFIED_TOOLS.filter((t) => PER_CHANNEL_EXTRA_TOOL_NAMES.has(t.name));
+    const extras = available(UNIFIED_TOOLS).filter((t) => PER_CHANNEL_EXTRA_TOOL_NAMES.has(t.name));
     return { status: 200, body: ok(id, { tools: [...CHANNEL_TOOLS, ...extras] }) };
   }
 
@@ -873,6 +878,9 @@ export async function handleMcpRequest(
     const name = String(params.name ?? "");
     const args = (params.arguments ?? {}) as Record<string, unknown>;
     try {
+      if (name === "create_channel" && !allowChannelCreation) {
+        throw new Error("channel creation requires a signed-in Pijoo account");
+      }
       if (channelId === null) {
         const result = await callUnifiedTool(name, args, state, sessionId, publicOrigin, mode);
         return { status: 200, body: ok(id, result) };

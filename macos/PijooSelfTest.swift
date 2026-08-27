@@ -45,6 +45,46 @@ private struct PijooV2SelfTest {
         )
         precondition(alreadyJoinedChannel([joinedChannel], invitation: invitation))
         precondition(!alreadyJoinedChannel([], invitation: invitation))
+        let restoredID = UUID(uuidString: "87654321-0000-0000-0000-000000000000")!
+        let restoredChannels = mergedAccountChannels(
+            [joinedChannel],
+            snapshots: [
+                AccountChannelSnapshot(
+                    channel: invitation.channel,
+                    displayName: "已恢复频道",
+                    membershipID: "membership-restored",
+                    role: "member",
+                    memberName: "成员"
+                ),
+                AccountChannelSnapshot(
+                    channel: "new-channel",
+                    displayName: "新设备可见",
+                    membershipID: "membership-new",
+                    role: "owner",
+                    memberName: "Owner"
+                ),
+            ],
+            origin: invitation.origin,
+            credentialAccount: accountSessionKey,
+            makeID: { restoredID }
+        )
+        precondition(restoredChannels.count == 2)
+        precondition(restoredChannels[0].id == joinedChannel.id)
+        precondition(restoredChannels[0].memberID == "membership-restored")
+        precondition(restoredChannels[0].credentialAccount == accountSessionKey)
+        precondition(restoredChannels[1].id == restoredID)
+        precondition(restoredChannels[1].callsign == channelCallsign("membership-new"))
+        let removedChannels = mergedAccountChannels(
+            restoredChannels,
+            snapshots: [],
+            origin: invitation.origin,
+            credentialAccount: accountSessionKey
+        )
+        precondition(removedChannels.isEmpty)
+        let accountLocalState = AppStateV2(accountID: "account-a", defaultCallsign: "Alice")
+        let accountLocalData = try JSONEncoder().encode(accountLocalState)
+        let restoredAccountLocalState = try JSONDecoder().decode(AppStateV2.self, from: accountLocalData)
+        precondition(restoredAccountLocalState.accountID == "account-a")
         let unboundSend = try outboundSelection(
             taskID: nil,
             explicitChannelID: joinedChannel.id,

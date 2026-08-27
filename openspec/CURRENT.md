@@ -30,8 +30,8 @@
 13. [`changes/automate-beta-release`](./changes/automate-beta-release/)：为 PR/main 增加统一 CI，
     在合并后保存下一 Beta 候选包，并通过人工触发的受保护流水线完成签名、公证和 GitHub prerelease。
 14. [`changes/add-github-account-system`](./changes/add-github-account-system/)：以 GitHub OAuth + PKCE
-    建立稳定 Human 与设备 Session。当前先以服务端配置开关增加登录闭环，保持旧频道授权不变；
-    生产数据核对与真实登录验收后再切换账号级 Membership。
+    建立稳定 Human、设备 Session 与 PostgreSQL Membership；账号版已 clean-slate 切换频道授权，
+    登录后恢复频道卡片，不同步本机消息、TaskBinding 或 Host 数据。
 
 该 change 把已验证的 Codex 投递链路定义为第一个 Host Connector，确保频道服务、
 订阅恢复与消息语义不依赖 Codex。方案、运行时代码边界和无需 daemon/env 的 Desktop

@@ -5,6 +5,7 @@ import {
   type GitHubIdentityProvider,
 } from "../src/account-auth.js";
 import type {
+  AccountMembership,
   AccountSession,
   AccountStore,
   LoginAttempt,
@@ -26,6 +27,7 @@ type Attempt = LoginAttempt & {
 class MemoryAccountStore implements AccountStore {
   attempts = new Map<string, Attempt>();
   sessions = new Map<string, AccountSession>();
+  memberships = new Map<string, AccountMembership>();
 
   async ready() {}
 
@@ -102,6 +104,48 @@ class MemoryAccountStore implements AccountStore {
   async revokeSession(sessionCredentialHash: string) {
     return this.sessions.delete(sessionCredentialHash);
   }
+
+  async createMembership(input: {
+    membershipId: string;
+    accountId: string;
+    channelId: string;
+    role: "owner" | "member";
+  }) {
+    const key = `${input.accountId}:${input.channelId}`;
+    const existing = this.memberships.get(key);
+    if (existing?.status === "banned") throw new Error("membership-unavailable");
+    const now = new Date().toISOString();
+    const membership: AccountMembership = existing
+      ? { ...existing, status: "active", updatedAt: now }
+      : { ...input, status: "active", createdAt: now, updatedAt: now };
+    this.memberships.set(key, membership);
+    return membership;
+  }
+
+  async getMembership(accountId: string, channelId: string) {
+    return this.memberships.get(`${accountId}:${channelId}`);
+  }
+
+  async listMemberships(accountId: string) {
+    return [...this.memberships.values()].filter(
+      (membership) => membership.accountId === accountId && membership.status === "active",
+    );
+  }
+
+  async setMembershipStatus(
+    channelId: string,
+    membershipId: string,
+    status: "active" | "removed" | "banned",
+  ) {
+    const entry = [...this.memberships.entries()].find(
+      ([, membership]) => membership.channelId === channelId && membership.membershipId === membershipId,
+    );
+    if (!entry) return undefined;
+    const [key, membership] = entry;
+    const updated = { ...membership, status, updatedAt: new Date().toISOString() };
+    this.memberships.set(key, updated);
+    return updated;
+  }
 }
 
 class FakeGitHub implements GitHubIdentityProvider {
@@ -134,6 +178,41 @@ describe("GitHub account login", () => {
     expect(((await info.json()) as { features: string[] }).features).toEqual([]);
     expect((await app.request("/v1/auth/github/start")).status).toBe(404);
     expect((await app.request("/ready")).status).toBe(200);
+  });
+
+  it("does not expose legacy credential channel creation through MCP", async () => {
+    const app = createApp({
+      publicOrigin: ORIGIN,
+      authRequired: true,
+      accountAuth: { store: new MemoryAccountStore(), github: new FakeGitHub() },
+    });
+    const initialize = await app.request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+    });
+    const session = initialize.headers.get("mcp-session-id")!;
+    const tools = await app.request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", "mcp-session-id": session },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+    });
+    const listed = await tools.json() as { result: { tools: Array<{ name: string }> } };
+    expect(listed.result.tools.some((tool) => tool.name === "create_channel")).toBe(false);
+
+    const create = await app.request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", "mcp-session-id": session },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "create_channel", arguments: {} },
+      }),
+    });
+    expect(await create.json()).toMatchObject({
+      result: { isError: true, content: [{ text: "error: channel creation requires a signed-in Pijoo account" }] },
+    });
   });
 
   it("exchanges one OAuth callback for one revocable Pijoo session", async () => {
@@ -196,6 +275,94 @@ describe("GitHub account login", () => {
     expect((await app.request("/v1/session", {
       headers: { authorization: `Bearer ${login.session_credential}` },
     })).status).toBe(401);
+  });
+
+  it("restores account channel memberships and blocks banned re-entry", async () => {
+    const store = new MemoryAccountStore();
+    const ownerCredential = "o".repeat(43);
+    const memberCredential = "m".repeat(43);
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    store.sessions.set(digest(ownerCredential), {
+      accountId: "owner-account",
+      deviceId: "owner-device",
+      displayName: "Owner",
+      expiresAt,
+    });
+    store.sessions.set(digest(memberCredential), {
+      accountId: "member-account",
+      deviceId: "member-device",
+      displayName: "Member",
+      expiresAt,
+    });
+    const app = createApp({
+      publicOrigin: ORIGIN,
+      authRequired: true,
+      accountAuth: { store, github: new FakeGitHub() },
+    });
+    const created = await app.request("/api/channels", {
+      method: "POST",
+      headers: { authorization: `Bearer ${ownerCredential}`, "content-type": "application/json" },
+      body: JSON.stringify({ api_version: 2, channel_name: "Account channel", name: "Owner" }),
+    });
+    expect(created.status).toBe(200);
+    const channel = await created.json() as { channel_id: string; member_id: string };
+    expect(channel).not.toHaveProperty("member_credential");
+
+    const inviteResponse = await app.request(`/api/channels/${channel.channel_id}/invites`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ownerCredential}` },
+    });
+    const invite = await inviteResponse.json() as { invite_token: string };
+    const joined = await app.request(`/api/channels/${channel.channel_id}/invites/redeem`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${memberCredential}`, "content-type": "application/json" },
+      body: JSON.stringify({ invite_token: invite.invite_token, name: "Member" }),
+    });
+    expect(joined.status).toBe(200);
+    const membership = await joined.json() as { member_id: string };
+    expect(membership).not.toHaveProperty("member_credential");
+
+    const restored = await app.request("/v1/channels", {
+      headers: { authorization: `Bearer ${memberCredential}` },
+    });
+    expect(await restored.json()).toMatchObject({
+      channels: [{
+        channel_id: channel.channel_id,
+        channel_name: "Account channel",
+        membership_id: membership.member_id,
+        role: "member",
+      }],
+    });
+
+    expect((await app.request(`/api/channels/${channel.channel_id}/members/${membership.member_id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${ownerCredential}` },
+    })).status).toBe(200);
+    const rejoinInviteResponse = await app.request(`/api/channels/${channel.channel_id}/invites`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ownerCredential}` },
+    });
+    const rejoinInvite = await rejoinInviteResponse.json() as { invite_token: string };
+    const rejoined = await app.request(`/api/channels/${channel.channel_id}/invites/redeem`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${memberCredential}`, "content-type": "application/json" },
+      body: JSON.stringify({ invite_token: rejoinInvite.invite_token, name: "Member restored" }),
+    });
+    expect(rejoined.status).toBe(200);
+    expect(await rejoined.json()).toMatchObject({ member_id: membership.member_id, name: "Member restored" });
+
+    expect((await app.request(`/api/channels/${channel.channel_id}/members/${membership.member_id}/ban`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ownerCredential}` },
+    })).status).toBe(200);
+    expect(await (await app.request("/v1/channels", {
+      headers: { authorization: `Bearer ${memberCredential}` },
+    })).json()).toEqual({ channels: [] });
+    expect((await app.request(`/api/channels/${channel.channel_id}/invites/redeem`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${memberCredential}`, "content-type": "application/json" },
+      body: JSON.stringify({ invite_token: invite.invite_token, name: "Member" }),
+    })).status).toBe(403);
   });
 
   it("returns cancellation to the requesting app state", async () => {

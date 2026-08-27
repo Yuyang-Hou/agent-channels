@@ -199,11 +199,15 @@ Account 是核心授权数据，不能继续落在多个 JSON 文件。实施时
 readiness，再切换频道授权；消息环形缓冲与在线 Session 仍可留在单进程内存，直到真实规模要求
 共享运行态。
 
-登录与 Session 先通过服务端配置开关增量上线，旧频道授权保持不变。账号版切换时不自动把旧
-Member credential 猜成 Human。切换前必须只读核对
-线上账号版发布范围、频道和成员数量：确认全为测试数据才允许清空；若存在真实用户，暂停并另做
-一次性“登录后用旧 credential 认领 Membership”方案。该认领端点在迁移窗口结束后删除，不进入
-长期协议。
+当前产品仍处于内部测试，账号版按用户确认采用 clean-slate 切换。旧 Member credential 不认领、
+不迁移，也不再由账号版 App 保存；新建频道和兑换邀请都要求 Account Session。账号登录只恢复
+Membership 对应的频道卡片，本机消息、TaskBinding、Subscription 与 Host 数据继续留在原设备。
+本机状态按 Account id 分文件保存；未确认有效 Session 时，当前状态文件只暴露空频道列表并停止
+频道 Feed 与 Subscription，避免冷启动或同一台 Mac 切换 GitHub 账号时看到另一账号的本机数据。
+
+当前实现先把 Membership 放入 PostgreSQL，Channel 与 Invite 继续由现有单进程 Volume JSON
+持有，并用单进程串行化保证邀请兑换和 Membership 建立不交错。迁移到多副本前，必须把 Channel、
+Invite 与兑换计数一并迁入 PostgreSQL 事务，届时删除该单进程锁。
 
 ## Security And Abuse Controls
 

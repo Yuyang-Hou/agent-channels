@@ -14,6 +14,16 @@ export type AccountSession = {
   expiresAt: string;
 };
 
+export type AccountMembership = {
+  membershipId: string;
+  accountId: string;
+  channelId: string;
+  role: "owner" | "member";
+  status: "active" | "removed" | "banned";
+  createdAt: string;
+  updatedAt: string;
+};
+
 export interface AccountStore {
   ready(): Promise<void>;
   createLoginAttempt(input: {
@@ -40,6 +50,19 @@ export interface AccountStore {
   }): Promise<AccountSession>;
   getSession(sessionCredentialHash: string): Promise<AccountSession>;
   revokeSession(sessionCredentialHash: string): Promise<boolean>;
+  createMembership(input: {
+    membershipId: string;
+    accountId: string;
+    channelId: string;
+    role: "owner" | "member";
+  }): Promise<AccountMembership>;
+  getMembership(accountId: string, channelId: string): Promise<AccountMembership | undefined>;
+  listMemberships(accountId: string): Promise<AccountMembership[]>;
+  setMembershipStatus(
+    channelId: string,
+    membershipId: string,
+    status: "active" | "removed" | "banned",
+  ): Promise<AccountMembership | undefined>;
 }
 
 const MIGRATION = [
@@ -86,8 +109,20 @@ const MIGRATION = [
     consumed_at timestamptz,
     created_at timestamptz NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS pijoo_memberships (
+    membership_id text PRIMARY KEY,
+    account_id text NOT NULL REFERENCES pijoo_accounts(account_id),
+    channel_id text NOT NULL,
+    role varchar(16) NOT NULL CHECK (role IN ('owner', 'member')),
+    status varchar(16) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'removed', 'banned')),
+    created_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    UNIQUE (channel_id, account_id)
+  )`,
   "CREATE INDEX IF NOT EXISTS pijoo_sessions_account_idx ON pijoo_sessions(account_id, revoked_at, expires_at)",
   "CREATE INDEX IF NOT EXISTS pijoo_login_attempts_expiry_idx ON pijoo_login_attempts(expires_at, consumed_at)",
+  "CREATE INDEX IF NOT EXISTS pijoo_memberships_account_idx ON pijoo_memberships(account_id, status, updated_at)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS pijoo_memberships_active_owner_idx ON pijoo_memberships(channel_id) WHERE role = 'owner' AND status = 'active'",
 ] as const;
 
 type LoginAttemptRow = {
@@ -101,6 +136,16 @@ type SessionRow = {
   device_id: string;
   display_name: string;
   expires_at: Date;
+};
+
+type MembershipRow = {
+  membership_id: string;
+  account_id: string;
+  channel_id: string;
+  role: "owner" | "member";
+  status: "active" | "removed" | "banned";
+  created_at: Date;
+  updated_at: Date;
 };
 
 export class PostgresAccountStore implements AccountStore {
@@ -283,6 +328,61 @@ export class PostgresAccountStore implements AccountStore {
     return (result.rowCount ?? 0) > 0;
   }
 
+  async createMembership(input: {
+    membershipId: string;
+    accountId: string;
+    channelId: string;
+    role: "owner" | "member";
+  }): Promise<AccountMembership> {
+    const result = await this.pool.query<MembershipRow>(
+      `INSERT INTO pijoo_memberships (
+        membership_id, account_id, channel_id, role, status, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, 'active', now(), now())
+      ON CONFLICT (channel_id, account_id) DO UPDATE
+        SET status = 'active', updated_at = now()
+        WHERE pijoo_memberships.status = 'removed'
+      RETURNING membership_id, account_id, channel_id, role, status, created_at, updated_at`,
+      [input.membershipId, input.accountId, input.channelId, input.role],
+    );
+    const row = result.rows[0];
+    if (!row) throw new Error("membership-unavailable");
+    return this.membershipView(row);
+  }
+
+  async getMembership(accountId: string, channelId: string): Promise<AccountMembership | undefined> {
+    const result = await this.pool.query<MembershipRow>(
+      `SELECT membership_id, account_id, channel_id, role, status, created_at, updated_at
+       FROM pijoo_memberships WHERE account_id = $1 AND channel_id = $2`,
+      [accountId, channelId],
+    );
+    return result.rows[0] ? this.membershipView(result.rows[0]) : undefined;
+  }
+
+  async listMemberships(accountId: string): Promise<AccountMembership[]> {
+    const result = await this.pool.query<MembershipRow>(
+      `SELECT membership_id, account_id, channel_id, role, status, created_at, updated_at
+       FROM pijoo_memberships
+       WHERE account_id = $1 AND status = 'active'
+       ORDER BY created_at`,
+      [accountId],
+    );
+    return result.rows.map((row) => this.membershipView(row));
+  }
+
+  async setMembershipStatus(
+    channelId: string,
+    membershipId: string,
+    status: "active" | "removed" | "banned",
+  ): Promise<AccountMembership | undefined> {
+    const result = await this.pool.query<MembershipRow>(
+      `UPDATE pijoo_memberships SET status = $3, updated_at = now()
+       WHERE channel_id = $1 AND membership_id = $2
+       RETURNING membership_id, account_id, channel_id, role, status, created_at, updated_at`,
+      [channelId, membershipId, status],
+    );
+    return result.rows[0] ? this.membershipView(result.rows[0]) : undefined;
+  }
+
   private async upsertAccount(
     client: PoolClient,
     githubUserId: string,
@@ -309,6 +409,18 @@ export class PostgresAccountStore implements AccountStore {
       deviceId: row.device_id,
       displayName: row.display_name,
       expiresAt: row.expires_at.toISOString(),
+    };
+  }
+
+  private membershipView(row: MembershipRow): AccountMembership {
+    return {
+      membershipId: row.membership_id,
+      accountId: row.account_id,
+      channelId: row.channel_id,
+      role: row.role,
+      status: row.status,
+      createdAt: row.created_at.toISOString(),
+      updatedAt: row.updated_at.toISOString(),
     };
   }
 }

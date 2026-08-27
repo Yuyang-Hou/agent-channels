@@ -298,6 +298,7 @@ export function redeemMemberInvite(
   channelId: string,
   inviteToken: string,
   name: string,
+  existingMemberId?: string,
 ): { member: MemberView; member_credential: string } | undefined {
   ensureLoaded();
   const tokenHash = digest(inviteToken);
@@ -311,6 +312,24 @@ export function redeemMemberInvite(
   const invite = state.invites[inviteIndex];
   const now = Date.now();
   const credential = generateToken();
+  if (existingMemberId) {
+    const member = state.members.find(
+      (candidate) =>
+        candidate.channelId === channelId &&
+        candidate.memberId === existingMemberId &&
+        candidate.role === "member" &&
+        candidate.status === "removed",
+    );
+    if (!member) return undefined;
+    invite.useCount += 1;
+    member.status = "active";
+    member.name = name;
+    member.inviteId = invite.inviteId;
+    member.credentialHash = digest(credential);
+    member.updatedAt = now;
+    persist();
+    return { member: view(member), member_credential: credential };
+  }
   const member: MemberRecord = {
     memberId: randomUUID(),
     channelId,
