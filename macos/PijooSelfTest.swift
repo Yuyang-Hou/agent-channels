@@ -14,6 +14,22 @@ private struct PijooV2SelfTest {
         let encodedInvitation = try InvitationCodec.encode(invitation)
         let decodedInvitation = try InvitationCodec.decode(encodedInvitation)
         precondition(decodedInvitation == invitation)
+        let accountVerifier = String(repeating: "v", count: 43)
+        precondition(accountPKCEChallenge(accountVerifier) == "7w_YNF9DSfIdPf_pRjSq646_kPr-2-o9NAl16JGghdM")
+        let accountState = String(repeating: "s", count: 43)
+        let accountCode = String(repeating: "c", count: 43)
+        let parsedAccountCode = try accountExchangeCode(
+            from: URL(string: "pijoo://oauth/callback?code=\(accountCode)&state=\(accountState)")!,
+            expectedState: accountState
+        )
+        precondition(parsedAccountCode == accountCode)
+        do {
+            _ = try accountExchangeCode(
+                from: URL(string: "pijoo://oauth/callback?code=\(accountCode)&state=wrong")!,
+                expectedState: accountState
+            )
+            preconditionFailure("mismatched OAuth state was accepted")
+        } catch {}
         let managedInvite = try JSONDecoder().decode(ChannelInvite.self, from: Data(#"{"invite_id":"invite-1","label":"Backend","max_uses":3,"use_count":1,"created_at":1,"expires_at":2,"status":"active"}"#.utf8))
         precondition(managedInvite.label == "Backend" && managedInvite.maxUses == 3 && managedInvite.useCount == 1)
         let joinedChannel = ChannelProfile(

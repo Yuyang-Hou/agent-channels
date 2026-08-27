@@ -1,4 +1,5 @@
 import AppKit
+import AuthenticationServices
 import Combine
 import CryptoKit
 import Darwin
@@ -7,6 +8,12 @@ import Security
 import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
+
+private final class AccountAuthenticationContext: NSObject, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        NSApp.keyWindow ?? NSApp.windows.first ?? NSWindow()
+    }
+}
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -49,6 +56,10 @@ final class AppModel: ObservableObject {
     @Published var composerMentionMemberIDs: [String] = []
     @Published var showAddChannel = false
     @Published var oldBetaDataDetected = FileManager.default.fileExists(atPath: AppPaths.legacyBinding.path)
+    @Published private(set) var accountFeatureAvailable = false
+    @Published private(set) var accountSession: PijooAccountSession?
+    @Published private(set) var accountStatus = "正在检查账号服务…"
+    @Published private(set) var accountBusy = false
 
     private var listeners: [UUID: SubscriptionListener] = [:]
     private var startingListeners: Set<UUID> = []
@@ -63,6 +74,8 @@ final class AppModel: ObservableObject {
     private var sleepStartedAt: Date?
     private var localSendServer: LocalSendServer?
     private var updateTimer: Timer?
+    private let accountAuthenticationContext = AccountAuthenticationContext()
+    private var accountAuthenticationSession: ASWebAuthenticationSession?
 
     private init() {
         try? AppPaths.prepare()
@@ -114,6 +127,7 @@ final class AppModel: ObservableObject {
                 Task { await self.startListener(subscription.id) }
             }
             self.configureAutomaticUpdateChecks()
+            Task { await self.refreshAccount() }
         }
     }
 
@@ -1633,6 +1647,149 @@ extension AppModel {
 }
 
 extension AppModel {
+    func refreshAccount() async {
+        do {
+            let info = try await requestJSON(
+                url: URL(string: "\(defaultOrigin)/api/v1/info")!,
+                method: "GET"
+            )
+            accountFeatureAvailable = (info["features"] as? [String])?.contains("github-account-login") == true
+            guard accountFeatureAvailable else {
+                accountSession = nil
+                accountStatus = "当前服务端尚未启用账号登录"
+                return
+            }
+            guard let credential = try KeychainStore.get(service: keychainService, account: accountSessionKey),
+                  !credential.isEmpty else {
+                accountSession = nil
+                accountStatus = "未登录"
+                return
+            }
+            do {
+                let json = try await requestJSON(
+                    url: URL(string: "\(defaultOrigin)/v1/session")!,
+                    method: "GET",
+                    bearer: credential
+                )
+                accountSession = try accountSessionValue(json)
+                accountStatus = "已登录"
+            } catch is ChannelAuthorizationFailure {
+                try? KeychainStore.delete(service: keychainService, account: accountSessionKey)
+                accountSession = nil
+                accountStatus = "登录已失效，请重新登录"
+            }
+        } catch {
+            accountStatus = "暂时无法连接账号服务"
+        }
+    }
+
+    func loginWithGitHub() {
+        guard accountFeatureAvailable, !accountBusy else { return }
+        do {
+            let verifier = try accountRandomValue()
+            let state = try accountRandomValue()
+            var components = URLComponents(string: "\(defaultOrigin)/v1/auth/github/start")!
+            components.queryItems = [
+                URLQueryItem(name: "code_challenge", value: accountPKCEChallenge(verifier)),
+                URLQueryItem(name: "client_state", value: state),
+                URLQueryItem(name: "device_name", value: Host.current().localizedName ?? "Mac"),
+            ]
+            guard let url = components.url else { throw AppFailure("登录地址无效") }
+            accountBusy = true
+            accountStatus = "等待 GitHub 授权…"
+            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "pijoo") { [weak self] callbackURL, error in
+                Task { @MainActor [weak self] in
+                    await self?.finishAccountLogin(callbackURL, error: error, verifier: verifier, state: state)
+                }
+            }
+            session.presentationContextProvider = accountAuthenticationContext
+            session.prefersEphemeralWebBrowserSession = false
+            accountAuthenticationSession = session
+            guard session.start() else { throw AppFailure("无法打开 GitHub 登录") }
+        } catch {
+            accountBusy = false
+            accountStatus = "登录失败"
+            fail(error)
+        }
+    }
+
+    func logoutAccount() async {
+        guard !accountBusy else { return }
+        do {
+            accountBusy = true
+            defer { accountBusy = false }
+            guard let credential = try KeychainStore.get(service: keychainService, account: accountSessionKey),
+                  !credential.isEmpty else {
+                accountSession = nil
+                accountStatus = "未登录"
+                return
+            }
+            _ = try await requestJSON(
+                url: URL(string: "\(defaultOrigin)/v1/session/logout")!,
+                method: "POST",
+                bearer: credential
+            )
+            try KeychainStore.delete(service: keychainService, account: accountSessionKey)
+            accountSession = nil
+            accountStatus = "未登录"
+        } catch {
+            accountStatus = "退出失败，登录仍然有效"
+            fail(error)
+        }
+    }
+
+    private func finishAccountLogin(_ callbackURL: URL?, error: Error?, verifier: String, state: String) async {
+        defer {
+            accountBusy = false
+            accountAuthenticationSession = nil
+        }
+        if let error {
+            if (error as? ASWebAuthenticationSessionError)?.code == .canceledLogin {
+                accountStatus = "已取消登录"
+            } else {
+                accountStatus = "登录失败"
+                fail(error)
+            }
+            return
+        }
+        do {
+            guard let callbackURL else { throw AppFailure("GitHub 未返回登录结果") }
+            let exchangeCode = try accountExchangeCode(from: callbackURL, expectedState: state)
+            let json = try await requestJSON(
+                url: URL(string: "\(defaultOrigin)/v1/auth/device/exchange")!,
+                method: "POST",
+                body: ["exchange_code": exchangeCode, "code_verifier": verifier]
+            )
+            guard let credential = json["session_credential"] as? String, credential.count == 43 else {
+                throw AppFailure("服务端未返回有效会话")
+            }
+            let session = try accountSessionValue(json)
+            try KeychainStore.set(credential, service: keychainService, account: accountSessionKey)
+            accountSession = session
+            accountStatus = "已登录"
+        } catch is CancellationError {
+            accountStatus = "已取消登录"
+        } catch {
+            accountStatus = "登录失败"
+            fail(error)
+        }
+    }
+
+    private func accountSessionValue(_ json: [String: Any]) throws -> PijooAccountSession {
+        guard let accountID = json["account_id"] as? String, !accountID.isEmpty,
+              let deviceID = json["device_id"] as? String, !deviceID.isEmpty,
+              let displayName = json["display_name"] as? String, !displayName.isEmpty,
+              let expiresAt = json["expires_at"] as? String, !expiresAt.isEmpty else {
+            throw AppFailure("服务端返回的账号信息无效")
+        }
+        return PijooAccountSession(
+            accountID: accountID,
+            deviceID: deviceID,
+            displayName: displayName,
+            expiresAt: expiresAt
+        )
+    }
+
     private func ensureCodexIntegrationReadyForBinding() -> Bool {
         refreshCodexIntegrationStatus()
         guard codexIntegrationReady else {

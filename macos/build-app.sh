@@ -120,6 +120,7 @@ if [[ "$SKIP_SELF_TESTS" == "0" ]]; then
     -target arm64-apple-macos13.0 \
     -sdk "$SDK" \
     -framework AppKit \
+    -framework AuthenticationServices \
     -framework Security \
     -framework ServiceManagement \
     -framework SwiftUI \
@@ -156,6 +157,7 @@ swiftc \
   -target arm64-apple-macos13.0 \
   -sdk "$SDK" \
   -framework AppKit \
+  -framework AuthenticationServices \
   -framework Security \
   -framework ServiceManagement \
   -framework SwiftUI \

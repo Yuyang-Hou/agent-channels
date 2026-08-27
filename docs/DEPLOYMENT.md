@@ -21,6 +21,27 @@ PUBLIC_ORIGIN=https://rogerthat-production-fff6.up.railway.app
 
 `ROGERRAT_ADMIN_TOKEN` 未设置，因此公网不启用管理页。
 
+## Optional account login
+
+GitHub 登录只有以下三项全部配置时才启用；缺少任一项会拒绝启动，三项全部缺少时保持当前频道行为：
+
+```text
+DATABASE_URL=<Railway PostgreSQL DATABASE_URL reference>
+PIJOO_GITHUB_CLIENT_ID=<dedicated Pijoo OAuth App client id>
+PIJOO_GITHUB_CLIENT_SECRET=<dedicated Pijoo OAuth App client secret>
+```
+
+GitHub OAuth App 使用：
+
+- Application name：`Pijoo`
+- Homepage URL：`https://github.com/Yuyang-Hou/pijoo`
+- Authorization callback URL：`https://rogerthat-production-fff6.up.railway.app/v1/auth/github/callback`
+- 不启用 Device Flow，不启用 callback wildcard，不申请任何 scope；该 OAuth App 不复用其他 GitHub API 功能。
+
+Railway 项目需增加 PostgreSQL service，并在 `rogerthat` service 中把 `DATABASE_URL` 引用到该资源。
+首次带账号配置启动会创建 Account、Device、Session 和 LoginAttempt 表；部署前先确认备份策略与
+`/ready`，再用测试 GitHub 账号验收。当前登录切片不会替换旧频道 credential。
+
 ## Redeploy
 
 ```bash

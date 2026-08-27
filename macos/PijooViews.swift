@@ -1266,6 +1266,38 @@ struct PijooSettingsView: View {
             .padding()
             Divider()
             Form {
+                Section("Pijoo 账号") {
+                    if let account = model.accountSession {
+                        LabeledContent("GitHub") {
+                            Text(account.displayName).fontWeight(.medium)
+                        }
+                        HStack {
+                            Text(model.accountStatus).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("退出登录", role: .destructive) {
+                                Task { await model.logoutAccount() }
+                            }
+                            .disabled(model.accountBusy)
+                        }
+                    } else {
+                        HStack {
+                            Text(model.accountStatus).foregroundStyle(.secondary)
+                            Spacer()
+                            if model.accountBusy { ProgressView().controlSize(.small) }
+                            if model.accountFeatureAvailable {
+                                Button("使用 GitHub 登录") { model.loginWithGitHub() }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(model.accountBusy)
+                            } else {
+                                Button("重新检查") { Task { await model.refreshAccount() } }
+                                    .disabled(model.accountBusy)
+                            }
+                        }
+                    }
+                    Text("账号会话仅保存在本机 Keychain；频道消息、AI 会话和工作目录不会上传。当前版本登录不影响已有频道。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Section("身份") {
                     HStack {
                         TextField("我的昵称", text: $model.draftNickname)

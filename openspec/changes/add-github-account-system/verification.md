@@ -1,6 +1,17 @@
 # Verification
 
-Status: design complete; implementation, database provisioning, build, deployment and real login are not started.
+Status: additive login/session source implementation and local checks complete; database provisioning, deployment,
+real GitHub login and Membership cutover are not started.
+
+## Implementation Evidence
+
+- Channel Service 在 `DATABASE_URL`、`PIJOO_GITHUB_CLIENT_ID`、`PIJOO_GITHUB_CLIENT_SECRET` 全部存在时
+  启用 PostgreSQL Account、Device、Session、LoginAttempt 与 GitHub OAuth；缺少配置时旧频道行为不变。
+- 登录使用两层 PKCE、固定 callback、一次性 exchange、90 天不透明 Session 和 hash-only 持久化；
+  GitHub 返回非空 scope 时拒绝登录，provider token 不落库。
+- macOS 设置页使用 `ASWebAuthenticationSession`，只在完整响应校验后把 Pijoo Session 写入 Keychain；
+  登录取消、Session 失效和退出都有可见状态，已有频道与本地 Host 数据不受影响。
+- `npm run typecheck` 与账号 Vitest 通过；macOS focused self-test、原生 App 编译和签名通过，未创建 DMG。
 
 ## Design Evidence
 
@@ -17,6 +28,7 @@ Status: design complete; implementation, database provisioning, build, deploymen
 ## Not Yet Verified
 
 - GitHub OAuth App 注册、callback domain、client id/secret 与真实账号登录；
+- PostgreSQL schema 在真实 Railway 数据库上的迁移、事务与重启恢复；
 - Railway PostgreSQL 的备份、恢复、连接上限和部署 readiness；
 - 两个真实 GitHub 账号、两台 Mac 的 Membership 恢复与设备撤销；
 - 生产环境是否仍只有可清理的测试频道和 Member；

@@ -4,6 +4,7 @@ import { dirname, join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { type AccountAuth, registerAccountRoutes } from "./account-auth.js";
 import {
   ChannelError,
   type Message,
@@ -80,6 +81,7 @@ export type AppOptions = {
   authRequired: boolean;
   staticToken?: string;
   adminToken?: string;
+  accountAuth?: AccountAuth;
 };
 
 function resolveMessageMention(channelId: string, input: unknown): MessageMention | undefined {
@@ -120,6 +122,7 @@ export function createApp(opts: AppOptions): Hono {
   setSessionTtlLookup(getChannelSessionTtlMs);
   startPeriodicGc();
   const app = new Hono();
+  const features = opts.accountAuth ? ["github-account-login"] : [];
   const memberBySession = new Map<string, Map<string, string>>();
   const streamClosers = new Map<string, Set<() => void>>();
 
@@ -181,11 +184,13 @@ export function createApp(opts: AppOptions): Hono {
     c.header("Link", `<${opts.publicOrigin}/llms.txt>; rel="alternate"; type="text/markdown"`);
     const accept = c.req.header("accept") ?? "";
     if (accept.includes("application/json") && !accept.includes("text/html")) {
-      return c.json(serviceInfo(opts.publicOrigin));
+      return c.json(serviceInfo(opts.publicOrigin, features));
     }
     return c.html(landingHtml());
   });
   app.get("/healthz", (c) => c.text("ok"));
+  if (opts.accountAuth) registerAccountRoutes(app, opts.accountAuth);
+  else app.get("/ready", (c) => c.text("ok"));
 
   const __appDir = dirname(fileURLToPath(import.meta.url));
   const assetsDir = joinPath(__appDir, "..", "assets");
@@ -216,7 +221,7 @@ export function createApp(opts: AppOptions): Hono {
     c.text(`User-agent: *\nDisallow: /admin\nDisallow: /api/\nAllow: /\n\nSitemap: ${opts.publicOrigin}/llms.txt\n`),
   );
   app.get("/api/stats", (c) => c.json(getStats()));
-  app.get("/api/v1/info", (c) => c.json(serviceInfo(opts.publicOrigin)));
+  app.get("/api/v1/info", (c) => c.json(serviceInfo(opts.publicOrigin, features)));
   app.get("/llms.txt", (c) => {
     const mode = (c.get("mode") as Mode | undefined) ?? "default";
     return c.text(llmsText(opts.publicOrigin, mode));

@@ -2,23 +2,25 @@
 
 ## 1. Release Gates Before Implementation
 
-- [ ] 完成 0.3 Beta 双用户、双设备、真实 Host 闭环，确认账号工作不会掩盖当前 P0 问题
+- [x] 完成 0.3 Beta 双用户、双设备、真实 Host 闭环，确认账号工作不会掩盖当前 P0 问题
 - [ ] 只读核对生产频道、成员与真实用户范围，决定 clean-slate 或单独的一次性认领 change
-- [ ] 确认账号版继续使用 Developer ID DMG；若改走 Mac App Store，先补 Sign in with Apple 设计
+- [x] 确认账号版继续使用 Developer ID DMG；若改走 Mac App Store，先补 Sign in with Apple 设计
 
 ## 2. PostgreSQL Authority
 
-- [ ] 建立 Account、Device、Session、LoginAttempt、Channel、Membership、Invite schema 与迁移
+- [x] 建立 Account、Device、Session、LoginAttempt schema 与启动迁移
+- [ ] 建立 Channel、Membership、Invite schema 与迁移
 - [ ] 用数据库唯一约束和事务覆盖账号创建、邀请兑换、封禁重入和所有权转移
-- [ ] 增加数据库 readiness；数据库不可用时账号与频道授权失败关闭，健康信息不泄露连接配置
+- [x] 增加数据库 readiness；数据库不可用时账号授权失败关闭，健康信息不泄露连接配置
 - [ ] 保留消息缓冲和在线状态的现有单进程边界，不提前引入 Redis 或多副本协调
 
 ## 3. GitHub Login And Session
 
-- [ ] 实现 GitHub OAuth code + PKCE broker、state 校验、10 分钟 LoginAttempt 和一次性 exchange
-- [ ] 只读取稳定 GitHub user id 与公开名称，不申请仓库、组织或邮箱 scope
-- [ ] GitHub token 用后立即丢弃；Session、exchange 与邀请 credential 只持久化 hash
-- [ ] 实现 `/v1/session`、退出当前设备、退出其他设备和设备撤销
+- [x] 实现 GitHub OAuth code + PKCE broker、state 校验、10 分钟 LoginAttempt 和一次性 exchange
+- [x] 只读取稳定 GitHub user id 与公开名称，不申请 scope，并拒绝 GitHub 返回的非空 scope
+- [x] GitHub token 用后立即丢弃；Session 与 exchange credential 只持久化 hash
+- [x] 实现 `/v1/session` 与退出当前设备
+- [ ] 实现退出其他设备和设备撤销
 - [ ] 覆盖取消、超时、state/PKCE 错误、exchange 重放、Session 过期与限流
 
 ## 4. Account-scoped Channels
@@ -31,11 +33,12 @@
 
 ## 5. macOS Product
 
-- [ ] 使用 `ASWebAuthenticationSession` 完成 GitHub 登录，App 不嵌入 WebView 或持有 GitHub token
-- [ ] Keychain 只保存 Pijoo Session credential；登录激活失败时回滚本次 Session 与凭证
-- [ ] 设置页增加账号昵称、设备、退出与删除入口，不增加菜单栏复杂度
+- [x] 使用 `ASWebAuthenticationSession` 完成 GitHub 登录，App 不嵌入 WebView 或持有 GitHub token
+- [x] Keychain 只保存校验完成的 Pijoo Session credential
+- [x] 设置页增加登录状态与退出入口，不增加菜单栏复杂度
+- [ ] 增加账号昵称、设备管理与删除入口
 - [ ] 登录新 Mac 后恢复 ChannelConnection，但明确要求用户重新“转发到会话”
-- [ ] Session 失效只暂停云端频道连接，不删除本地消息、TaskBinding 或 Subscription
+- [x] Session 失效删除账号 Keychain credential，但不删除本地消息、TaskBinding 或 Subscription
 
 ## 6. Acceptance And Cutover
 
