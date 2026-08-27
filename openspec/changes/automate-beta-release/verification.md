@@ -20,3 +20,9 @@ Status: complete; GitHub Environment、hosted CI 与首次正式发布均已验�
   notarization submission 为 `af6ee3ea-d616-4839-b24f-8f87ce5844c4`。
 - GitHub Release Notes API 已按 `v0.3.0-beta.20...v0.3.0-beta.21` 生成 PR #1、#2、#3
   更新列表和完整对比链接，并与构建验证信息合并。
+
+## macOS 26 appearance regression
+
+- 正式 `beta.20` App 的 Mach-O `LC_BUILD_VERSION` 记录 SDK `26.1`；正式 `beta.21` 记录 SDK `14.5`。
+- macOS `26.1` 会为旧 SDK 产物保留旧兼容外观；问题来自 hosted runner 回退，而不是用户主题设置。
+- CI 与 release 已改用 `macos-26`，`verify-package.sh` 会读取 App 可执行文件并拒绝 SDK 主版本低于 26 的包。

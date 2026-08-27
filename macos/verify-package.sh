@@ -39,12 +39,15 @@ hdiutil attach "$DMG" -nobrowse -readonly -mountpoint "$MOUNT_POINT" >/dev/null
 MOUNTED=1
 APP="$MOUNT_POINT/Pijoo.app"
 INFO="$APP/Contents/Info.plist"
+EXECUTABLE="$APP/Contents/MacOS/Pijoo"
 SIDECAR="$APP/Contents/MacOS/rogerthat-sidecar"
 
 codesign --verify --deep --strict --verbose=2 "$APP"
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" == "dev.pijoo.menubar" ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :PijooReleaseVersion' "$INFO")" == "$VERSION" ]]
 [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO")" == "$EXPECTED_BUILD" ]]
+SDK_VERSION="$(otool -l "$EXECUTABLE" | awk '$1 == "sdk" { print $2; exit }')"
+[[ "${SDK_VERSION%%.*}" -ge 26 ]] || { echo "Pijoo requires macOS SDK 26 or newer, got $SDK_VERSION" >&2; exit 1; }
 diff -qr "$ROOT_DIR/skills/pijoo" "$APP/Contents/Resources/skills/pijoo" >/dev/null
 
 CONFIG="$WORK_DIR/state-v2.json"

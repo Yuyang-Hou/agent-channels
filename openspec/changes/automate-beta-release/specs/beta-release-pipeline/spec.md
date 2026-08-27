@@ -5,7 +5,8 @@
 ### Requirement: Unprivileged merge candidate
 
 PR 与 `main` CI MUST 不读取发布凭据，并 MUST 在 server、OpenSpec、Swift 与 package 校验通过后才成功；
-`main` push MAY 保存短期候选包，但 MUST NOT 创建公开 Release。
+`main` push MAY 保存短期候选包，但 MUST NOT 创建公开 Release。候选包与正式 Beta 的 App 可执行文件
+MUST 由 macOS 26 或更新 SDK 编译，避免 macOS 26 使用旧兼容外观。
 
 #### Scenario: Pull request validation succeeds
 
@@ -16,6 +17,11 @@ PR 与 `main` CI MUST 不读取发布凭据，并 MUST 在 server、OpenSpec、S
 
 - **WHEN** `main` 候选构建失败或被新的 push 取消
 - **THEN** 不创建 tag 或 GitHub Release，也不把候选包声明为正式 Beta
+
+#### Scenario: Hosted image uses an old SDK
+
+- **WHEN** 打包后的 App 可执行文件记录的 SDK 主版本小于 26
+- **THEN** package 校验失败，且不得上传候选包或继续正式发布
 
 #### Scenario: Untrusted PR requests release access
 
