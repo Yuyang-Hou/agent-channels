@@ -1,6 +1,6 @@
 # Verification
 
-Status: source implementation complete; GitHub Environment and hosted workflow run pending.
+Status: complete; GitHub Environment、hosted CI 与首次正式发布均已验证。
 
 ## Local checks
 
@@ -11,8 +11,12 @@ Status: source implementation complete; GitHub Environment and hosted workflow r
 - `openspec validate --strict --all`：15 passed；workflow YAML parse 与 `git diff --check` passed。
 - Swift 与 package 验证因本地沙箱禁止 Unix socket，已在系统能力环境重跑通过。
 
-## External checks pending
+## Hosted checks
 
-- GitHub `release` Environment 需要人工配置审批规则与签名、公证 secrets。
-- 当前分支推送后验证 PR workflow；合并后验证七天候选 artifact。
-- 首次正式触发验证临时 Keychain、Apple notarization、draft/public GitHub asset 回下载链路。
+- GitHub `release` Environment 已配置审批规则和五项签名、公证 secrets。
+- PR #3 与 `main` CI 均通过；`main` run `33036692439` 上传了七天候选 artifact。
+- `0.3.0-beta.21` 已完成临时 Keychain、Apple notarization、draft/public asset 回下载链路；
+  最终 SHA-256 为 `db87fb4abaff8ce67e3c4539f77b1f95f737facf059948d30fc2cc8e10b73c06`，
+  notarization submission 为 `af6ee3ea-d616-4839-b24f-8f87ce5844c4`。
+- GitHub Release Notes API 已按 `v0.3.0-beta.20...v0.3.0-beta.21` 生成 PR #1、#2、#3
+  更新列表和完整对比链接，并与构建验证信息合并。

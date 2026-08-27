@@ -112,8 +112,12 @@ jobs:
         run: |
           filename="$(basename "$DMG")"
           notes="$RUNNER_TEMP/release-notes.md"
-          printf 'Pijoo %s Apple Silicon Beta.\n\n- Source: `%s`\n- SHA-256: `%s`\n- Size: `%s` bytes\n- Apple notarization: Accepted (`%s`)\n' \
-            "$VERSION" "$GITHUB_SHA" "$SHA256" "$SIZE" "$SUBMISSION_ID" > "$notes"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$TAG" \
+            -f target_commitish="$GITHUB_SHA" \
+            --jq .body > "$notes"
+          printf '\n\n## Build verification\n\n- Source: `%s`\n- SHA-256: `%s`\n- Size: `%s` bytes\n- Apple notarization: Accepted (`%s`)\n' \
+            "$GITHUB_SHA" "$SHA256" "$SIZE" "$SUBMISSION_ID" >> "$notes"
           gh release create "$TAG" "$DMG" \
             --draft \
             --prerelease \
