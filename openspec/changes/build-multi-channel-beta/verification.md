@@ -303,3 +303,13 @@ its GitHub digest and downloaded SHA-256 are both
 `52b8294a3e9b1b759f5deec2f7531abbc86536fbecd589fa6abbe77da063177e`. Distribution remains Beta-only;
 until the real-Host and security checks pass, no stable or production-ready claim is made. Existing older
 Release records remain historical facts.
+
+## 2026-08-27 Skill Upgrade Repair
+
+- The installed beta.23 rejected a managed Skill link left by the development Pijoo bundle because the
+  release caller disabled the existing same-bundle-id retarget path. The release caller now enables that
+  path for `dev.pijoo.menubar`; ordinary directories, foreign links and other bundles remain fail-closed.
+- The focused Swift self-test covers successful old-Pijoo retargeting, rollback, and rejection of unmanaged
+  content. Strict OpenSpec validation passed 15/15.
+- An ad-hoc `Pijoo-0.3.0-beta.24-arm64.dmg` candidate passed the Swift/updater self-tests and mounted package,
+  embedded Skill and MCP verification. It is not Developer ID notarized, pushed or published.

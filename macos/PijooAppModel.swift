@@ -1850,9 +1850,7 @@ extension AppModel {
             try CodexIntegrationInstaller.install(
                 configURL: AppPaths.codexConfig,
                 block: block,
-                allowSkillRetargetFromBundleIdentifier: AppPaths.isDevelopmentBuild
-                    ? Bundle.main.bundleIdentifier
-                    : nil
+                allowSkillRetargetFromBundleIdentifier: Bundle.main.bundleIdentifier
             )
             loadedCodexMCPVersion = nil
             UserDefaults.standard.removeObject(forKey: loadedCodexMCPVersionKey)

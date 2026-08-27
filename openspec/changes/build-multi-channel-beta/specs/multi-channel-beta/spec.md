@@ -482,6 +482,12 @@ Subscription、入站卡片、信任、回复与可靠发送回执，不得只�
 - **WHEN** 用户查看主窗口或打开设置页的 AI 集成区域
 - **THEN** 左侧设置入口显示提示点，设置页持续提示需要完全重启 ChatGPT，并显示已加载版本或等待加载状态；该提示不进入菜单栏健康状态
 
+#### Scenario: 旧 Pijoo Skill 链接随 App 更新
+
+- **GIVEN** 用户目录中的 Skill 符号链接指向另一个 bundle id 同为 `dev.pijoo.menubar` 的 Pijoo App 内标准 Skill 路径
+- **WHEN** 用户点击启用或修复 Codex 集成
+- **THEN** App 将该链接切换到当前 App 内 Skill；普通目录、外来链接和其他 bundle 仍不覆盖，后续配置失败时恢复旧链接
+
 #### Scenario: 重启后加载当前 MCP
 
 - **GIVEN** 设置页正在提示需要重启 ChatGPT
