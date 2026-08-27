@@ -41,6 +41,23 @@ PIJOO_SDK=/path/to/MacOSX.sdk ./macos/build-app.sh
 正式 `0.3.0-beta.20` 包已使用 Developer ID 签名并通过 Apple 公证；若 Gatekeeper 仍拦截，
 请先核对发布页 SHA-256，不要关闭 Gatekeeper 或执行全局绕过命令。
 
+## GitHub Beta 流水线
+
+PR 和 `main` 使用 `.github/workflows/ci.yml` 完成 server、OpenSpec、Swift 与 arm64 DMG 校验；
+`main` 合并成功后会保存七天的下一 Beta 候选包，但不会公开发布。
+
+正式发布由维护者手动运行 `Release macOS Beta` workflow。仓库需要创建带审批规则的
+`release` Environment，并配置以下 Environment secrets：
+
+- `PIJOO_DEVELOPER_ID_P12_BASE64`
+- `PIJOO_DEVELOPER_ID_P12_PASSWORD`
+- `PIJOO_NOTARY_KEY_ID`
+- `PIJOO_NOTARY_ISSUER_ID`
+- `PIJOO_NOTARY_PRIVATE_KEY`
+
+workflow 会从最新 `vX.Y.Z-beta.N` tag 自动递增版本，从 `origin/main` 精确提交构建，完成
+Developer ID 签名、公证、staple、Gatekeeper、draft asset 校验，再公开 GitHub prerelease 并回下载复核。
+
 ## 0.3 双机验收
 
 0.3 使用全新的本地数据模型，不导入 0.2 的 `binding.json` 或共享频道凭证。验收时请在两台

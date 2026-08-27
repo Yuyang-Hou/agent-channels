@@ -1,0 +1,152 @@
+name: Release macOS Beta
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-beta
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-14
+    environment: release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - name: Validate release source
+        run: |
+          git fetch origin main --tags
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+          npm ci --prefix server
+          npm run typecheck --prefix server
+          npm test --prefix server -- --no-file-parallelism
+          npm run build --prefix server
+          npx --yes @fission-ai/openspec@1.6.0 validate --strict --all
+          ./macos/next-beta-version.sh --self-test
+          git diff --check
+          test -z "$(git status --short)"
+      - name: Resolve next beta
+        id: version
+        run: |
+          version="$(./macos/next-beta-version.sh)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "dmg=macos/build/Pijoo-$version-arm64.dmg" >> "$GITHUB_OUTPUT"
+      - name: Import Developer ID certificate
+        id: signing
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.PIJOO_DEVELOPER_ID_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.PIJOO_DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          test -n "$CERTIFICATE_BASE64"
+          test -n "$CERTIFICATE_PASSWORD"
+          certificate="$RUNNER_TEMP/pijoo-developer-id.p12"
+          keychain="$RUNNER_TEMP/pijoo-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$CERTIFICATE_BASE64" | base64 --decode --output "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          identities="$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application:/ { print $2 }')"
+          test "$(printf '%s\n' "$identities" | sed '/^$/d' | wc -l | tr -d ' ')" = "1"
+          echo "identity=$identities" >> "$GITHUB_OUTPUT"
+          echo "keychain=$keychain" >> "$GITHUB_OUTPUT"
+      - name: Build, notarize, and verify
+        id: artifact
+        env:
+          PIJOO_SIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
+          PIJOO_REQUIRE_SIGNING: "1"
+          PIJOO_RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          NOTARY_KEY_ID: ${{ secrets.PIJOO_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.PIJOO_NOTARY_ISSUER_ID }}
+          NOTARY_PRIVATE_KEY: ${{ secrets.PIJOO_NOTARY_PRIVATE_KEY }}
+          DMG: ${{ steps.version.outputs.dmg }}
+        run: |
+          test -n "$NOTARY_KEY_ID"
+          test -n "$NOTARY_ISSUER_ID"
+          test -n "$NOTARY_PRIVATE_KEY"
+          notary_key="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$NOTARY_PRIVATE_KEY" > "$notary_key"
+          ./macos/build-app.sh
+          ./macos/verify-package.sh "$PIJOO_RELEASE_VERSION"
+          xcrun notarytool submit "$DMG" \
+            --key "$notary_key" \
+            --key-id "$NOTARY_KEY_ID" \
+            --issuer "$NOTARY_ISSUER_ID" \
+            --wait \
+            --output-format json > "$RUNNER_TEMP/notarization.json"
+          test "$(plutil -extract status raw -o - "$RUNNER_TEMP/notarization.json")" = "Accepted"
+          submission_id="$(plutil -extract id raw -o - "$RUNNER_TEMP/notarization.json")"
+          xcrun stapler staple "$DMG"
+          ./macos/verify-package.sh "$PIJOO_RELEASE_VERSION" --notarized
+          echo "sha256=$(shasum -a 256 "$DMG" | awk '{ print $1 }')" >> "$GITHUB_OUTPUT"
+          echo "size=$(stat -f '%z' "$DMG")" >> "$GITHUB_OUTPUT"
+          echo "submission_id=$submission_id" >> "$GITHUB_OUTPUT"
+      - name: Create and verify draft prerelease
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          DMG: ${{ steps.version.outputs.dmg }}
+          SHA256: ${{ steps.artifact.outputs.sha256 }}
+          SIZE: ${{ steps.artifact.outputs.size }}
+          SUBMISSION_ID: ${{ steps.artifact.outputs.submission_id }}
+        run: |
+          filename="$(basename "$DMG")"
+          notes="$RUNNER_TEMP/release-notes.md"
+          printf 'Pijoo %s Apple Silicon Beta.\n\n- Source: `%s`\n- SHA-256: `%s`\n- Size: `%s` bytes\n- Apple notarization: Accepted (`%s`)\n' \
+            "$VERSION" "$GITHUB_SHA" "$SHA256" "$SIZE" "$SUBMISSION_ID" > "$notes"
+          gh release create "$TAG" "$DMG" \
+            --draft \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Pijoo $VERSION" \
+            --notes-file "$notes"
+          release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$TAG\" and .draft == true) | .id" | head -n 1)"
+          test -n "$release_id"
+          asset_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/$release_id/assets" --jq ".[] | select(.name == \"$filename\") | .id")"
+          test -n "$asset_id"
+          draft_dmg="$RUNNER_TEMP/draft-$filename"
+          gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > "$draft_dmg"
+          test "$(shasum -a 256 "$draft_dmg" | awk '{ print $1 }')" = "$SHA256"
+          cp "$draft_dmg" "$DMG"
+          ./macos/verify-package.sh "$VERSION" --notarized
+          gh release edit "$TAG" --draft=false --prerelease
+      - name: Verify public release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.artifact.outputs.sha256 }}
+        run: |
+          filename="Pijoo-$VERSION-arm64.dmg"
+          curl --fail --location --retry 3 \
+            --output "macos/build/$filename" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$filename"
+          test "$(shasum -a 256 "macos/build/$filename" | awk '{ print $1 }')" = "$SHA256"
+          ./macos/verify-package.sh "$VERSION" --notarized
+          printf '### Released %s\n\n- Source: `%s`\n- SHA-256: `%s`\n' "$TAG" "$GITHUB_SHA" "$SHA256" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove temporary credentials
+        if: always()
+        env:
+          KEYCHAIN: ${{ steps.signing.outputs.keychain }}
+        run: |
+          if [[ -n "$KEYCHAIN" ]]; then security delete-keychain "$KEYCHAIN" || true; fi
+          rm -f "$RUNNER_TEMP/pijoo-developer-id.p12" "$RUNNER_TEMP/AuthKey.p8"

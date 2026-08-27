@@ -40,6 +40,15 @@ if [[ ! "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
   exit 2
 fi
 MARKETING_VERSION="${RELEASE_VERSION%%-*}"
+if [[ "$RELEASE_VERSION" =~ -beta\.([0-9]+)$ ]]; then
+  BUNDLE_VERSION="${PIJOO_BUILD_VERSION:-${BASH_REMATCH[1]}}"
+else
+  BUNDLE_VERSION="${PIJOO_BUILD_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO_PLIST")}"
+fi
+if [[ ! "$BUNDLE_VERSION" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Invalid bundle version: $BUNDLE_VERSION" >&2
+  exit 2
+fi
 DMG="$BUILD_DIR/Pijoo-$RELEASE_VERSION-arm64.dmg"
 SDK="${PIJOO_SDK:-${SDKROOT:-}}"
 if [[ -z "$SDK" ]]; then
@@ -188,12 +197,17 @@ ditto "$SKILL_SOURCE" "$RESOURCES_DIR/skills/pijoo"
 cp "$INFO_PLIST" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :PijooReleaseVersion $RELEASE_VERSION" "$CONTENTS/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUNDLE_VERSION" "$CONTENTS/Info.plist"
 if [[ "$DEVELOPMENT" == "1" ]]; then
   /usr/libexec/PlistBuddy -c "Add :PijooDevelopmentBuild bool true" "$CONTENTS/Info.plist"
 fi
 chmod 755 "$MACOS_DIR/Pijoo" "$MACOS_DIR/rogerthat-sidecar" "$MACOS_DIR/pijoo-updater"
 
-echo "==> Signing with identity: $SIGN_IDENTITY"
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+  echo "==> Signing ad-hoc"
+else
+  echo "==> Signing with Developer ID"
+fi
 SIGN_ARGS=(--force --sign "$SIGN_IDENTITY")
 if [[ "$SIGN_IDENTITY" != "-" ]]; then
   SIGN_ARGS+=(--options runtime --timestamp)
