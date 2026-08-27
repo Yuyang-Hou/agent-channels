@@ -69,8 +69,8 @@ Mac 上新建频道、成员和 task 绑定，不复用 0.2 配置。
    task，并创建 task-channel Subscription；至少覆盖“一个 task 订阅两个频道”和“一个频道订阅两个 task”。
 3. 为每条 Subscription 设置接收范围（所有消息/仅@我）、接收模板、发送成功模板、自消息策略
    和是否作为该 task 的默认发送目标，然后启用监听。
-4. 在设置中点击“启用或修复 Codex 集成”，然后完全退出并重启 ChatGPT；该步骤会同时安装
-   MCP 与产品级 Skill。
+4. 在设置中点击“启用或修复 Codex 集成”；该步骤会同时安装 MCP 与产品级 Skill。首次配置
+   MCP 后完全退出并重启 ChatGPT。
 5. 分别用不@、@所有人和@两名成员完成 App → App、App → task、task → App 和 task → task 收发；
    已关联和未关联 task 都能用 `send_to_channel(message, channel)` 显式发送，省略频道时只允许
    唯一默认 Subscription 或唯一可确定的本机频道，不能使用当前选中的频道或最近活跃 task 兜底。

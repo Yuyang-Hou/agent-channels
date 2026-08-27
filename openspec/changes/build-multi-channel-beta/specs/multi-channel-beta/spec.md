@@ -474,11 +474,17 @@ Subscription、入站卡片、信任、回复与可靠发送回执，不得只�
 
 - **GIVEN** App 已安装且用户目录没有同名 Skill
 - **WHEN** 用户点击启用或修复 Codex 集成
-- **THEN** App 同时配置 MCP 与受管理 Skill 链接，并提示完全重启 ChatGPT
+- **THEN** App 同时配置 MCP 与受管理 Skill 链接，并仅为首次加载 MCP 提示完全重启 ChatGPT
+
+#### Scenario: App 更新静默更新 Skill
+
+- **GIVEN** 用户目录中的受管理 Skill 链接指向标准 App Bundle 路径
+- **WHEN** Pijoo App 更新并替换该路径中的 App Bundle
+- **THEN** Skill 直接使用新 Bundle 内的内容；App 不展示 Skill 版本、更新或重启状态，也不要求用户重新配置
 
 #### Scenario: App 更新后仍加载旧 MCP
 
-- **GIVEN** MCP 与 Skill 已配置，但 App 尚未收到当前 App 版本的 MCP 启动上报
+- **GIVEN** MCP 已配置，但 App 尚未收到当前 App 版本的 MCP 启动上报
 - **WHEN** 用户查看主窗口或打开设置页的 AI 集成区域
 - **THEN** 左侧设置入口显示提示点，设置页持续提示需要完全重启 ChatGPT，并显示已加载版本或等待加载状态；该提示不进入菜单栏健康状态
 
