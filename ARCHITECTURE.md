@@ -165,14 +165,15 @@ AI 使用本机固定 STDIO MCP。工具表固定为七项：`send_to_channel`�
 `tools/call params._meta.threadId` 作为 Codex 来源能力，并通过当前用户专属的 Unix socket v2
 把已校验参数和 source context 交给 App。
 
-App 精确匹配 TaskBinding；发送时解析显式频道或唯一默认出站 Subscription，再从 Keychain
-取得该成员凭证。`send_to_channel.mentions` 使用 `list_channels(channel)` 返回的稳定 Member ID；
+App 保留当前 task 作为发送来源；显式频道无需 TaskBinding，省略频道时才解析唯一默认出站
+Subscription 或唯一可确定的本机频道，再从 Keychain 取得该成员凭证。`send_to_channel.mentions`
+使用 `list_channels(channel)` 返回的稳定 Member ID；
 服务端保存发送时昵称快照，但仍向频道广播。每条 Subscription 的 `mentions_only` 在本地消息
 落账和自消息过滤后、Host 投递前判断，不是服务端可见性或授权边界。MCP 不读取 Keychain、不直接访问 Channel Service，也不建立频道监听、消费
 入站消息、保存历史或调用 Host Connector；这些接收能力和运行态全部属于 App。订阅工具只是
 请求 App 改变当前 task 的 Subscription，消息是否到达及是否触发 Host 投递仍由 App 决定。
 
-`_meta.threadId` 缺失、类型错误、未绑定或操作目标歧义时必须失败关闭，不按最近活跃 task、
+`_meta.threadId` 缺失、类型错误或操作目标歧义时必须失败关闭，不按最近活跃 task、
 当前主窗口频道或全局 active channel 猜测。thread id 不进入模型可见正文、频道消息或服务端。
 该 `_meta` 字段是 Codex 当前实现能力而非公开稳定合同，0.3 发布前必须用两个真实 task 做能力
 探测。

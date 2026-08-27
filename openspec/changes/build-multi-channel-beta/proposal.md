@@ -20,7 +20,7 @@ Binding 上叠加入口会让多频道、成员撤权和 task 路由互相污染
 - App 收到频道消息后先落本地 `received` 记录，再分别更新各 Subscription 的
   `delivered`、`failed`、`unknown` 或 `filtered` 状态。
 - Codex MCP 从 `tools/call params._meta.threadId` 取得来源 task，经过本机 socket v2 交给 App
-  精确路由；缺失、类型错误或未绑定时失败关闭，不按最近活跃 task 猜测。
+  精确路由；缺失、类型错误或频道目标歧义时失败关闭，不按最近活跃 task 猜测。
 - MCP 提供发送、频道列表、订阅/取消订阅、订阅设置和按需消息来源查询七个 task-scoped 工具；
   频道监听、消息接收、本地历史和 Host 投递仍由 App 持有，AI 主动发送不依赖先收到消息。
 - App 为每条 Subscription 提供接收与发送成功两种 Markdown 模板；前者生成完整 Host 输入，
@@ -29,6 +29,13 @@ Binding 上叠加入口会让多频道、成员撤权和 task 路由互相污染
   Skill 不是单一工具说明，也不使用每 turn hook。
 - 用户可开启 Beta 自动更新；App 后台下载 GitHub Release 的 arm64 DMG，下次启动校验签名并
   原地替换后自动重新打开，无需用户手动下载或拖拽 App。
+- 首次启动自动生成稳定、可编辑的本机昵称，不再用空昵称或尚未配置 Codex 阻塞频道工作区。
+- “转发到会话”只在 MCP、Skill 与当前 App 版本的 `mcp_ready` 均确认后开放搜索、创建和绑定，
+  未重启 ChatGPT 时只展示唯一可执行的修复步骤。
+- 每个频道的 App feed 独立于当前选中频道持续接收，并在 App 启动、唤醒、网络恢复和回到前台时
+  使用本地 cursor 补齐；频道切换不再承担刷新职责。
+- 系统长时间休眠期间积压的 Subscription 消息先进入本地待确认队列，只有用户在 App
+  明确同意后才生成恢复 turn。
 - P0 Runtime 继续为每条启用的 task-channel Subscription 管理一个现有 `listen-here`
   sidecar；不在本轮建设 multiplex daemon。
 
@@ -46,8 +53,8 @@ Binding 上叠加入口会让多频道、成员撤权和 task 路由互相污染
 - 主窗口是频道与消息管理入口；菜单栏只保留状态、快速打开和生命周期控制。
 - App 与 task 是同一成员下的不同 endpoint。精确来源 endpoint 永不回投自己；Subscription
   可以选择是否接收同一成员其他 endpoint 的消息，因此 App 可以给自己的 task 发消息。
-- 每个 TaskBinding 可以接收多个频道。`send_to_channel` 可以显式选择已订阅频道；省略频道时
-  必须解析唯一默认出站 Subscription，不能按当前 UI 或最近活跃状态猜测。
+- 每个 TaskBinding 可以接收多个频道。`send_to_channel` 显式指定任一本机已加入频道即可发送，
+  不要求当前 task 已订阅；省略频道时才使用唯一默认 Subscription 或唯一可确定的本机频道。
 - MCP 的 `list_channels`、`subscribe_to_channel`、`unsubscribe_from_channel`、
   `get_channel_settings` 和 `update_channel_settings` 只管理当前来源 task 的本机配置，不承担
   SSE 监听、入站消息消费、本地历史或 Host Connector 调用。
@@ -58,6 +65,10 @@ Binding 上叠加入口会让多频道、成员撤权和 task 路由互相污染
 - 本地历史用于恢复和可见性，不是永久服务端聊天档案；服务端仍只承担有限恢复窗口。
 - 0.3 Beta 继续只支持 Codex Connector。
 - 自动更新只接受与当前 App designated requirement 相同的 Beta 包；签名不一致时保留旧 App。
+- 默认昵称只用于展示，不作为身份或鉴权；使用本机随机后缀并持久化，后续可由用户修改。
+- 正常在线消息继续自动投递；系统休眠超过 60 秒且存在积压时进入恢复确认，短暂休眠和网络抖动
+  自动续接。Host 长期不可用和 App 重启积压的统一确认留待后续基于真实反馈扩展。
+- P0 先机械拆分单一 macOS 主文件，但不改变运行时 owner、持久化或协议，也不引入新框架。
 
 ## Non-goals
 

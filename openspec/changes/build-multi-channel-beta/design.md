@@ -121,9 +121,13 @@ SubscriptionDelivery。
 菜单栏继续展示总体状态并快速打开主窗口，但不再承担完整配置流程。快速打开必须先请求单实例
 窗口，再于下一主循环激活、反最小化并置前，避免 `LSUIElement` 只把菜单浮窗变成 key window。
 
-首次使用直接复用主窗口设置内容，只展示“身份”和“AI 集成”。全局昵称非空且 Codex MCP 与 Skill
-均已配置后，App 自动进入频道主界面；任一条件未满足时不展示频道工作区。是否需要重启 ChatGPT
-继续作为集成状态提示，不阻止已完成配置的用户进入主界面。
+首次启动且本机昵称为空时，App 生成 `Pijoo用户-XXXXXX` 形式的随机显示名并持久化；它不读取系统
+用户名、硬件标识或账号信息，也不参与鉴权。频道工作区不再被昵称或 Codex 配置阻塞。
+
+Codex 集成改为“连接 AI 会话”入口的能力门禁。只有 MCP 配置和受管 Skill 均存在，且 App 已收到
+当前 App 版本的 `mcp_ready`，才开放会话搜索、专属会话创建、preflight 和绑定。未配置、已配置待
+重启、已加载旧版本分别显示唯一下一步；不提供忽略并继续。频道创建、加入、App 内收发和历史不受
+该门禁影响。
 
 本地开发使用独立的 App-only 构建入口，跳过 DMG 和重复 self-test，完成后直接启动固定路径下的
 `macos/build/Pijoo.app`。开发标记只放入该 App 的 Info.plist，使用户主动启用集成时可引用固定的
@@ -160,6 +164,11 @@ App 为每个已加入频道维护消息 feed。普通消息到达时，必须�
 `received`，随后才允许 Host delivery。这样即使 task 不可用、模板过滤或投递结果未知，用户
 仍能在主窗口看到消息及其真实状态。
 
+每个频道 feed 独立于当前 UI 选择运行。App 使用服务端现有长轮询作为在线主路径，每轮显式携带
+本地 cursor，消息到达时立即返回并开始下一轮；App 启动、系统唤醒、网络恢复和回到前台时再用
+本地最后消息 id 补齐全部频道。频道选择只读本地账本，不得成为获得最新消息的必要条件。长轮询、
+生命周期补齐和页面进入共享同一 upsert 去重入口。
+
 该顺序不能依赖异步 stderr 状态。0.3 的单一本机 App IPC 除 MCP 发送外，还提供 sidecar 使用的
 `record_received` 与 `record_outcome` 请求：Subscription sidecar 在调用 Connector 前提交标准
 消息信封，App 先持久化 LocalMessage 和 `received` SubscriptionDelivery，全部成功后才返回 ack；
@@ -170,9 +179,9 @@ App 为每个已加入频道维护消息 feed。普通消息到达时，必须�
 `attempting|unknown` 时返回 `unresolved` 并停止该 Subscription；`received|failed` 可以安全重试。
 投递结束后 sidecar 再记录 filtered、delivered、failed 或 unknown。所有终态游标只能单调前进。
 
-SSE 正常结束或异常断开都必须把本连接内最后一个成功处理的 message id 带回重连循环；不能因
-body stream 异常退回连接开始前的游标。频道 feed 与多个 Subscription 重复看到同一消息时仍由
-本地唯一键合并。
+Subscription SSE 正常结束或异常断开都必须把本连接内最后一个成功处理的 message id 带回重连
+循环；不能因 body stream 异常退回连接开始前的游标。频道 feed 与多个 Subscription 重复看到同一
+消息时仍由本地唯一键合并。
 
 App 手工发送使用当前选中的 ChannelConnection 和 app endpoint。发送状态区分
 `pending`、`accepted`、`failed` 与 `unknown`；只有可靠服务端回执才能标记 `accepted`。本地
@@ -193,26 +202,48 @@ Host preflight。
 
 “转发到会话”的主路径允许用户用原生目录选择器为当前频道新建专属 Codex 会话。App 通过内嵌
 sidecar 调用已安装 ChatGPT Codex 自带的 `app-server thread/start`，显式创建持久 user task，
-并以“Pijoo · 频道名”调用 `thread/name/set` 持久化空白 task；取得 conversation id 后立即打开
-`codex://threads/<id>`。Desktop owner preflight 成功后才复用
+并以“Pijoo · 频道名”调用 `thread/name/set` 持久化空白 task；取得 conversation id 后立即以不激活
+Host App 的方式打开 `codex://threads/<id>`。Desktop owner preflight 成功后才复用
 既有 `TaskBinding + Subscription` 流程。创建本身不发送输入或创建 turn。创建后若 Desktop 暂未
-就绪，App 必须显示可恢复的 conversation id；搜索、id/链接连接已有会话继续作为回退。
+就绪，App 必须显示可恢复的 conversation id；搜索、id/链接连接已有会话继续作为回退。创建期间
+主操作显示不定进度，并依次说明正在创建会话、等待 Host 连接和关联频道，避免长耗时表现为无响应。
 
 P0 每条启用的 Subscription 监管一个现有 `listen-here` sidecar，保持独立 session、游标、
 错误和不确定投递状态。一个 Subscription 失败不得暂停其他 Subscription。App 可以为频道
 时间线维护独立 feed；重复抵达由本地消息唯一键去重。本轮不把这些进程合并为 daemon。
 
-每个 TaskBinding 最多有一条 `is_default_outbound=true` 的启用 Subscription。AI 主动发送时，
-若指定频道，App 只允许使用当前 task 已启用的对应 Subscription；若省略频道，App 只使用唯一
-默认项。没有默认项或存在多个默认项都必须失败关闭并提示用户在主窗口修复。Subscription 的
-`enabled` 只控制接收监听；暂停接收不得阻止 task 通过该 Subscription 主动发送。
+Host owner 不存在时，enabled Subscription 保持启用，但运行态显示“会话未连接”，不得与用户主动
+关闭接收的“已暂停”混用。主窗口集中显示未连接的关联会话数量，并复用已有
+`codex://threads/<id>` 深链在首次检测到断连时自动以不激活 Host App 的方式打开目标；现有监听重试在
+owner 状态确认后自动续接并移除提示。主窗口只保留状态提示，不提供全局连接操作；受影响频道及其
+“转发到会话”入口显示红点，每张会话卡提供独立状态刷新。自动重连期间不重复打开或抢占焦点，
+不新增恢复协议或后台服务。进入“转发到会话”时统一刷新一次全部绑定状态，不因每张会话卡出现而
+重复全量查询；卡片刷新操作只查询对应会话。
+
+系统休眠前，App 暂停所有 enabled Subscription；休眠超过 60 秒且唤醒补齐后存在积压时进入
+`recovery_pending`。App 展示待检查投递数量；只有“发送到会话”会恢复这些 Subscription，随后
+复用既有模板、过滤、顺序、失败和 unknown 语义。暂不发送继续暂停，等待期间的新消息加入计数。
+正常在线、60 秒内的系统休眠和普通网络重连仍自动投递。本轮不新增模型总结或批量卡片；若真实
+恢复场景造成过多 turn，再增加确定性的批量协议。
+
+## macOS Source Organization
+
+P0 行为开发前先把当前单一 `PijooApp.swift` 机械拆为入口、模型、服务、AppModel、Views 与 SelfTest
+六个源文件。`build-app.sh` 用一份显式源文件数组同时编译 focused self-test 和正式 App。该拆分不改
+本地状态、Keychain、HTTP、MCP、socket 或消息协议，不引入 Swift Package、Xcode 工程、第三方
+依赖或新的运行时架构；后续只有在单个职责文件再次形成真实冲突时才继续拆分。
+
+每个 TaskBinding 最多有一条 `is_default_outbound=true` 的 Subscription。AI 显式指定任一本机已加入
+频道即可主动发送，无需 TaskBinding 或 Subscription；若省略频道，App 优先使用当前 task 的唯一默认项
+或唯一 Subscription，未关联且本机只有一个频道时直接使用该频道，多频道歧义时要求显式指定。
+Subscription 的 `enabled` 只控制接收监听，不成为发送权限。
 
 ## Codex Source Routing
 
 0.3 MCP 工具表固定暴露七项：
 
-- `send_to_channel`：当前 task 随时主动发送，可使用显式已订阅频道或唯一默认出站频道；
-- `list_channels`：列出 App 中当前 task 可见的频道及订阅状态；
+- `send_to_channel`：任意当前 task 可向显式本机频道发送；省略频道时只使用唯一可确定的频道；
+- `list_channels`：列出 App 中的本机频道及当前 task 的订阅状态，并可查询任一频道的可提及成员；
 - `subscribe_to_channel` / `unsubscribe_from_channel`：请求 App 创建或移除当前 task 的订阅；
 - `get_channel_settings` / `update_channel_settings`：读取或修改当前 task 某条订阅的模板、
   自消息策略和默认发送设置。
@@ -243,10 +274,10 @@ MCP 启动时通过同一本机 socket best-effort 上报内嵌版本 `mcp_ready
 不创建 Host turn，也不接触频道数据；App 只持久化最近加载版本，并在设置页与当前 App 版本比较。
 版本不一致时持续提示完全重启 ChatGPT，收到当前版本后自动清除，不占用菜单栏健康状态。
 
-App 用 `provider + conversationId` 精确匹配 TaskBinding，再解析唯一默认出站 Subscription。
-缺少 `_meta.threadId`、类型错误、未绑定、无默认 Subscription 或歧义时，不请求 Channel
-Service，不回退到最近活跃 task、当前 UI 频道或全局 active channel。thread id 不进入工具正文、
-服务端请求或频道消息。
+App 保留 `provider + conversationId` 作为发送来源；存在 TaskBinding 时用其默认 Subscription 辅助
+省略频道的路由，但未绑定不阻止显式发送。缺少 `_meta.threadId`、类型错误或频道目标有歧义时，
+不请求 Channel Service，也不回退到最近活跃 task 或当前 UI 频道。thread id 不进入工具正文、
+服务端请求或频道消息正文。
 
 能力探测必须覆盖两个同时打开的真实 Codex task，并记录 A/B `tools/call` 的 `_meta.threadId`
 是否分别等于各自 UUID。源码观察只算设计依据，不能代替该实机门槛。

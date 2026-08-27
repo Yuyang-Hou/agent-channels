@@ -81,8 +81,8 @@ Gatekeeper gates pass. Clean-install, two-machine, real-Host and security inspec
   Host untouched.
 - MCP tests prove the tool table contains exactly send/list/subscribe/unsubscribe/get_settings/update_settings/inspect_message_source;
   every tool uses `_meta.threadId` as its task source, and missing, wrong-type or malformed metadata is rejected
-  before the App socket. App routing rejects unbound or ambiguous targets before Channel Service access, while
-  a paused receive Subscription remains eligible for explicit or unique-default outbound sending.
+  before the App socket. App routing allows an unbound task to send to an explicit local channel, rejects ambiguous
+  implicit targets before Channel Service access, and keeps paused receive Subscriptions eligible for outbound sending.
 - MCP boundary tests prove it never opens a channel stream, consumes inbound messages, persists history or
   invokes a Host Connector; those receive-side effects remain App-owned.
 - Template tests cover the editable full-message template, all five allowed variables, single-pass substitution,

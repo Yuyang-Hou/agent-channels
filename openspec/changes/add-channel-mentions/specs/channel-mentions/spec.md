@@ -45,9 +45,9 @@ App MUST 提供不@、独占的@所有人和 active Member 多选。Codex MCP MU
 
 #### Scenario: task 查询成员后发送
 
-- **GIVEN** 当前 task 已订阅频道 C
+- **GIVEN** 当前 task 可访问本机频道 C
 - **WHEN** task 调用 `list_channels(channel=C)` 后用返回的多个 member_id 调用 `send_to_channel`
-- **THEN** App 只使用 C 的有效成员和当前 task 的发送路由；未订阅频道失败关闭
+- **THEN** App 只使用 C 的有效成员并发送到 C；是否订阅该频道不影响发送
 
 ### Requirement: 每条转发到会话可仅接收提及自己的消息
 

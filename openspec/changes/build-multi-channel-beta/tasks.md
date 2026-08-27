@@ -1,5 +1,18 @@
 # Tasks
 
+## P0 Product Readiness
+
+- [x] 将 `PijooApp.swift` 机械拆为入口、模型、服务、AppModel、Views 与 SelfTest，并让两条 Swift 编译路径共用显式源文件列表
+- [x] 保持状态、协议和用户行为不变，通过 focused self-test 与 App-only 构建
+- [x] 首次启动自动生成并持久化可编辑的随机本机昵称，频道工作区不再依赖昵称或 Codex 配置
+- [x] 以 MCP/Skill 配置和当前版本 `mcp_ready` 门禁会话搜索、创建、preflight 与绑定
+- [x] 在设置页两个 Codex 状态刷新入口间共享 loading 与重复点击保护
+- [x] 所有频道 feed 独立实时接收，并在启动、唤醒、网络恢复、前台恢复时补齐服务端保留窗口
+- [x] 移除频道切换导致的重复 history 请求，以携带本地 cursor 的长轮询实时接收并统一 upsert 去重
+- [x] 系统长时间休眠积压进入 `recovery_pending`，App 明确同意后才恢复 Subscription
+- [ ] 增加后台频道、生命周期补齐与系统休眠恢复的真实 App 集成验收
+- [x] 更新产品状态、OpenSpec 验证和最小源码级验证；README 示例留待后续
+
 ## Contract And Storage
 
 - [x] 冻结 0.3 Channel、Invite、Member、Endpoint、Message 与 OnlineSession 字段和状态机
@@ -56,7 +69,10 @@
 - [x] SSE body 异常断开仍保留本连接最新游标，所有持久终态游标只向前推进
 - [x] 一个 Subscription 的 failed/unknown/restart 不影响其他 Subscription
 - [x] App 重启恢复 enabled Subscription；成员撤权停止对应 feed 和全部 Subscription
-- [x] Subscription 列表可通过 `codex://threads/<id>` 启动 ChatGPT 并打开目标会话
+- [x] Subscription 列表可通过 `codex://threads/<id>` 启动 ChatGPT 并打开目标会话；新建专属会话后的自动打开不激活 Host App
+- [x] 新建专属会话期间显示不定进度和创建、连接、关联频道三阶段状态，禁止重复提交
+- [x] 区分用户主动暂停与 Host 会话未连接，首次断连时后台自动请求连接，恢复后自动续接；频道和会话入口显示红点，每张会话卡以统一图标提供打开、刷新和展开操作
+- [x] 进入“转发到会话”时统一刷新一次会话状态，移除每张卡片出现时的重复全量查询
 - [x] Subscription 添加或恢复监听时读取 Codex 本机会话名称，失败时回退缩短的会话 ID
 - [x] 确保空闲频道、filtered 消息和 App 状态事件不创建 Host turn
 
@@ -65,8 +81,8 @@
 - [x] 将单一本机 App IPC 升级为 v2；七个 MCP 工具只传各自参数与已校验的 source context
 - [x] 固定工具表为 send/list/subscribe/unsubscribe/get_settings/update_settings/inspect_message_source，并确认接收链路只在 App
 - [x] 从 `tools/call params._meta.threadId` 读取 Codex 来源 task；七项均覆盖合法、缺失、错误类型和非法 UUID
-- [x] App 按 provider + conversationId 匹配 TaskBinding，并解析唯一默认出站 Subscription
-- [x] missing、unbound 或 ambiguous 路由失败关闭且不访问 Channel Service；暂停接收不阻止主动发送
+- [x] App 允许任意来源 task 显式选择本机频道发送；TaskBinding 只辅助省略频道时选择默认目标
+- [x] missing 或 ambiguous 路由失败关闭且不访问 Channel Service；unbound 和暂停接收不阻止主动发送
 - [x] 用户主动追问时只读返回当前 task 最近一条成功投递的来源；未命中不推断为用户手动输入
 - [x] MCP 启动上报内嵌版本；设置页在版本匹配前持续提示完全重启并在匹配后自动清除
 - [x] 重启提示存在时在主窗口设置入口显示提示点，并复用相同状态自动清除
