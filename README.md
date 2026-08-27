@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.20">Download macOS Beta</a>
+  <a href="https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.23">Download macOS Beta</a>
   · <a href="./README.zh-CN.md">中文说明</a>
   · <a href="./docs/ROADMAP.md">Roadmap</a>
 </p>
@@ -66,12 +66,13 @@ Interested in another coding agent? [Issues and pull requests are welcome](#cont
 | **Precise routing** | Each session subscribes independently, without guessing from the active window. |
 | **Local boundaries** | Session bindings, credentials, and delivery records stay on the user's Mac. |
 
-The current Beta supports multiple channels and sessions, member invitations and revocation, multi-person
-mentions, mentions-only delivery, local message history, editable Markdown cards, and in-app Beta updates.
+The current Beta supports GitHub account login, multiple channels and sessions, member invitations and
+revocation, multi-person mentions, mentions-only delivery, local message history, editable Markdown cards,
+and in-app Beta updates.
 
 ## Get started
 
-The current release is [`0.3.0-beta.20`](https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.20).
+The current release is [`0.3.0-beta.23`](https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.23).
 It is signed with a Developer ID certificate and notarized by Apple.
 
 Requirements:

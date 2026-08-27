@@ -19,9 +19,9 @@
   <key>CFBundleShortVersionString</key>
   <string>0.3.0</string>
   <key>PijooReleaseVersion</key>
-  <string>0.3.0-beta.20</string>
+  <string>0.3.0-beta.23</string>
   <key>CFBundleVersion</key>
-  <string>20</string>
+  <string>23</string>
   <key>CFBundleIconFile</key>
   <string>AppIcon</string>
   <key>CFBundleURLTypes</key>
