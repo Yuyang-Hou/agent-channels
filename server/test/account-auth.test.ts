@@ -180,6 +180,41 @@ describe("GitHub account login", () => {
     expect((await app.request("/ready")).status).toBe(200);
   });
 
+  it("does not expose legacy credential channel creation through MCP", async () => {
+    const app = createApp({
+      publicOrigin: ORIGIN,
+      authRequired: true,
+      accountAuth: { store: new MemoryAccountStore(), github: new FakeGitHub() },
+    });
+    const initialize = await app.request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+    });
+    const session = initialize.headers.get("mcp-session-id")!;
+    const tools = await app.request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", "mcp-session-id": session },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
+    });
+    const listed = await tools.json() as { result: { tools: Array<{ name: string }> } };
+    expect(listed.result.tools.some((tool) => tool.name === "create_channel")).toBe(false);
+
+    const create = await app.request("/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", "mcp-session-id": session },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "create_channel", arguments: {} },
+      }),
+    });
+    expect(await create.json()).toMatchObject({
+      result: { isError: true, content: [{ text: "error: channel creation requires a signed-in Pijoo account" }] },
+    });
+  });
+
   it("exchanges one OAuth callback for one revocable Pijoo session", async () => {
     const store = new MemoryAccountStore();
     const app = createApp({

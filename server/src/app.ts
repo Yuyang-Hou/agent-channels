@@ -1331,7 +1331,14 @@ export function createApp(opts: AppOptions): Hono {
 
     const sessionId = c.req.header("mcp-session-id") ?? c.req.header("Mcp-Session-Id");
     const mcpMode = (c.get("mode") as Mode | undefined) ?? "default";
-    const result = await handleMcpRequest(channelId, body as never, sessionId, opts.publicOrigin, mcpMode);
+    const result = await handleMcpRequest(
+      channelId,
+      body as never,
+      sessionId,
+      opts.publicOrigin,
+      mcpMode,
+      !opts.accountAuth,
+    );
     const request = body as {
       method?: unknown;
       params?: { name?: unknown; arguments?: Record<string, unknown> };

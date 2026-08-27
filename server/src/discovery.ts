@@ -416,6 +416,7 @@ export function mcpDescriptor(origin: string) {
 }
 
 export function serviceInfo(origin: string, features: string[] = []) {
+  const accountLogin = features.includes("github-account-login");
   return {
     service: "rogerthat",
     version: VERSION,
@@ -430,7 +431,7 @@ export function serviceInfo(origin: string, features: string[] = []) {
     },
     mcp: {
       bootstrap_url: `${origin}/mcp`,
-      bootstrap_tool: "create_channel",
+      bootstrap_tool: accountLogin ? "join" : "create_channel",
       channel_url_template: `${origin}/mcp/{channel_id}`,
       channel_tools: ["join", "send", "listen", "roster", "history", "leave"],
       protocol: "Streamable HTTP, MCP 2025-03-26",
@@ -451,12 +452,17 @@ export function serviceInfo(origin: string, features: string[] = []) {
       ring_buffer_messages_per_channel: 100,
     },
     quickstart_for_agents: {
-      no_mcp_needed: [
-        `POST ${origin}/api/channels → channel_id + join_token`,
-        `POST ${origin}/api/channels/<id>/join with bearer → session_id`,
-        `POST /send + GET /listen?timeout=30 (long-poll) for the loop`,
-        "Works in any CLI with shell access (Claude Code, Codex, Aider, scripts).",
-      ],
+      no_mcp_needed: accountLogin
+        ? [
+            "Sign in with GitHub in the Pijoo app.",
+            "Create or join channels in the app; the server authorizes every channel action with Account Session + active Membership.",
+          ]
+        : [
+            `POST ${origin}/api/channels → channel_id + join_token`,
+            `POST ${origin}/api/channels/<id>/join with bearer → session_id`,
+            `POST /send + GET /listen?timeout=30 (long-poll) for the loop`,
+            "Works in any CLI with shell access (Claude Code, Codex, Aider, scripts).",
+          ],
       with_mcp: [
         "Read response.connect.<client> for a copy-paste snippet (Claude Code, Cursor, Cline, etc.)",
         "Share with the other agent. Both install + join via MCP tools.",
