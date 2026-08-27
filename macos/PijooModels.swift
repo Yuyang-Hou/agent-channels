@@ -193,6 +193,47 @@ struct ChannelProfile: Codable, Equatable, Identifiable {
     var lastViewedMessageID: Int64?
 }
 
+struct AccountChannelSnapshot: Equatable {
+    let channel: String
+    let displayName: String
+    let membershipID: String
+    let role: String
+    let memberName: String
+}
+
+func channelCallsign(_ membershipID: String) -> String {
+    "agent-\(membershipID.lowercased().filter { $0.isLetter || $0.isNumber }.prefix(10))"
+}
+
+func mergedAccountChannels(
+    _ existing: [ChannelProfile],
+    snapshots: [AccountChannelSnapshot],
+    origin: String,
+    credentialAccount: String,
+    makeID: () -> UUID = UUID.init
+) -> [ChannelProfile] {
+    snapshots.map { snapshot in
+        if var channel = existing.first(where: { $0.origin == origin && $0.channel == snapshot.channel }) {
+            channel.displayName = snapshot.displayName
+            channel.memberID = snapshot.membershipID
+            channel.role = snapshot.role
+            channel.credentialAccount = credentialAccount
+            return channel
+        }
+        return ChannelProfile(
+            id: makeID(),
+            origin: origin,
+            channel: snapshot.channel,
+            displayName: snapshot.displayName,
+            callsign: channelCallsign(snapshot.membershipID),
+            memberID: snapshot.membershipID,
+            role: snapshot.role,
+            credentialAccount: credentialAccount,
+            lastViewedMessageID: nil
+        )
+    }
+}
+
 func reconciledChannelProfile(
     _ profile: ChannelProfile,
     authenticatedMemberID: String
@@ -317,6 +358,7 @@ struct ChannelSubscription: Codable, Equatable, Identifiable {
 
 struct AppStateV2: Codable, Equatable {
     var version = 2
+    var accountID: String? = nil
     var defaultCallsign = ""
     var channels: [ChannelProfile] = []
     var tasks: [TaskBinding] = []

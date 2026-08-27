@@ -1,10 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { type AccountAuth, registerAccountRoutes } from "./account-auth.js";
+import type { AccountSession } from "./account-store.js";
 import {
   ChannelError,
   type Message,
@@ -125,6 +126,20 @@ export function createApp(opts: AppOptions): Hono {
   const features = opts.accountAuth ? ["github-account-login"] : [];
   const memberBySession = new Map<string, Map<string, string>>();
   const streamClosers = new Map<string, Set<() => void>>();
+  let membershipMutationTail = Promise.resolve();
+
+  async function serializeMembershipMutation<T>(operation: () => Promise<T>): Promise<T> {
+    // ponytail: one process owns the JSON invite store; move this lock into a PostgreSQL transaction before multi-replica.
+    const previous = membershipMutationTail;
+    let release!: () => void;
+    membershipMutationTail = new Promise<void>((resolve) => { release = resolve; });
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
 
   // Mode resolution from the Host header. Subdomains like `team.rogerthat.chat`
   // map to preset modes (team/park/live/go); anything else is "default" (the
@@ -189,8 +204,30 @@ export function createApp(opts: AppOptions): Hono {
     return c.html(landingHtml());
   });
   app.get("/healthz", (c) => c.text("ok"));
-  if (opts.accountAuth) registerAccountRoutes(app, opts.accountAuth);
-  else app.get("/ready", (c) => c.text("ok"));
+  if (opts.accountAuth) {
+    registerAccountRoutes(app, opts.accountAuth);
+    app.get("/v1/channels", async (c) => {
+      const session = await requireAccountSession(c);
+      if (session instanceof Response) return session;
+      const memberships = await opts.accountAuth!.store.listMemberships(session.accountId);
+      return c.json({
+        channels: memberships.flatMap((membership) => {
+          if (!channelExists(membership.channelId)) return [];
+          const member = listChannelMembers(membership.channelId).find(
+            (candidate) => candidate.member_id === membership.membershipId && candidate.status === "active",
+          );
+          if (!member) return [];
+          return [{
+            channel_id: membership.channelId,
+            channel_name: getChannelName(membership.channelId),
+            membership_id: membership.membershipId,
+            role: membership.role,
+            name: member.name,
+          }];
+        }),
+      });
+    });
+  } else app.get("/ready", (c) => c.text("ok"));
 
   const __appDir = dirname(fileURLToPath(import.meta.url));
   const assetsDir = joinPath(__appDir, "..", "assets");
@@ -236,6 +273,8 @@ export function createApp(opts: AppOptions): Hono {
   app.get("/policy.txt", (c) => c.text(policyText(opts.publicOrigin)));
 
   app.post("/api/channels", async (c) => {
+    const accountSession = opts.accountAuth ? await requireAccountSession(c) : undefined;
+    if (accountSession instanceof Response) return accountSession;
     let body: Record<string, unknown> = {};
     try {
       const raw = c.req.header("content-type")?.startsWith("application/json") ? await c.req.json() : {};
@@ -316,13 +355,21 @@ export function createApp(opts: AppOptions): Hono {
       has_owner_password,
     } = result;
     const owner = registerOwner(id, token, memberName);
+    if (opts.accountAuth && accountSession) {
+      await opts.accountAuth.store.createMembership({
+        membershipId: owner.member_id,
+        accountId: accountSession.accountId,
+        channelId: id,
+        role: "owner",
+      });
+    }
     if (isV2) {
       return c.json({
         api_version: 2,
         channel_id: id,
         channel_name: createdName,
         member_id: owner.member_id,
-        member_credential: token,
+        ...(!opts.accountAuth ? { member_credential: token } : {}),
         role: owner.role,
         retention: createdRetention,
         trust_mode: createdTrustMode,
@@ -383,18 +430,59 @@ export function createApp(opts: AppOptions): Hono {
     });
   });
 
-  type ChannelPrincipal = { memberId: string; role: "owner" | "member"; name: string; isPublic: boolean };
+  type ChannelPrincipal = {
+    memberId: string;
+    role: "owner" | "member";
+    name: string;
+    isPublic: boolean;
+    accountId?: string;
+  };
 
   function bearerToken(c: Context): string {
     const auth = c.req.header("authorization") ?? c.req.header("Authorization") ?? "";
     return auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   }
 
-  function resolveChannelPrincipal(c: Context, channelId: string): ChannelPrincipal | undefined {
+  function credentialHash(value: string): string {
+    return createHash("sha256").update(value).digest("hex");
+  }
+
+  async function requireAccountSession(c: Context): Promise<AccountSession | Response> {
+    if (!opts.accountAuth) return c.json({ error: "account login is unavailable" }, 503);
+    const token = bearerToken(c);
+    if (!token) return c.json({ error: "account session required" }, 401);
+    try {
+      return await opts.accountAuth.store.getSession(credentialHash(token));
+    } catch {
+      return c.json({ error: "account session unavailable" }, 401);
+    }
+  }
+
+  async function resolveChannelPrincipal(c: Context, channelId: string): Promise<ChannelPrincipal | undefined> {
     if (!channelExists(channelId)) return undefined;
     if (getChannelIsBand(channelId)) return { memberId: "public", role: "member", name: "", isPublic: true };
     const token = bearerToken(c);
     if (!token) return undefined;
+    if (opts.accountAuth) {
+      try {
+        const session = await opts.accountAuth.store.getSession(credentialHash(token));
+        const membership = await opts.accountAuth.store.getMembership(session.accountId, channelId);
+        if (!membership || membership.status !== "active") return undefined;
+        const member = listChannelMembers(channelId).find(
+          (candidate) => candidate.member_id === membership.membershipId && candidate.status === "active",
+        );
+        if (!member) return undefined;
+        return {
+          accountId: session.accountId,
+          memberId: member.member_id,
+          role: member.role,
+          name: member.name,
+          isPublic: false,
+        };
+      } catch {
+        return undefined;
+      }
+    }
     const member = authenticateMember(channelId, token);
     if (member) return { memberId: member.member_id, role: member.role, name: member.name, isPublic: false };
     // Compatibility for a pre-0.3 channel token. Fresh 0.3 channels already
@@ -406,25 +494,27 @@ export function createApp(opts: AppOptions): Hono {
     return undefined;
   }
 
-  function requireChannelBearer(c: Context, channelId: string): Response | null {
+  async function requireChannelPrincipal(c: Context, channelId: string): Promise<ChannelPrincipal | Response> {
     if (!channelExists(channelId)) return c.json({ error: "channel not found" }, 404);
-    if (!resolveChannelPrincipal(c, channelId)) return c.json({ error: "invalid bearer token" }, 401);
-    return null;
+    const principal = await resolveChannelPrincipal(c, channelId);
+    return principal ?? c.json({ error: "active channel membership required" }, 401);
   }
 
-  function requireOwner(c: Context, channelId: string): ChannelPrincipal | Response {
+  async function requireOwner(c: Context, channelId: string): Promise<ChannelPrincipal | Response> {
     if (!channelExists(channelId)) return c.json({ error: "channel not found" }, 404);
     if (getChannelIsBand(channelId)) return c.json({ error: "public bands do not have managed members" }, 400);
-    const principal = resolveChannelPrincipal(c, channelId);
+    const principal = await resolveChannelPrincipal(c, channelId);
     if (!principal) return c.json({ error: "invalid bearer token" }, 401);
-    if (principal.role !== "owner") return c.json({ error: "owner credential required" }, 403);
+    if (principal.role !== "owner") return c.json({ error: "owner membership required" }, 403);
     return principal;
   }
 
-  function requireSessionBearer(c: Context, channelId: string, sessionId: string): Response | null {
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
-    const principal = resolveChannelPrincipal(c, channelId)!;
+  function requireSessionPrincipal(
+    c: Context,
+    channelId: string,
+    sessionId: string,
+    principal: ChannelPrincipal,
+  ): Response | null {
     if (principal.isPublic) return null;
     const memberId = memberBySession.get(channelId)?.get(sessionId);
     if (memberId !== principal.memberId) {
@@ -453,10 +543,10 @@ export function createApp(opts: AppOptions): Hono {
     }
   }
 
-  app.get("/api/channels/:channelId/transcript", (c) => {
+  app.get("/api/channels/:channelId/transcript", async (c) => {
     const channelId = c.req.param("channelId");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     const retention = getChannelRetention(channelId);
     if (retention === "none") return c.json({ error: "this channel has no transcript (retention=none)" }, 404);
     const limit = Number(c.req.query("limit") ?? 1000);
@@ -527,16 +617,16 @@ export function createApp(opts: AppOptions): Hono {
     });
   });
 
-  app.get("/api/channels/:id/invites", (c) => {
+  app.get("/api/channels/:id/invites", async (c) => {
     const channelId = c.req.param("id");
-    const owner = requireOwner(c, channelId);
+    const owner = await requireOwner(c, channelId);
     if (owner instanceof Response) return owner;
     return c.json({ channel_id: channelId, invitations: listMemberInvites(channelId) });
   });
 
   app.post("/api/channels/:id/invites", async (c) => {
     const channelId = c.req.param("id");
-    const owner = requireOwner(c, channelId);
+    const owner = await requireOwner(c, channelId);
     if (owner instanceof Response) return owner;
     let body: Record<string, unknown> = {};
     try {
@@ -573,6 +663,8 @@ export function createApp(opts: AppOptions): Hono {
     const channelId = c.req.param("id");
     if (!channelExists(channelId)) return c.json({ error: "channel not found" }, 404);
     if (getChannelIsBand(channelId)) return c.json({ error: "public bands do not use invitations" }, 400);
+    const accountSession = opts.accountAuth ? await requireAccountSession(c) : undefined;
+    if (accountSession instanceof Response) return accountSession;
     let body: Record<string, unknown> = {};
     try {
       const raw = await c.req.json();
@@ -584,21 +676,48 @@ export function createApp(opts: AppOptions): Hono {
     if (!inviteToken) return c.json({ error: "invite_token required" }, 400);
     const name = typeof body.name === "string" ? body.name.trim() : "Member";
     if (!name || name.length > 64) return c.json({ error: "name must be 1-64 characters" }, 400);
-    const redeemed = redeemMemberInvite(channelId, inviteToken, name);
-    if (!redeemed) return c.json({ error: "invitation is invalid or unavailable" }, 401);
-    return c.json({
-      channel_id: channelId,
-      channel_name: getChannelName(channelId),
-      member_id: redeemed.member.member_id,
-      member_credential: redeemed.member_credential,
-      role: redeemed.member.role,
-      name: redeemed.member.name,
+    return serializeMembershipMutation(async () => {
+      const existing = opts.accountAuth && accountSession
+        ? await opts.accountAuth.store.getMembership(accountSession.accountId, channelId)
+        : undefined;
+      if (existing?.status === "banned") return c.json({ error: "account is banned from this channel" }, 403);
+      if (existing?.status === "active") {
+        const member = listChannelMembers(channelId).find(
+          (candidate) => candidate.member_id === existing.membershipId && candidate.status === "active",
+        );
+        if (!member) return c.json({ error: "membership data is unavailable" }, 409);
+        return c.json({
+          channel_id: channelId,
+          channel_name: getChannelName(channelId),
+          member_id: member.member_id,
+          role: member.role,
+          name: member.name,
+        });
+      }
+      const redeemed = redeemMemberInvite(channelId, inviteToken, name, existing?.membershipId);
+      if (!redeemed) return c.json({ error: "invitation is invalid or unavailable" }, 401);
+      if (opts.accountAuth && accountSession) {
+        await opts.accountAuth.store.createMembership({
+          membershipId: redeemed.member.member_id,
+          accountId: accountSession.accountId,
+          channelId,
+          role: "member",
+        });
+      }
+      return c.json({
+        channel_id: channelId,
+        channel_name: getChannelName(channelId),
+        member_id: redeemed.member.member_id,
+        ...(!opts.accountAuth ? { member_credential: redeemed.member_credential } : {}),
+        role: redeemed.member.role,
+        name: redeemed.member.name,
+      });
     });
   });
 
-  app.delete("/api/channels/:id/invites/:inviteId", (c) => {
+  app.delete("/api/channels/:id/invites/:inviteId", async (c) => {
     const channelId = c.req.param("id");
-    const owner = requireOwner(c, channelId);
+    const owner = await requireOwner(c, channelId);
     if (owner instanceof Response) return owner;
     const invitation = revokeMemberInvite(channelId, c.req.param("inviteId"));
     if (!invitation) {
@@ -607,10 +726,10 @@ export function createApp(opts: AppOptions): Hono {
     return c.json({ ok: true, invitation });
   });
 
-  app.get("/api/channels/:id/members", (c) => {
+  app.get("/api/channels/:id/members", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     const online = new Set(getOrCreateChannel(channelId).roster());
     const members = listChannelMembers(channelId).map((member) => ({
       ...member,
@@ -621,9 +740,8 @@ export function createApp(opts: AppOptions): Hono {
 
   app.patch("/api/channels/:id/members/me", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
-    const principal = resolveChannelPrincipal(c, channelId)!;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     if (principal.isPublic) return c.json({ error: "public bands do not have managed members" }, 400);
     let body: Record<string, unknown> = {};
     try {
@@ -638,32 +756,35 @@ export function createApp(opts: AppOptions): Hono {
     return member ? c.json({ ok: true, member }) : c.json({ error: "active member not found" }, 404);
   });
 
-  app.delete("/api/channels/:id/members/:memberId", (c) => {
+  app.delete("/api/channels/:id/members/:memberId", async (c) => {
     const channelId = c.req.param("id");
-    const owner = requireOwner(c, channelId);
+    const owner = await requireOwner(c, channelId);
     if (owner instanceof Response) return owner;
     const member = setMemberStatus(channelId, c.req.param("memberId"), "removed");
     if (!member) return c.json({ error: "member not found or owner cannot be removed" }, 404);
+    if (opts.accountAuth) await opts.accountAuth.store.setMembershipStatus(channelId, member.member_id, "removed");
     invalidateMemberSessions(channelId, member.member_id);
     return c.json({ ok: true, member });
   });
 
-  app.post("/api/channels/:id/members/:memberId/ban", (c) => {
+  app.post("/api/channels/:id/members/:memberId/ban", async (c) => {
     const channelId = c.req.param("id");
-    const owner = requireOwner(c, channelId);
+    const owner = await requireOwner(c, channelId);
     if (owner instanceof Response) return owner;
     const member = setMemberStatus(channelId, c.req.param("memberId"), "banned");
     if (!member) return c.json({ error: "member not found or owner cannot be banned" }, 404);
+    if (opts.accountAuth) await opts.accountAuth.store.setMembershipStatus(channelId, member.member_id, "banned");
     invalidateMemberSessions(channelId, member.member_id);
     return c.json({ ok: true, member });
   });
 
-  app.post("/api/channels/:id/members/:memberId/unban", (c) => {
+  app.post("/api/channels/:id/members/:memberId/unban", async (c) => {
     const channelId = c.req.param("id");
-    const owner = requireOwner(c, channelId);
+    const owner = await requireOwner(c, channelId);
     if (owner instanceof Response) return owner;
     const member = unbanMember(channelId, c.req.param("memberId"));
     if (!member) return c.json({ error: "banned member not found" }, 404);
+    if (opts.accountAuth) await opts.accountAuth.store.setMembershipStatus(channelId, member.member_id, "active");
     return c.json({ ok: true, member });
   });
 
@@ -673,9 +794,8 @@ export function createApp(opts: AppOptions): Hono {
 
   app.post("/api/channels/:id/join", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
-    const principal = resolveChannelPrincipal(c, channelId)!;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     let body: Record<string, unknown> = {};
     try {
       const raw = await c.req.json();
@@ -777,13 +897,13 @@ export function createApp(opts: AppOptions): Hono {
     }
   });
 
-  app.post("/api/channels/:id/keepalive", (c) => {
+  app.post("/api/channels/:id/keepalive", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     const sessionId = getSessionId(c);
     if (!sessionId) return c.json({ error: "X-Session-Id header required", code: "invalid" }, 400);
-    const sessionDenied = requireSessionBearer(c, channelId, sessionId);
+    const sessionDenied = requireSessionPrincipal(c, channelId, sessionId, principal);
     if (sessionDenied) return sessionDenied;
     const channel = getOrCreateChannel(channelId);
     try {
@@ -796,12 +916,12 @@ export function createApp(opts: AppOptions): Hono {
 
   app.post("/api/channels/:id/send", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     const sessionId = getSessionId(c);
     if (!sessionId)
       return c.json({ error: "X-Session-Id header required (returned by /join)", code: "invalid" }, 400);
-    const sessionDenied = requireSessionBearer(c, channelId, sessionId);
+    const sessionDenied = requireSessionPrincipal(c, channelId, sessionId, principal);
     if (sessionDenied) return sessionDenied;
     let body: Record<string, unknown> = {};
     try {
@@ -940,12 +1060,12 @@ export function createApp(opts: AppOptions): Hono {
 
   app.get("/api/channels/:id/listen", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     const sessionId = getSessionId(c);
     if (!sessionId)
       return c.json({ error: "X-Session-Id header required (returned by /join)", code: "invalid" }, 400);
-    const sessionDenied = requireSessionBearer(c, channelId, sessionId);
+    const sessionDenied = requireSessionPrincipal(c, channelId, sessionId, principal);
     if (sessionDenied) return sessionDenied;
     const timeoutSec = Math.max(1, Math.min(60, Number(c.req.query("timeout") ?? 30)));
     const sinceRaw = c.req.query("since");
@@ -967,12 +1087,12 @@ export function createApp(opts: AppOptions): Hono {
   // designed for agents that should sit waiting for a peer.
   app.get("/api/channels/:id/wait", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     const sessionId = getSessionId(c);
     if (!sessionId)
       return c.json({ error: "X-Session-Id header required (returned by /join)", code: "invalid" }, 400);
-    const sessionDenied = requireSessionBearer(c, channelId, sessionId);
+    const sessionDenied = requireSessionPrincipal(c, channelId, sessionId, principal);
     if (sessionDenied) return sessionDenied;
     const timeoutSec = Math.max(1, Math.min(300, Number(c.req.query("timeout") ?? 120)));
     const sinceRaw = c.req.query("since");
@@ -1011,15 +1131,15 @@ export function createApp(opts: AppOptions): Hono {
   //   - event: message  each delivered message (id, from, to, text, at)
   //   - event: error    typed channel error before close (rare; pre-validated)
   //   - :ping           comment line every 25s to defeat idle-proxy disconnects
-  app.get("/api/channels/:id/stream", (c) => {
+  app.get("/api/channels/:id/stream", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     const sessionId = getSessionId(c);
     if (!sessionId) {
       return c.json({ error: "X-Session-Id header required (returned by /join)", code: "invalid" }, 400);
     }
-    const sessionDenied = requireSessionBearer(c, channelId, sessionId);
+    const sessionDenied = requireSessionPrincipal(c, channelId, sessionId, principal);
     if (sessionDenied) return sessionDenied;
     const sinceRaw = c.req.query("since");
     const since = sinceRaw !== undefined ? Number(sinceRaw) : undefined;
@@ -1110,10 +1230,10 @@ export function createApp(opts: AppOptions): Hono {
     });
   });
 
-  app.get("/api/channels/:id/stats", (c) => {
+  app.get("/api/channels/:id/stats", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     const ch = getOrCreateChannel(channelId);
     const all = ch.rosterAll();
     return c.json({
@@ -1131,10 +1251,10 @@ export function createApp(opts: AppOptions): Hono {
     });
   });
 
-  app.get("/api/channels/:id/roster", (c) => {
+  app.get("/api/channels/:id/roster", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     const ch = getOrCreateChannel(channelId);
     return c.json({
       roster: ch.roster(),
@@ -1143,22 +1263,22 @@ export function createApp(opts: AppOptions): Hono {
     });
   });
 
-  app.get("/api/channels/:id/history", (c) => {
+  app.get("/api/channels/:id/history", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     const n = Math.max(1, Math.min(100, Number(c.req.query("limit") ?? c.req.query("n") ?? 20)));
     return c.json({ history: getOrCreateChannel(channelId).history(n) });
   });
 
-  app.post("/api/channels/:id/leave", (c) => {
+  app.post("/api/channels/:id/leave", async (c) => {
     const channelId = c.req.param("id");
-    const denied = requireChannelBearer(c, channelId);
-    if (denied) return denied;
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
     const sessionId = getSessionId(c);
     if (!sessionId)
       return c.json({ error: "X-Session-Id header required (returned by /join)", code: "invalid" }, 400);
-    const sessionDenied = requireSessionBearer(c, channelId, sessionId);
+    const sessionDenied = requireSessionPrincipal(c, channelId, sessionId, principal);
     if (sessionDenied) return sessionDenied;
     const channel = getOrCreateChannel(channelId);
     const cs = channel.callsignOf(sessionId);
@@ -1192,7 +1312,7 @@ export function createApp(opts: AppOptions): Hono {
         if (opts.staticToken) {
           if (token !== opts.staticToken) return c.json({ error: "invalid bearer token" }, 401);
         } else {
-          if (!token || !resolveChannelPrincipal(c, channelId)) {
+          if (!token || !(await resolveChannelPrincipal(c, channelId))) {
             return c.json({ error: "invalid bearer token" }, 401);
           }
         }
@@ -1235,11 +1355,17 @@ export function createApp(opts: AppOptions): Hono {
         sourceMemberId = publicBandMemberId(effectiveChannelId, callsign);
         sourceMemberName = callsign;
       } else if (effectiveToken) {
-        let member =
-          authenticateMember(effectiveChannelId, effectiveToken) ??
-          (verifyChannel(effectiveChannelId, effectiveToken)
-            ? registerOwner(effectiveChannelId, effectiveToken)
-            : undefined);
+        const accountPrincipal = opts.accountAuth && channelId !== null
+          ? await resolveChannelPrincipal(c, effectiveChannelId)
+          : undefined;
+        let member = accountPrincipal
+          ? listChannelMembers(effectiveChannelId).find(
+              (candidate) => candidate.member_id === accountPrincipal.memberId,
+            )
+          : authenticateMember(effectiveChannelId, effectiveToken) ??
+            (verifyChannel(effectiveChannelId, effectiveToken)
+              ? registerOwner(effectiveChannelId, effectiveToken)
+              : undefined);
         // A legacy per-channel MCP endpoint can be protected by one operator
         // token instead of the channel credential. That token still authenticates
         // the request; attribute it to the managed channel owner without ever

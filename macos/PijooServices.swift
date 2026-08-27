@@ -12,6 +12,7 @@ enum AppPaths {
     static let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Pijoo", isDirectory: true)
     static let state = support.appendingPathComponent("state-v2.json")
+    static let accountStates = support.appendingPathComponent("accounts", isDirectory: true)
     static let legacyBinding = support.appendingPathComponent("binding.json")
     static let sendSocket = support.appendingPathComponent("send.sock")
     static let messages = support.appendingPathComponent("messages", isDirectory: true)
@@ -37,11 +38,18 @@ enum AppPaths {
         return app.hasPrefix("/Applications/") || app.hasPrefix(userApplications)
     }
 
+    static func accountState(_ accountID: String) -> URL {
+        let digest = SHA256.hash(data: Data(accountID.utf8)).map { String(format: "%02x", $0) }.joined()
+        return accountStates.appendingPathComponent("\(digest).json")
+    }
+
     static func prepare() throws {
         try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: support.path)
         try FileManager.default.createDirectory(at: messages, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: messages.path)
+        try FileManager.default.createDirectory(at: accountStates, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: accountStates.path)
         try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: logs.path)
     }

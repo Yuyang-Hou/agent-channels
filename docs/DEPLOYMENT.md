@@ -39,8 +39,9 @@ GitHub OAuth App 使用：
 - 不启用 Device Flow，不启用 callback wildcard，不申请任何 scope；该 OAuth App 不复用其他 GitHub API 功能。
 
 Railway 项目需增加 PostgreSQL service，并在 `rogerthat` service 中把 `DATABASE_URL` 引用到该资源。
-首次带账号配置启动会创建 Account、Device、Session 和 LoginAttempt 表；部署前先确认备份策略与
-`/ready`，再用测试 GitHub 账号验收。当前登录切片不会替换旧频道 credential。
+首次带账号配置启动会创建 Account、Device、Session、LoginAttempt 和 Membership 表；部署前先确认
+备份策略与 `/ready`，再用测试 GitHub 账号验收。账号版采用 clean-slate：新建频道和邀请兑换都要求
+Account Session，不再签发旧频道 Member credential。
 
 ## Redeploy
 
@@ -67,8 +68,9 @@ View 路线已被本地 Subscription Runtime + Host Connector 取代，不再作
 
 ## Known boundary
 
-Volume 只保存频道凭据、统计和显式 transcript。在线 session、消费 cursor 和最近 100 条
-消息属于单进程内存状态；不要配置多副本，升级为高可用前需迁移到共享数据库。
+PostgreSQL 保存账号与 Membership；Volume 仍保存 Channel、Invite、统计和显式 transcript。在线
+session、消费 cursor 和最近 100 条消息属于单进程内存状态；不要配置多副本，升级为高可用前需把
+Channel、Invite 与兑换计数迁入 PostgreSQL 事务。
 
 ChatGPT Desktop 必须正常启动且目标 task 属于当前内嵌 runtime。若曾设置
 `CODEX_APP_SERVER_USE_LOCAL_DAEMON=1`，先 `launchctl unsetenv` 并完全重启 ChatGPT；

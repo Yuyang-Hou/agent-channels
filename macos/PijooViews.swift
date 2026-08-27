@@ -193,6 +193,7 @@ struct MainWindowView: View {
                                 .padding(3)
                         }
                         .buttonStyle(.borderless)
+                        .disabled(model.accountSession == nil)
                         .help("添加频道")
                         .accessibilityLabel("添加频道")
                     }
@@ -227,6 +228,15 @@ struct MainWindowView: View {
         } detail: {
             if showingSettings {
                 PijooSettingsView(model: model)
+            } else if model.accountSession == nil {
+                EmptyStateView(
+                    title: "登录后恢复频道",
+                    systemImage: "person.crop.circle.badge.checkmark",
+                    detail: "使用 GitHub 登录后，只会显示这个账号加入的频道。"
+                ) {
+                    Button("前往设置登录") { showingSettings = true }
+                        .buttonStyle(.borderedProminent)
+                }
             } else if let channel = model.selectedChannel {
                 ChannelDetailView(model: model, channel: channel)
             } else {
@@ -280,6 +290,7 @@ struct AddChannelSheet: View {
 
     private var actionDisabled: Bool {
         model.busy
+            || model.accountSession == nil
             || model.state.defaultCallsign.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || (mode == .create && model.draftChannelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             || (mode == .join && model.invitationInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -302,7 +313,9 @@ struct AddChannelSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 5) {
                 Text("添加频道").font(.title2.bold())
-                Text("创建一个新频道，或使用邀请口令加入已有频道。")
+                Text(model.accountSession == nil
+                    ? "请先在设置中使用 GitHub 登录。"
+                    : "创建一个新频道，或使用邀请口令加入已有频道。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -1294,7 +1307,7 @@ struct PijooSettingsView: View {
                             }
                         }
                     }
-                    Text("账号会话仅保存在本机 Keychain；频道消息、AI 会话和工作目录不会上传。当前版本登录不影响已有频道。")
+                    Text("登录后会恢复你加入的频道；账号会话仅保存在本机 Keychain，频道消息、AI 会话和工作目录不会上传。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1360,7 +1373,7 @@ struct PijooSettingsView: View {
                             Button("移除 Codex 集成", role: .destructive) { model.removeCodexIntegration() }
                         }
                     }
-                    Text("MCP 提供当前会话的频道动作，Skill 负责识别外部消息和协作规则；频道凭证仍只保存在 App Keychain。首次配置 MCP 后需完全重启 ChatGPT。")
+                    Text("MCP 提供当前会话的频道动作，Skill 负责识别外部消息和协作规则；账号 Session 只保存在 App Keychain。首次配置 MCP 后需完全重启 ChatGPT。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if !initialSetup {
