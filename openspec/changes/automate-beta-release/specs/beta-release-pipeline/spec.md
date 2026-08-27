@@ -30,7 +30,8 @@ PR 与 `main` CI MUST 不读取发布凭据，并 MUST 在 server、OpenSpec、S
 #### Scenario: Maintainer releases the next beta
 
 - **WHEN** 有权限的维护者批准 `release` Environment job
-- **THEN** workflow 发布下一 `beta.N` GitHub prerelease，App build、MCP 版本、文件名和 tag 一致
+- **THEN** workflow 发布下一 `beta.N` GitHub prerelease，App build、MCP 版本、文件名和 tag 一致，
+  Release Notes 汇总上一版本以来的合并 PR 并附带源码、SHA-256、文件大小和 Apple 公证编号
 
 #### Scenario: Notarization or verification fails
 

@@ -11,6 +11,7 @@
 - `main` push 根据最新正式 Beta tag 计算下一 `beta.N`，保存七天候选 DMG，但不公开发布。
 - 维护者人工触发受保护的 release workflow；流水线从 `origin/main` 精确提交重新验证，完成
   Developer ID 签名、Apple notarization、staple、Gatekeeper、GitHub prerelease 和公开回下载校验。
+- Release Notes 自动汇总上一版本以来合并的 PR，并保留源码、摘要与 Apple 公证信息。
 - Beta 序号同时成为 `CFBundleVersion`，避免 App 版本与 bundle build 漂移。
 
 ## Decisions

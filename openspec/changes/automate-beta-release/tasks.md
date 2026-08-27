@@ -16,5 +16,6 @@
 - [x] 人工触发后锁定 `origin/main`、重新执行检查并导入临时签名凭据
 - [x] 签名、公证、staple、Gatekeeper 校验后创建 draft prerelease
 - [x] 校验 draft 资产，公开后再次下载并复核最终 SHA-256 和包内容
-- [ ] 在 GitHub 创建 `release` Environment、配置审批规则和五项 secrets
-- [ ] 推送后观察 PR CI 与一次真实 workflow run
+- [x] 自动生成合并 PR 更新列表并附加构建、公证溯源信息
+- [x] 在 GitHub 创建 `release` Environment、配置审批规则和五项 secrets
+- [x] 推送后观察 PR/main CI 与一次真实 workflow run
