@@ -157,10 +157,8 @@ struct MainWindowView: View {
                                 .fill(model.channelStatus[channel.id] == "已连接" ? .green : .secondary.opacity(0.4))
                                 .frame(width: 7, height: 7)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(channel.displayName).lineLimit(1)
-                                Text(channel.displayName == channel.channel
-                                     ? (channel.role == "owner" ? "所有者" : "成员")
-                                     : "\(channel.channel) · \(channel.role == "owner" ? "所有者" : "成员")")
+                                Text(model.channelTitle(channel)).lineLimit(1)
+                                Text("\(model.channelKindLabel(channel)) · \(channel.role == "owner" ? "所有者" : "成员")")
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -183,7 +181,7 @@ struct MainWindowView: View {
                     }
                 } header: {
                     HStack {
-                        Text("频道")
+                        Text("对话")
                         Spacer()
                         Button {
                             showingSettings = false
@@ -194,8 +192,8 @@ struct MainWindowView: View {
                         }
                         .buttonStyle(.borderless)
                         .disabled(model.accountSession == nil)
-                        .help("添加频道")
-                        .accessibilityLabel("添加频道")
+                        .help("添加对话")
+                        .accessibilityLabel("添加对话")
                     }
                     .accessibilityElement(children: .contain)
                 }
@@ -230,9 +228,9 @@ struct MainWindowView: View {
                 PijooSettingsView(model: model)
             } else if model.accountSession == nil {
                 EmptyStateView(
-                    title: "登录后恢复频道",
+                    title: "登录后恢复对话",
                     systemImage: "person.crop.circle.badge.checkmark",
-                    detail: "使用 GitHub 登录后，只会显示这个账号加入的频道。"
+                    detail: "使用 GitHub 登录后，只会显示这个账号加入的对话。"
                 ) {
                     Button("前往设置登录") { showingSettings = true }
                         .buttonStyle(.borderedProminent)
@@ -241,11 +239,11 @@ struct MainWindowView: View {
                 ChannelDetailView(model: model, channel: channel)
             } else {
                 EmptyStateView(
-                    title: "还没有频道",
+                    title: "正在准备默认频道",
                     systemImage: "bubble.left.and.bubble.right",
-                    detail: "创建频道，或粘贴 ac2: 邀请口令加入。"
+                    detail: "Pijoo 会自动创建以你的昵称命名的助理频道。"
                 ) {
-                    Button("添加频道") { model.showAddChannel = true }
+                    Button("重新同步") { Task { await model.refreshAccount() } }
                         .buttonStyle(.borderedProminent)
                 }
             }
@@ -296,6 +294,13 @@ struct AddChannelSheet: View {
             || (mode == .join && model.invitationInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
+    private var actionTitle: String {
+        switch mode {
+        case .create: return "创建频道"
+        case .join: return "加入频道"
+        }
+    }
+
     private func submit() {
         guard !actionDisabled else { return }
         let count = model.state.channels.count
@@ -312,10 +317,10 @@ struct AddChannelSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             VStack(alignment: .leading, spacing: 5) {
-                Text("添加频道").font(.title2.bold())
+                Text("添加对话").font(.title2.bold())
                 Text(model.accountSession == nil
                     ? "请先在设置中使用 GitHub 登录。"
-                    : "创建一个新频道，或使用邀请口令加入已有频道。")
+                    : "创建新频道，或使用邀请口令加入已有频道。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -373,7 +378,7 @@ struct AddChannelSheet: View {
                 if model.busy {
                     ProgressView().controlSize(.small)
                 }
-                Button(mode == .create ? "创建频道" : "加入频道", action: submit)
+                Button(actionTitle, action: submit)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(actionDisabled)
@@ -448,6 +453,8 @@ struct ChannelDetailView: View {
     @State private var selectedTab = ChannelDetailTab.messages
     @State private var showCreateInvitation = false
 
+    private var isAssistant: Bool { model.isAssistantChannel(channel.id) }
+
     @ViewBuilder
     private func tabButton(_ title: String, tab: ChannelDetailTab, showsAttention: Bool = false) -> some View {
         Button {
@@ -480,22 +487,30 @@ struct ChannelDetailView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(channel.displayName)
-                        .font(.title2.bold())
-                        .onTapGesture(count: 2) { model.renameSelectedChannel() }
-                        .help("双击修改频道名称")
-                    Text("频道 ID：\(channel.channel) · 我的昵称：\(model.state.defaultCallsign) · \(channel.role == "owner" ? "所有者" : "成员") · \(model.channelStatus[channel.id] ?? "未连接")")
+                    if isAssistant {
+                        Text(model.channelTitle(channel)).font(.title2.bold())
+                    } else {
+                        Text(model.channelTitle(channel))
+                            .font(.title2.bold())
+                            .onTapGesture(count: 2) { model.renameSelectedChannel() }
+                            .help("双击修改频道名称")
+                    }
+                    Text(isAssistant
+                        ? "默认助理频道 · \(model.channelStatus[channel.id] ?? "未连接")"
+                        : "\(model.channelKindLabel(channel)) · \(channel.channel) · \(model.channelStatus[channel.id] ?? "未连接")")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if channel.role == "owner" {
+                if channel.role == "owner" && !isAssistant {
                     Button("创建邀请…") { showCreateInvitation = true }
                 }
                 if model.channelStatus[channel.id]?.contains("权限已撤销") == true {
                     Button("重新连接") { model.reconnectChannel(channel.id) }
                 }
                 Menu {
-                    Button("修改频道昵称…") { model.renameSelectedChannel() }
+                    if !isAssistant {
+                        Button("修改频道昵称…") { model.renameSelectedChannel() }
+                    }
                     Button("刷新") {
                         Task {
                             await model.refreshHistory()
@@ -521,9 +536,9 @@ struct ChannelDetailView: View {
             .padding(.vertical, 14)
             HStack(spacing: 24) {
                 tabButton("消息", tab: .messages)
-                tabButton("成员", tab: .members)
+                if !isAssistant { tabButton("成员", tab: .members) }
                 tabButton(
-                    "转发到会话",
+                    isAssistant ? "助理会话" : "转发到会话",
                     tab: .subscriptions,
                     showsAttention: model.channelHasDisconnectedConversation(channel.id)
                 )
@@ -536,7 +551,8 @@ struct ChannelDetailView: View {
                 case .messages:
                     ChannelMessagesView(model: model)
                 case .members:
-                    ChannelMembersView(model: model, channel: channel)
+                    if isAssistant { ChannelMessagesView(model: model) }
+                    else { ChannelMembersView(model: model, channel: channel) }
                 case .subscriptions:
                     ChannelSubscriptionsView(model: model)
                 }
@@ -546,6 +562,7 @@ struct ChannelDetailView: View {
         .sheet(isPresented: $showCreateInvitation) {
             CreateInvitationSheet(model: model)
         }
+        .onChange(of: channel.id) { _ in selectedTab = .messages }
     }
 }
 
@@ -565,7 +582,9 @@ struct ChannelMessagesView: View {
                 EmptyStateView(
                     title: "暂无消息",
                     systemImage: "text.bubble",
-                    detail: "频道消息会先显示在这里，再转发到已连接的 AI 会话。"
+                    detail: model.selectedChannelID.map(model.isAssistantChannel) == true
+                        ? "连接助理会话后，直接在这里开始聊天。"
+                        : "频道消息会先显示在这里，再转发到已连接的 AI 会话。"
                 ) { EmptyView() }
                     .frame(maxHeight: .infinity)
             } else {
@@ -586,28 +605,33 @@ struct ChannelMessagesView: View {
             }
             Divider()
             HStack(alignment: .bottom) {
-                Menu {
-                    Button { model.toggleComposerMentionAll() } label: {
-                        Label("@所有人", systemImage: model.composerMentionAll ? "checkmark" : "person.3")
-                    }
-                    Divider()
-                    ForEach(model.activeMentionMembers) { member in
-                        Button { model.toggleComposerMention(member.memberID) } label: {
-                            Label(
-                                member.name + (member.memberID == model.selectedChannel?.memberID ? "（我）" : ""),
-                                systemImage: model.composerMentionMemberIDs.contains(member.memberID) ? "checkmark" : "person"
-                            )
+                if model.selectedChannelID.map(model.isAssistantChannel) != true {
+                    Menu {
+                        Button { model.toggleComposerMentionAll() } label: {
+                            Label("@所有人", systemImage: model.composerMentionAll ? "checkmark" : "person.3")
+                        }
+                        Divider()
+                        ForEach(model.activeMentionMembers) { member in
+                            Button { model.toggleComposerMention(member.memberID) } label: {
+                                Label(
+                                    member.name + (member.memberID == model.selectedChannel?.memberID ? "（我）" : ""),
+                                    systemImage: model.composerMentionMemberIDs.contains(member.memberID) ? "checkmark" : "person"
+                                )
+                            }
+                        }
+                    } label: {
+                        if model.composerMentionLabel.isEmpty {
+                            Image(systemName: "at")
+                        } else {
+                            Label(model.composerMentionLabel, systemImage: "at")
                         }
                     }
-                } label: {
-                    if model.composerMentionLabel.isEmpty {
-                        Image(systemName: "at")
-                    } else {
-                        Label(model.composerMentionLabel, systemImage: "at")
-                    }
+                    .fixedSize()
                 }
-                .fixedSize()
-                TextField("向频道发送消息", text: $model.composerText)
+                TextField(
+                    model.selectedChannelID.map(model.isAssistantChannel) == true ? "和助理聊天" : "发送消息",
+                    text: $model.composerText
+                )
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { Task { await model.sendComposerMessage() } }
                 Button("发送") { Task { await model.sendComposerMessage() } }
@@ -874,7 +898,7 @@ struct ChannelSubscriptionsView: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(model.busy)
                         Text(model.taskCreationStatus.isEmpty
-                            ? "\(model.selectedHostProvider.displayName) · 自动连接当前频道"
+                            ? "\(model.selectedHostProvider.displayName) · ~/Pijoo · 自动连接当前频道"
                             : model.taskCreationStatus)
                             .font(.caption)
                             .foregroundStyle(model.taskCreationStatus.isEmpty ? Color.secondary : Color.accentColor)

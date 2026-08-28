@@ -331,6 +331,8 @@ describe("GitHub account login", () => {
         channel_name: "Account channel",
         membership_id: membership.member_id,
         role: "member",
+        member_count: 2,
+        peer_name: "Owner",
       }],
     });
 

@@ -2,71 +2,43 @@
 
 ## 当前阶段
 
-当前处于 **Pijoo 0.3 Beta 外部试用**：多频道 App、Host 无关边界和 Codex 公网入站链路已经完成；
-包含 GitHub 账号登录、冷会话绑定、实时目录与权限展示及圆身鸽品牌资源的 `0.3.0-beta.23`
-已从 `main` 构建，使用 Developer ID 签名、通过 Apple 公证并作为
-[GitHub prerelease](https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.23) 发布；本机未安装该包。
+产品已从“多频道会话协作”转向“Codex 个人上下文助理”。现有 `0.3.0-beta.24` 仍是频道形态；
+助理形态正在开发，尚未发布、打包或完成真实用户验收。
 
-## 已完成
+## 可复用基础
 
-| 能力 | 状态 | 证据边界 |
+| 能力 | 当前状态 | 在新产品中的用途 |
 |---|---|---|
-| Railway 单实例 Channel Service | 已完成 | 健康检查、授权、双端收发和 Volume 恢复已验收 |
-| 公网频道消息进入 Codex 会话 | 已完成 | 未打开的目标会话产生真实 turn |
-| 零空闲 turn | 已完成 | 无消息窗口内目标会话没有新增 turn |
-| 凭证隔离 | 已完成 | 频道 token 和 session credential 未进入注入正文 |
-| 原生来源提示实验 | 已结束 | 能显示来源，但需要额外代理任务，产品不采用 |
-| Host 无关架构设计 | 已完成 | 产品、架构和 OpenSpec 已定义 Connector 边界 |
-| Host-neutral 投递边界 | 已完成 | 标准信封、串行投递与 Codex Connector 已实现，94 项测试通过 |
-| Host 会话发现 | Beta 20 已发布 | 可新建、搜索或直接输入会话；冷会话可先绑定并显示未知，加载后自动读取连接、目录与权限 |
-| CLI 失败状态 | 已完成 | 未支持 Host 参数、Host 不可用和错误凭证均明确失败 |
-| Codex Desktop IPC | 已完成 | 无 daemon/env，空闲 start 与忙时 steer 已实机通过；不确定回执停机有自动化覆盖 |
-| 两设备公网双向入站 | 已完成 | A、B 两台 Mac 均完成频道消息 → Desktop IPC → 目标 task 真实 turn；正文按不可信输入处理 |
-| Apple Silicon 菜单栏包 | Beta 23 已发布 | Developer ID 签名、公证、staple、公开 DMG 与挂载后 App Gatekeeper 均通过；待测试者实机产品验收 |
-| 安全本机配置 | 已完成 | token/owner password 进入 Keychain；监听 secret 走 stdin；MCP 配置需用户确认 |
-| 只读 task 预检 | 已完成 | 打包版对当前真实 task owner discovery 通过且不创建 turn |
-| Task 频道工具 | Beta 20 已发布，待实机 | 七个 task-scoped 工具通过 `_meta.threadId` 精确路由；权限管理仅在本地 App，不暴露给 MCP/AI |
-| Pijoo Skill | Beta 20 已发布，待实机 | 面向完整产品语义、入站信任边界和七项频道动作；仅在用户主动追问时查询来源，不使用每 turn hook |
-| Markdown 外部消息卡片 | 本地 Beta 包已完成，待实机 | 默认为当前卡片；标题、来源栏、正文和引用样式均可编辑 |
-| Markdown 发送成功卡片 | beta.15 真实会话已验收 | 每 Subscription 可编辑；可靠回执按模板展示，不改写频道正文或制造自回声 turn |
-| MCP 更新重启提示 | beta.16 本地包已完成，待实机 | 设置页持续显示已加载版本，MCP 上报当前版本后自动清除；不占用菜单栏健康状态 |
-| App 内发送凭证边界 | 本地 Beta 包已完成，待实机 | 发送工具只传正文与来源 task 到同 UID Unix socket；App 独占 Keychain 与频道 REST |
-| 断线恢复状态 | 本地 Beta 包已完成，待实机 | SSE 自动重连后清除已恢复的连接错误，不再依赖“发送测试招呼”刷新图标 |
-| 终态重放幂等 | 本地 Beta 包已完成，待实机 | 已投递、已过滤或已跳过的消息重放时只推进游标，不再次调用 Host；异常断流保留最新游标 |
-| 单窗口交互 | 本地 Beta 包已完成，待实机 | 设置并入主窗口侧栏；菜单栏只保留状态、打开、暂停/恢复与退出；打开会置前聚焦主窗口 |
-| 邀请加入 | 已完成 | 邀请口令自带频道，加入者直接粘贴；统一使用设置中的“我的昵称” |
-| 品牌资源 | Beta 23 已发布 | App 使用圆身传信鸽图标和同轮廓单色 SVG 菜单栏图标 |
-| 手动更新检查 | 已完成 | 正式版与 Beta 分开检查 GitHub Release，不静默下载或替换 App |
+| GitHub 账号、Session、Membership | 已实现 | 助理账号、联系人授权与撤销 |
+| Channel Service、SSE、短期恢复 | 已实现 | 助理、好友和后续群聊的统一消息模型 |
+| Keychain、本地账本、游标、回执 | 已实现 | 安全凭证与不重复收发 |
+| Codex 会话创建、发现与投递 | 已实现 | 新会话默认使用 `~/Pijoo`，并连接默认助理或好友频道 |
+| task-scoped MCP 发送 | 已实现，待真实新体验验收 | 用户确认后的可靠发送 |
+| 多频道主窗口和 Subscription UI | 已实现 | 时间线继续作为聊天入口，Subscription 留在会话设置中 |
 
 ## 正在推进
 
 | 工作 | 完成条件 |
 |---|---|
-| 0.3 Beta 真实 Host 闭环 | 两台 Mac 安装新包，验证 Skill、Markdown 卡片、七项工具与多 Subscription 不串台 |
-| 可追溯消息来源 | 本地账本与 `inspect_message_source` 自动化已通过；默认不改变消息正文，仅在用户主动追问时查询当前 task 最近一条成功投递；待新 App 构建及实机验收 |
+| 产品契约切换 | PRODUCT、Architecture、Roadmap 与 OpenSpec 统一为助理优先 |
+| 本机 AssistantConfig | 模型与 0600 持久化已实现；待 owner UI 接入 |
+| 只读历史检索 | App Server 命令、allowlist、来源和输出上限已实现；待 MCP/UI 接入与真实 task 验收 |
+| 统一对话展示 | 自动建立昵称命名的默认助理频道，双人频道显示“好友”；待真实 UI 验收 |
 
-## 尚未开始
+## 尚未完成
 
-- 静默自更新和 Intel Mac；
-- 账号级跨设备 Membership、邀请和撤权体验；
-- 离线未读摘要和恢复选择 UI；
-- 跨进程原子 claim 与并发孤儿 sidecar 下的严格 exactly-once；
-- Claude Code 与 Cursor Host Connector（coming soon，尚未实现）；
-- 多副本 Channel Service 和共享运行态存储。
+- 个人画像生成、来源查看、纠正和删除；
+- 好友添加流程和对话列表的完整视觉验收；
+- 好友回复草稿、用户确认后发送的产品闭环；
+- App Server 版本兼容、真实 task 读取与撤权验收；
+- 单好友真实端到端收发；
+- E2EE；当前 TLS/鉴权不能宣传为端到端加密；
+- 新助理形态的签名、公证、打包和公开发布。
 
-## 当前技术债务
+## 证据口径
 
-- Codex Desktop IPC 属于私有版本化协议，需要版本探测和升级后的兼容性提示；
-- `CODEX_APP_SERVER_USE_LOCAL_DAEMON=1` 会让 Desktop IPC 无 owner，且旧 daemon task
-  不能假定可迁移到内嵌 runtime；切换后应明确提示新建或重新绑定 task；
-- 回执丢失的极小窗口仍需用户在目标 task 核对后手动选择跳过或重试；
-- 从旧 ad-hoc Beta 首次升级到固定签名时仍可能请求一次 Keychain 授权；固定身份不变的后续 Beta 不应重复请求；
-- 已被替代的 MCP App View 代码仍保留在服务端，但不属于当前产品路线。
-
-## 完成度口径
-
-- 自动化测试通过只代表代码检查通过；
-- Railway 健康只代表服务可访问；
-- Host 接受 start-turn 只代表投递成功；
-- 只有真实用户、真实设备、真实 Host 的双向主动发送与接收闭环才代表 P0 产品完成。
-- `v0.2.0-beta.1` 的 MCP 直接读 Keychain 和重连警告问题已在本地 Beta 分支修复；仍待新包实机验收。
+- 自动化通过只代表代码检查；
+- App Server 能读取 task 只代表本机历史接口可用；
+- Host 接受 turn 只代表投递成功；
+- 只有未授权不可读、撤销立即生效、外部消息不串 task、未经确认不发送都在真实设备通过，
+  才代表 P0 产品完成。

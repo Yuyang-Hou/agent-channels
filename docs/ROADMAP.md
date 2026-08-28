@@ -2,53 +2,31 @@
 
 路线图按用户价值和验收门槛推进，不承诺日期。
 
-## P0：证明会话间协作闭环（当前）
+## P0：个人上下文助理
 
-目标：两个用户现有的 Codex 会话可以跨设备交换消息，且没有空闲 AI 成本。
+目标：用户在一个固定 Codex 任务里使用自己授权的历史，并安全处理一个联系人的消息。
 
-- 完成 Host-neutral `deliver(message)` 边界；
-- 保持 Codex 为唯一 Connector；
-- 完成两个用户、两台设备的双向真实验收；
-- 保持 App 负责持续接收、历史和 Host 投递；MCP 只执行当前 task 的七项显式频道操作，来源查询仅在用户主动追问时读取本地记录；
-- 用产品级 Skill 让 AI 理解完整频道语义，并默认以 Pijoo Markdown 卡片区分外部消息；
-- 创建时填写频道名称；邀请口令直接携带频道，加入者只需粘贴；用户昵称在设置中全局维护；
-- 明确 Host 不可用、授权失效、断线恢复和重复投递状态；
-- 用不依赖 Node、npm、Codex CLI、standalone daemon 或环境变量的菜单栏验收包完成闭环。
+- 登录后自动建立昵称命名的默认助理频道，并复用现有 Subscription 连接一个助理任务；
+- 通过 Codex App Server 发现、授权、只读检索和撤销历史 task；
+- 生成有来源、可纠正、可删除的个人画像草稿；
+- 双人频道显示为“好友”和对方昵称，底层继续使用现有 Channel；
+- 外部回复固定为草稿，用户确认后复用现有可靠发送链路；
+- 完成真实账号、Codex task、联系人和撤权验收。
 
-退出条件：`PRODUCT.md` 中九项 0.3 Beta 完成标准全部通过。
+退出条件：`PRODUCT.md` 的九项 P0 完成标准全部通过。
 
-## P1：变成可日常使用的本地产品
+## P1：日常可用
 
-目标：把本地验收包提升为可公开分发、可长期运行的产品。
+- 历史授权管理、来源跳转和画像纠正体验；
+- 未读摘要、恢复选择、崩溃恢复和可操作错误；
+- 多联系人，但仍由用户确认发送；
+- Developer ID 签名、公证、升级与卸载闭环；
+- 为个人敏感数据的公开使用补齐 E2EE，而不是用 TLS 代替。
 
-- Developer ID 签名、公证、可验证的安装更新和 Intel Mac 取舍；
-- App/sidecar 崩溃恢复、孤儿进程清理和版本升级；
-- 未读数量、漏消息摘要和恢复选择；
-- Connector 兼容性探测与可操作错误提示；
-- 一条公开可复现的安装、卸载和升级路径。
+## Later：受控自动化
 
-P1 不增加第二个 Host，先把 Codex 体验做完整。
+只有草稿模式证明价值且用户明确需要后，才评估自动回复。自动回复至少要求：每联系人隔离会话、
+可撤销 grant、输出策略、审计、速率限制和紧急停用。文件、Shell、浏览器、部署和付款权限继续
+单独授权，不随消息权限继承。
 
-## P2：稳定身份与协作关系
-
-目标：从临时 token 实验升级为可管理的协作产品。
-
-- GitHub OAuth + PKCE 登录；GitHub 只验证稳定 Human，频道服务签发自己的可撤销 Session；
-- Account、设备身份和跨设备 Membership 恢复，本机 Host 会话与消息历史不上传；
-- 持久 Membership、邀请、接受、撤权、账号级封禁和频道所有权转移；
-- 多设备和多个 Conversation Session 的明确绑定规则；
-- 短期消息保留、审计边界和滥用治理；
-- 服务端共享运行态与高可用评估。
-
-详细设计见 [`../openspec/changes/add-github-account-system`](../openspec/changes/add-github-account-system/)。
-
-## Next：Claude Code 与 Cursor
-
-Codex 是当前唯一可用的 Connector。完成 Codex 产品验收后，下一批计划支持 Claude Code 与
-Cursor；具体顺序取决于真实用户需求和目标 Host 的会话发现、消息注入与恢复能力验证。
-
-新增 Host 必须明确它属于原生会话注入、Host 原生 Channel、CLI 恢复还是通知降级，不能降低
-Pijoo 对“持续监听”和“消息驱动”的产品承诺。未完成真实验收前，README 与 App 必须持续标记为
-coming soon，不展示不可用操作。
-
-暂不建设 Connector 市场、通用 SDK、完整聊天客户端或自建模型 Runtime。
+暂不建设第二个 Host、公开目录、完整聊天客户端、Connector 市场、向量数据库或自建模型 Runtime。

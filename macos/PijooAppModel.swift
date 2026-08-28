@@ -20,6 +20,7 @@ final class AppModel: ObservableObject {
     static let shared = AppModel()
 
     @Published var state: AppStateV2
+    @Published private(set) var assistantConfig = AssistantConfig()
     @Published var selectedChannelID: UUID?
     @Published var messages: [ChannelMessageRecord] = []
     @Published var members: [ChannelMember] = []
@@ -132,6 +133,25 @@ final class AppModel: ObservableObject {
     var selectedChannel: ChannelProfile? {
         guard let selectedChannelID else { return nil }
         return state.channels.first { $0.id == selectedChannelID }
+    }
+
+    func isAssistantChannel(_ channelID: UUID) -> Bool {
+        guard let channel = state.channels.first(where: { $0.id == channelID }) else { return false }
+        return channel.channel == assistantConfig.assistantChannelID
+    }
+
+    func channelTitle(_ channel: ChannelProfile) -> String {
+        if channel.channel == assistantConfig.assistantChannelID { return state.defaultCallsign }
+        return channelPresentationTitle(channel, assistantChannelID: assistantConfig.assistantChannelID)
+    }
+
+    func channelKindLabel(_ channel: ChannelProfile) -> String {
+        switch channelPresentationKind(channel, assistantChannelID: assistantConfig.assistantChannelID) {
+        case .assistant: return "助理"
+        case .friend: return "好友"
+        case .group: return "群聊"
+        case .channel: return "频道"
+        }
     }
 
     var selectedSubscriptions: [ChannelSubscription] {
@@ -307,6 +327,7 @@ final class AppModel: ObservableObject {
         if loaded.defaultCallsign.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             loaded.defaultCallsign = session.displayName
         }
+        assistantConfig = AssistantConfigStore.load(accountID: session.accountID)
         replaceVisibleState(loaded)
         persistState()
     }
@@ -314,8 +335,28 @@ final class AppModel: ObservableObject {
     private func lockAccountState() {
         pauseAccountChannels()
         guard state.accountID != nil || !state.channels.isEmpty else { return }
+        assistantConfig = AssistantConfig()
         replaceVisibleState(AppStateV2(defaultCallsign: generatedLocalNickname()))
         persistState()
+    }
+
+    func setAssistantHistoryAccess(_ allowed: Bool, taskID: String) {
+        guard let accountID = accountSession?.accountID else {
+            fail(AppFailure("请先登录后再管理助理历史权限"))
+            return
+        }
+        do {
+            var updated = assistantConfig
+            try updated.setHistoryAccess(allowed, taskID: taskID)
+            try saveAssistantConfig(updated, accountID: accountID)
+        } catch {
+            fail(error)
+        }
+    }
+
+    private func saveAssistantConfig(_ config: AssistantConfig, accountID: String) throws {
+        try AssistantConfigStore.save(config, accountID: accountID)
+        assistantConfig = config
     }
 
     private func reconcileChannelMemberIdentity(
@@ -660,14 +701,6 @@ extension AppModel {
             showNotice(title: "暂不支持", message: "Pijoo 目前还不能向 Claude 会话转发消息。")
             return
         }
-        let panel = NSOpenPanel()
-        panel.message = "选择新会话要使用的工作目录"
-        panel.prompt = "新建会话"
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let workspace = panel.url else { return }
-
         busy = true
         taskCreationStatus = "正在创建专属会话，通常需要几秒…"
         defer {
@@ -675,6 +708,7 @@ extension AppModel {
             taskCreationStatus = ""
         }
         do {
+            try AppPaths.prepare()
             let provider = selectedHostProvider
             guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: provider.bundleIdentifier) else {
                 throw AppFailure("未找到 \(provider.displayName) App")
@@ -686,7 +720,7 @@ extension AppModel {
             let result = try await Sidecar.run([
                 "host-create",
                 "--host-provider", provider.rawValue,
-                "--host-workspace", workspace.path,
+                "--host-workspace", AppPaths.defaultWorkspace.path,
                 "--host-title", "Pijoo · \(profile.displayName)",
                 "--codex-executable", executable.path,
             ])
@@ -976,6 +1010,11 @@ extension AppModel {
             )
             state.tasks.append(task)
         }
+        if profile.channel == assistantConfig.assistantChannelID {
+            let replaced = state.subscriptions.filter { $0.channelID == profile.id && $0.taskID != task.id }
+            for old in replaced { stopListener(old.id) }
+            state.subscriptions.removeAll { $0.channelID == profile.id && $0.taskID != task.id }
+        }
         let subscription: ChannelSubscription
         if let index = state.subscriptions.firstIndex(where: { $0.taskID == task.id && $0.channelID == profile.id }) {
             guard state.subscriptions[index].uncertainMessageID == nil else {
@@ -1009,6 +1048,12 @@ extension AppModel {
             }
         }
         persistState()
+        if profile.channel == assistantConfig.assistantChannelID,
+           let accountID = accountSession?.accountID {
+            var updated = assistantConfig
+            updated.assistantTaskID = task.conversationID
+            try saveAssistantConfig(updated, accountID: accountID)
+        }
         await startListener(subscription.id)
         return state.subscriptions.first(where: { $0.id == subscription.id }) ?? subscription
     }
@@ -1907,24 +1952,41 @@ extension AppModel {
             }
             let displayName = (raw["channel_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let memberName = (raw["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let peerName = (raw["peer_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             return AccountChannelSnapshot(
                 channel: channel,
                 displayName: displayName?.isEmpty == false ? displayName! : channel,
                 membershipID: membershipID,
                 role: role,
-                memberName: memberName?.isEmpty == false ? memberName! : (accountSession?.displayName ?? "Pijoo 用户")
+                memberName: memberName?.isEmpty == false ? memberName! : (accountSession?.displayName ?? "Pijoo 用户"),
+                memberCount: (raw["member_count"] as? NSNumber)?.intValue,
+                peerName: peerName?.isEmpty == false ? peerName : nil
             )
         }
         if state.channels.isEmpty, let restoredName = snapshots.first?.memberName {
             state.defaultCallsign = restoredName
             draftNickname = restoredName
         }
-        let merged = mergedAccountChannels(
+        var merged = mergedAccountChannels(
             state.channels,
             snapshots: snapshots,
             origin: defaultOrigin,
             credentialAccount: accountSessionKey
         )
+        if let assistantChannelID = assistantConfig.assistantChannelID,
+           !merged.contains(where: { $0.channel == assistantChannelID }),
+           let accountID = accountSession?.accountID {
+            var updated = assistantConfig
+            updated.assistantChannelID = nil
+            updated.assistantTaskID = nil
+            try saveAssistantConfig(updated, accountID: accountID)
+        }
+        if let assistantChannelID = assistantConfig.assistantChannelID,
+           let index = merged.firstIndex(where: { $0.channel == assistantChannelID }) {
+            var assistant = merged.remove(at: index)
+            assistant.displayName = state.defaultCallsign
+            merged.insert(assistant, at: 0)
+        }
         if merged != state.channels {
             let activeChannelIDs = Set(merged.map(\.id))
             let removedChannelIDs = Set(state.channels.map(\.id)).subtracting(activeChannelIDs)
@@ -1940,7 +2002,8 @@ extension AppModel {
             try persistStateOrThrow()
             refreshSelectedChannel()
         }
-        for profile in merged { startChannelFeed(profile.id) }
+        _ = try await ensureDefaultAssistantChannel()
+        for profile in state.channels { startChannelFeed(profile.id) }
         for subscription in state.subscriptions where subscription.enabled {
             Task { await startListener(subscription.id) }
         }
@@ -2095,6 +2158,7 @@ extension AppModel {
         }
         for subscription in state.subscriptions { try? MessageLedger.removeDeliveries(subscription.id) }
         state = AppStateV2(defaultCallsign: generatedLocalNickname())
+        assistantConfig = AssistantConfig()
         draftNickname = state.defaultCallsign
         selectedChannelID = nil
         messages = []
@@ -2192,48 +2256,67 @@ extension AppModel {
         busy = true
         defer { busy = false }
         do {
-            let credential = try accountCredential()
-            let nickname = try normalizedDisplayName(state.defaultCallsign, label: "昵称")
             let channelName = try normalizedDisplayName(draftChannelName, label: "频道名称")
-            let url = URL(string: "\(defaultOrigin)/api/channels")!
-            let json = try await requestJSON(
-                url: url,
-                method: "POST",
-                bearer: credential,
-                body: [
-                    "api_version": 2,
-                    "retention": "none",
-                    "trust_mode": "untrusted",
-                    "name": nickname,
-                    "channel_name": channelName,
-                ]
-            )
-            guard let channel = json["channel_id"] as? String,
-                  let memberID = json["member_id"] as? String else {
-                throw AppFailure("服务端未返回频道 Membership")
-            }
-            let profileID = UUID()
-            let profile = ChannelProfile(
-                id: profileID,
-                origin: defaultOrigin,
-                channel: channel,
-                displayName: (json["channel_name"] as? String) ?? channelName,
-                callsign: channelCallsign(memberID),
-                memberID: memberID,
-                role: (json["role"] as? String) ?? "owner",
-                credentialAccount: accountSessionKey,
-                lastViewedMessageID: nil
-            )
-            state.channels.append(profile)
+            _ = try await createOwnedChannel(named: channelName, assistant: false)
             draftChannelName = ""
-            selectedChannelID = profile.id
-            persistState()
-            startChannelFeed(profile.id)
-            refreshSelectedChannel()
             lastError = ""
         } catch {
             fail(error)
         }
+    }
+
+    private func ensureDefaultAssistantChannel() async throws -> ChannelProfile {
+        if let existing = state.channels.first(where: { $0.channel == assistantConfig.assistantChannelID }) {
+            return existing
+        }
+        return try await createOwnedChannel(named: state.defaultCallsign, assistant: true)
+    }
+
+    private func createOwnedChannel(named channelName: String, assistant: Bool) async throws -> ChannelProfile {
+        let credential = try accountCredential()
+        let nickname = try normalizedDisplayName(state.defaultCallsign, label: "昵称")
+        let title = try normalizedDisplayName(channelName, label: "频道名称")
+        let json = try await requestJSON(
+            url: URL(string: "\(defaultOrigin)/api/channels")!,
+            method: "POST",
+            bearer: credential,
+            body: [
+                "api_version": 2,
+                "retention": "none",
+                "trust_mode": "untrusted",
+                "name": nickname,
+                "channel_name": title,
+            ]
+        )
+        guard let channel = json["channel_id"] as? String,
+              let memberID = json["member_id"] as? String else {
+            throw AppFailure("服务端未返回频道 Membership")
+        }
+        let profile = ChannelProfile(
+            id: UUID(),
+            origin: defaultOrigin,
+            channel: channel,
+            displayName: (json["channel_name"] as? String) ?? title,
+            callsign: channelCallsign(memberID),
+            memberID: memberID,
+            role: (json["role"] as? String) ?? "owner",
+            credentialAccount: accountSessionKey,
+            lastViewedMessageID: nil,
+            memberCount: 1
+        )
+        if assistant, let accountID = accountSession?.accountID {
+            var updated = assistantConfig
+            updated.assistantChannelID = channel
+            updated.assistantTaskID = nil
+            try saveAssistantConfig(updated, accountID: accountID)
+        }
+        if assistant { state.channels.insert(profile, at: 0) }
+        else { state.channels.append(profile) }
+        selectedChannelID = profile.id
+        persistState()
+        startChannelFeed(profile.id)
+        refreshSelectedChannel()
+        return profile
     }
 
     func joinInvitation() async {
@@ -2286,6 +2369,10 @@ extension AppModel {
 
     func createInvitation(label: String, maxUses: Int, validHours: Int) async -> Bool {
         guard !busy, let profile = selectedChannel, profile.role == "owner" else { return false }
+        guard !isAssistantChannel(profile.id) else {
+            fail(AppFailure("默认助理频道不能邀请其他成员"))
+            return false
+        }
         let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedLabel.utf16.count <= 64, (1...100).contains(maxUses), (1...720).contains(validHours) else {
             fail(AppFailure("邀请备注最多 64 个字符，可加入人数为 1–100，有效期为 1–720 小时"))
@@ -2325,7 +2412,7 @@ extension AppModel {
     }
 
     func refreshInvitations() async {
-        guard let profile = selectedChannel, profile.role == "owner" else {
+        guard let profile = selectedChannel, profile.role == "owner", !isAssistantChannel(profile.id) else {
             invitations = []
             return
         }
@@ -2520,7 +2607,17 @@ extension AppModel {
                 return
             }
             let data = try JSONSerialization.data(withJSONObject: raw)
-            members = try JSONDecoder().decode([ChannelMember].self, from: data)
+            let decoded = try JSONDecoder().decode([ChannelMember].self, from: data)
+            members = decoded
+            let active = decoded.filter { $0.status == "active" }
+            if let index = state.channels.firstIndex(where: { $0.id == profile.id }) {
+                let peer = active.count == 2 ? active.first { $0.memberID != profile.memberID }?.name : nil
+                if state.channels[index].memberCount != active.count || state.channels[index].peerName != peer {
+                    state.channels[index].memberCount = active.count
+                    state.channels[index].peerName = peer
+                    persistState()
+                }
+            }
         } catch {
             guard !isCancellationError(error), !Task.isCancelled else { return }
             guard selectedChannelID == profile.id else { return }
