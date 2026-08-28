@@ -5,6 +5,7 @@ import Foundation
 @main
 private struct PijooV2SelfTest {
     static func main() throws {
+        precondition(AppPaths.defaultWorkspace.lastPathComponent == "Pijoo")
         let invitation = ChannelInvitation(
             version: 2,
             origin: "https://example.test",
@@ -45,6 +46,15 @@ private struct PijooV2SelfTest {
         )
         precondition(alreadyJoinedChannel([joinedChannel], invitation: invitation))
         precondition(!alreadyJoinedChannel([], invitation: invitation))
+        var assistantChannel = joinedChannel
+        assistantChannel.memberCount = 1
+        assistantChannel.peerName = nil
+        precondition(channelPresentationKind(assistantChannel, assistantChannelID: assistantChannel.channel) == .assistant)
+        precondition(channelPresentationTitle(assistantChannel, assistantChannelID: assistantChannel.channel) == assistantChannel.displayName)
+        assistantChannel.memberCount = 2
+        assistantChannel.peerName = "小明"
+        precondition(channelPresentationKind(assistantChannel, assistantChannelID: nil) == .friend)
+        precondition(channelPresentationTitle(assistantChannel, assistantChannelID: nil) == "小明")
         let restoredID = UUID(uuidString: "87654321-0000-0000-0000-000000000000")!
         let restoredChannels = mergedAccountChannels(
             [joinedChannel],
@@ -85,6 +95,14 @@ private struct PijooV2SelfTest {
         let accountLocalData = try JSONEncoder().encode(accountLocalState)
         let restoredAccountLocalState = try JSONDecoder().decode(AppStateV2.self, from: accountLocalData)
         precondition(restoredAccountLocalState.accountID == "account-a")
+
+        var assistantConfig = AssistantConfig()
+        precondition(assistantConfig.allowedHistoryTaskIDs.isEmpty)
+        try assistantConfig.setHistoryAccess(true, taskID: "01900000-0000-7000-8000-000000000001")
+        try assistantConfig.setHistoryAccess(true, taskID: "01900000-0000-7000-8000-000000000001")
+        precondition(assistantConfig.allowedHistoryTaskIDs == ["01900000-0000-7000-8000-000000000001"])
+        try assistantConfig.setHistoryAccess(false, taskID: "01900000-0000-7000-8000-000000000001")
+        precondition(assistantConfig.allowedHistoryTaskIDs.isEmpty)
         let unboundSend = try outboundSelection(
             taskID: nil,
             explicitChannelID: joinedChannel.id,

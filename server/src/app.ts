@@ -213,16 +213,24 @@ export function createApp(opts: AppOptions): Hono {
       return c.json({
         channels: memberships.flatMap((membership) => {
           if (!channelExists(membership.channelId)) return [];
-          const member = listChannelMembers(membership.channelId).find(
-            (candidate) => candidate.member_id === membership.membershipId && candidate.status === "active",
+          const activeMembers = listChannelMembers(membership.channelId).filter(
+            (candidate) => candidate.status === "active",
+          );
+          const member = activeMembers.find(
+            (candidate) => candidate.member_id === membership.membershipId,
           );
           if (!member) return [];
+          const peer = activeMembers.length === 2
+            ? activeMembers.find((candidate) => candidate.member_id !== membership.membershipId)
+            : undefined;
           return [{
             channel_id: membership.channelId,
             channel_name: getChannelName(membership.channelId),
             membership_id: membership.membershipId,
             role: membership.role,
             name: member.name,
+            member_count: activeMembers.length,
+            ...(peer ? { peer_name: peer.name } : {}),
           }];
         }),
       });

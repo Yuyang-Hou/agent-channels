@@ -65,6 +65,7 @@ usage:
   rogerthat host-create [options]      # create a new Host conversation
   rogerthat host-preflight [options]   # verify a Host conversation without a turn
   rogerthat host-conversations [opts]  # search local Host conversations
+  rogerthat assistant-history [opts]   # search user-authorized Codex history
   rogerthat host-state [options]       # read or update a loaded Host conversation
   rogerthat channel-mcp [options]      # run the local one-tool channel MCP over stdio
 
@@ -261,6 +262,50 @@ async function main(): Promise<void> {
           workspace: item.workspace,
         })),
       }));
+      process.exit(0);
+    } catch (error) {
+      console.error(`error: ${(error as Error).message}`);
+      process.exit(1);
+    }
+  }
+  if (first === "assistant-history") {
+    const { parseArgs } = await import("node:util");
+    let parsed;
+    try {
+      parsed = parseArgs({
+        args: process.argv.slice(3),
+        options: {
+          config: { type: "string" },
+          query: { type: "string" },
+          "codex-executable": { type: "string" },
+          help: { type: "boolean", short: "h" },
+        },
+        strict: true,
+        allowPositionals: false,
+      });
+    } catch (error) {
+      console.error(`error: ${(error as Error).message}`);
+      process.exit(2);
+    }
+    if (parsed.values.help) {
+      console.log("usage: rogerthat assistant-history --config <assistant.json> --query <text> --codex-executable <absolute path>");
+      process.exit(0);
+    }
+    const configPath = parsed.values.config;
+    const query = parsed.values.query;
+    const executable = parsed.values["codex-executable"];
+    if (!configPath || !query || !executable) {
+      console.error("error: --config, --query and --codex-executable are required");
+      process.exit(2);
+    }
+    try {
+      const { loadAssistantConfig, searchCodexHistoryViaAppServer } = await import("./codex-history.js");
+      const response = await searchCodexHistoryViaAppServer({
+        config: loadAssistantConfig(configPath),
+        query,
+        codexExecutable: executable,
+      });
+      console.log(JSON.stringify({ ok: true, ...response }));
       process.exit(0);
     } catch (error) {
       console.error(`error: ${(error as Error).message}`);

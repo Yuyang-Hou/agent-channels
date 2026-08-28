@@ -1,23 +1,23 @@
 schema: spec-driven
 
 context: |
-  Product: Pijoo, a product that lets users connect their existing AI conversations through collaboration channels.
-  Current phase: package the validated P0 Codex path as the first local macOS product; Codex remains the only validated Host Connector.
+  Product: Pijoo, a personal context assistant that lives in one dedicated Codex task.
+  Current phase: reuse the shipped Channel model for every conversation; present a designated single-member channel as My Assistant and a two-member channel as a Friend.
   Product authority: PRODUCT.md.
   Development status authority: docs/STATUS.md.
   Roadmap authority: docs/ROADMAP.md.
   Architecture authority: ARCHITECTURE.md.
-  Core boundary: channels and memberships may persist, but AI conversation sessions are ephemeral subscribers.
-  The current package is a clean-slate multi-channel macOS app with task-channel subscriptions. It still excludes additional Host Connectors, a custom model runtime, always-on offline AI and a full chat client.
+  Core boundary: Codex history is local, read-only and task-allowlisted; external messages use the existing relay; outbound replies require user confirmation.
 
 rules:
   proposal:
-    - State which open product questions become decisions.
-    - List explicit non-goals and Host capability assumptions.
+    - State which user-facing channel concepts are removed or hidden.
+    - List explicit non-goals and the minimum reusable transport foundation.
   design:
-    - Explain identity, trust boundaries, message retention, delivery semantics and reconnect behavior.
-    - Separate durable channel membership from ephemeral conversation subscriptions.
+    - Explain local history authorization, source attribution, revocation and relay trust boundaries.
+    - Keep history reading, outbound sending and tool execution as separate grants.
   specs:
-    - Every requirement must include success, disconnect/reconnect and authorization scenarios where applicable.
+    - Every authorization requirement must include denied and revoked scenarios.
+    - Every outbound requirement must include a no-confirmation scenario.
   tasks:
-    - Validate the real Host Connector path before building broader channel features.
+    - Deliver the smallest real Codex history slice before changing the full macOS UI.

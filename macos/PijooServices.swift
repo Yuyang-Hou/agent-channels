@@ -18,6 +18,8 @@ enum AppPaths {
     static let messages = support.appendingPathComponent("messages", isDirectory: true)
     static let logs = support.appendingPathComponent("logs", isDirectory: true)
     static let updates = support.appendingPathComponent("updates", isDirectory: true)
+    static let defaultWorkspace = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Pijoo", isDirectory: true)
     static let pendingUpdateDMG = updates.appendingPathComponent("pending-update.dmg")
     static let pendingUpdate = updates.appendingPathComponent("pending-update.json")
     static let updateError = updates.appendingPathComponent("last-error.txt")
@@ -43,6 +45,11 @@ enum AppPaths {
         return accountStates.appendingPathComponent("\(digest).json")
     }
 
+    static func assistantConfig(_ accountID: String) -> URL {
+        let digest = SHA256.hash(data: Data(accountID.utf8)).map { String(format: "%02x", $0) }.joined()
+        return accountStates.appendingPathComponent("\(digest)-assistant.json")
+    }
+
     static func prepare() throws {
         try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: support.path)
@@ -52,6 +59,33 @@ enum AppPaths {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: accountStates.path)
         try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: logs.path)
+        try FileManager.default.createDirectory(at: defaultWorkspace, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: defaultWorkspace.path)
+    }
+}
+
+enum AssistantConfigStore {
+    static func load(accountID: String) -> AssistantConfig {
+        let url = AppPaths.assistantConfig(accountID)
+        guard let data = try? Data(contentsOf: url),
+              let config = try? JSONDecoder().decode(AssistantConfig.self, from: data),
+              config.version == 1,
+              config.replyMode == .draft else {
+            return AssistantConfig()
+        }
+        return config
+    }
+
+    static func save(_ config: AssistantConfig, accountID: String) throws {
+        guard config.version == 1, config.replyMode == .draft else {
+            throw AppFailure("助理配置版本不受支持")
+        }
+        try AppPaths.prepare()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        let url = AppPaths.assistantConfig(accountID)
+        try encoder.encode(config).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 }
 

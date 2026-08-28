@@ -191,6 +191,8 @@ struct ChannelProfile: Codable, Equatable, Identifiable {
     var role: String
     var credentialAccount: String
     var lastViewedMessageID: Int64?
+    var memberCount: Int? = nil
+    var peerName: String? = nil
 }
 
 struct AccountChannelSnapshot: Equatable {
@@ -199,6 +201,31 @@ struct AccountChannelSnapshot: Equatable {
     let membershipID: String
     let role: String
     let memberName: String
+    var memberCount: Int? = nil
+    var peerName: String? = nil
+}
+
+enum ChannelPresentationKind: Equatable {
+    case assistant, friend, group, channel
+}
+
+func channelPresentationKind(_ channel: ChannelProfile, assistantChannelID: String?) -> ChannelPresentationKind {
+    if channel.channel == assistantChannelID { return .assistant }
+    switch channel.memberCount {
+    case 2: return .friend
+    case let count? where count > 2: return .group
+    default: return .channel
+    }
+}
+
+func channelPresentationTitle(_ channel: ChannelProfile, assistantChannelID: String?) -> String {
+    switch channelPresentationKind(channel, assistantChannelID: assistantChannelID) {
+    case .assistant: return channel.displayName
+    case .friend: return channel.peerName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        ? channel.peerName!
+        : channel.displayName
+    case .group, .channel: return channel.displayName
+    }
 }
 
 func channelCallsign(_ membershipID: String) -> String {
@@ -218,6 +245,8 @@ func mergedAccountChannels(
             channel.memberID = snapshot.membershipID
             channel.role = snapshot.role
             channel.credentialAccount = credentialAccount
+            channel.memberCount = snapshot.memberCount
+            channel.peerName = snapshot.peerName
             return channel
         }
         return ChannelProfile(
@@ -229,7 +258,9 @@ func mergedAccountChannels(
             memberID: snapshot.membershipID,
             role: snapshot.role,
             credentialAccount: credentialAccount,
-            lastViewedMessageID: nil
+            lastViewedMessageID: nil,
+            memberCount: snapshot.memberCount,
+            peerName: snapshot.peerName
         )
     }
 }
@@ -364,6 +395,35 @@ struct AppStateV2: Codable, Equatable {
     var tasks: [TaskBinding] = []
     var subscriptions: [ChannelSubscription] = []
     var selectedChannelID: UUID?
+}
+
+enum AssistantReplyMode: String, Codable {
+    case draft
+}
+
+struct AssistantConfig: Codable, Equatable {
+    var version = 1
+    var assistantTaskID: String? = nil
+    var assistantChannelID: String? = nil
+    var allowedHistoryTaskIDs: [String] = []
+    var replyMode: AssistantReplyMode = .draft
+
+    enum CodingKeys: String, CodingKey {
+        case version
+        case assistantTaskID = "assistant_task_id"
+        case assistantChannelID = "assistant_channel_id"
+        case allowedHistoryTaskIDs = "allowed_history_task_ids"
+        case replyMode = "reply_mode"
+    }
+
+    mutating func setHistoryAccess(_ allowed: Bool, taskID rawTaskID: String) throws {
+        guard let taskID = UUID(uuidString: rawTaskID)?.uuidString.lowercased() else {
+            throw AppFailure("Codex task ID 无效")
+        }
+        allowedHistoryTaskIDs.removeAll { $0.caseInsensitiveCompare(taskID) == .orderedSame }
+        if allowed { allowedHistoryTaskIDs.append(taskID) }
+        allowedHistoryTaskIDs.sort()
+    }
 }
 
 func outboundSelection(
