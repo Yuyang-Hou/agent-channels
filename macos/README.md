@@ -89,7 +89,7 @@ Mac 上新建频道、成员和 task 绑定，不复用 0.2 配置。
 Bundle ID、版本、完整代码签名和当前 App 的 designated requirement，通过后替换 App 并自动
 重新打开；失败时保留旧 App 并展示错误。
 
-App 图标使用不透明背景的圆身传信鸽品牌稿；README 使用透明品牌图，菜单栏使用同一识别特征的单色 SVG，并由 macOS 作为模板图标渲染。
+App 图标与 README 使用原版传信鸽加小尾巴品牌稿；菜单栏使用同一识别特征的单色 SVG，并由 macOS 作为模板图标渲染。
 
 [`v0.3.0-beta.23`](https://github.com/Yuyang-Hou/pijoo/releases/tag/v0.3.0-beta.23)
 已作为 Developer ID 签名并公证的 GitHub prerelease 发布。预上线分发只使用 Beta 标签；首次从旧
