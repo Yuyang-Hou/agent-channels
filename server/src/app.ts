@@ -756,6 +756,32 @@ export function createApp(opts: AppOptions): Hono {
     return member ? c.json({ ok: true, member }) : c.json({ error: "active member not found" }, 404);
   });
 
+  app.delete("/api/channels/:id/members/me", async (c) => {
+    const channelId = c.req.param("id");
+    const principal = await requireChannelPrincipal(c, channelId);
+    if (principal instanceof Response) return principal;
+    if (principal.isPublic) return c.json({ error: "public bands do not have managed members" }, 400);
+    if (principal.role === "owner") {
+      return c.json({ error: "owner must transfer ownership before leaving" }, 409);
+    }
+    if (!opts.accountAuth) return c.json({ error: "account membership is unavailable" }, 409);
+    return serializeMembershipMutation(async () => {
+      const membership = await opts.accountAuth!.store.setMembershipStatus(
+        channelId,
+        principal.memberId,
+        "removed",
+      );
+      if (!membership) return c.json({ error: "membership not found" }, 404);
+      const member = setMemberStatus(channelId, principal.memberId, "removed");
+      if (!member) {
+        await opts.accountAuth!.store.setMembershipStatus(channelId, principal.memberId, "active");
+        return c.json({ error: "active member not found" }, 409);
+      }
+      invalidateMemberSessions(channelId, principal.memberId);
+      return c.json({ ok: true });
+    });
+  });
+
   app.delete("/api/channels/:id/members/:memberId", async (c) => {
     const channelId = c.req.param("id");
     const owner = await requireOwner(c, channelId);

@@ -38,6 +38,20 @@ active Membership 授权 session、send、listen、history、member 和 invite �
 - **WHEN** 它从任意 Device 使用任意新邀请加入
 - **THEN** 服务拒绝且不消耗邀请次数，直到 owner 解除封禁
 
+#### Scenario: 普通成员主动退出频道
+
+- **GIVEN** Account 持有目标频道的 active member Membership
+- **WHEN** 用户确认退出频道
+- **THEN** 服务把 Membership 设为 removed，并关闭该成员所有在线 session 和 stream
+- **AND** App 停止并隐藏该频道的本机连接与 Subscription，后续登录不再恢复该频道
+- **AND** 用户只有持有效新邀请才能重新加入，本机消息文件不会因退出被主动删除
+
+#### Scenario: owner 尝试直接退出频道
+
+- **GIVEN** Account 是目标频道的 owner
+- **WHEN** 用户尝试退出频道
+- **THEN** 服务拒绝并要求先转移所有权，频道始终保留一个 owner
+
 #### Scenario: 未授权访问
 
 - **GIVEN** 请求缺少 active Session、Device 已撤销或 Account 没有目标频道 active Membership
