@@ -143,6 +143,11 @@ GitHub 名称变化自动覆盖。发送消息时服务端把当时昵称写入 
 - 已 banned：返回 `account_banned_from_channel`，不消耗次数；
 - 是 owner：幂等返回现有 Membership。
 
+普通 member 可以主动退出频道：服务把 Membership 置为 removed，关闭该成员所有在线 session 和
+stream，App 在服务端确认后停止并隐藏本机连接与 Subscription，但不主动删除本机消息文件。
+owner 在所有权转移完成前不能退出，避免频道失去唯一 owner。本机不再提供会被云端 active
+Membership 自动恢复的“仅移除”动作。
+
 因此封禁针对稳定 Account，而不是某份凭证；同一 Account 换设备或换邀请都不能绕过。解除封禁
 恢复为 active。移除用于普通离开或 owner 清退，允许以后由新邀请重新加入。它不承诺识别同一
 自然人控制的另一个 GitHub 账号。

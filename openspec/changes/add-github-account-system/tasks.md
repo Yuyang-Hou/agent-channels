@@ -41,6 +41,7 @@
 - [x] 登录新 Mac 后恢复 ChannelConnection，但明确要求用户重新“转发到会话”
 - [x] Session 失效删除账号 Keychain credential，但不删除本地消息、TaskBinding 或 Subscription
 - [x] 未登录时停止 Feed/Subscription 并隐藏频道，本机状态按 Account id 隔离
+- [x] 普通成员可主动退出云端 Membership；App 不再提供仅本机移除，owner 须先转移所有权
 
 ## 6. Acceptance And Cutover
 

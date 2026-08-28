@@ -334,6 +334,34 @@ describe("GitHub account login", () => {
       }],
     });
 
+    expect((await app.request(`/api/channels/${channel.channel_id}/members/me`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${ownerCredential}` },
+    })).status).toBe(409);
+    expect((await app.request(`/api/channels/${channel.channel_id}/members/me`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${memberCredential}` },
+    })).status).toBe(200);
+    expect(await (await app.request("/v1/channels", {
+      headers: { authorization: `Bearer ${memberCredential}` },
+    })).json()).toEqual({ channels: [] });
+    expect((await app.request(`/api/channels/${channel.channel_id}/history`, {
+      headers: { authorization: `Bearer ${memberCredential}` },
+    })).status).toBe(401);
+
+    const returnInviteResponse = await app.request(`/api/channels/${channel.channel_id}/invites`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ownerCredential}` },
+    });
+    const returnInvite = await returnInviteResponse.json() as { invite_token: string };
+    const returned = await app.request(`/api/channels/${channel.channel_id}/invites/redeem`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${memberCredential}`, "content-type": "application/json" },
+      body: JSON.stringify({ invite_token: returnInvite.invite_token, name: "Member returned" }),
+    });
+    expect(returned.status).toBe(200);
+    expect(await returned.json()).toMatchObject({ member_id: membership.member_id, name: "Member returned" });
+
     expect((await app.request(`/api/channels/${channel.channel_id}/members/${membership.member_id}`, {
       method: "DELETE",
       headers: { authorization: `Bearer ${ownerCredential}` },

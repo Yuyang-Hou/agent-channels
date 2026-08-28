@@ -2363,37 +2363,28 @@ extension AppModel {
         }
     }
 
-    func removeSelectedChannel() {
+    func leaveSelectedChannel() async {
+        guard !busy else { return }
         guard let profile = selectedChannel else { return }
+        guard profile.role != "owner" else {
+            showNotice(title: "无法退出频道", message: "请先把所有权转移给其他成员。")
+            return
+        }
         let alert = NSAlert()
-        alert.messageText = "从本机移除 \(profile.displayName)？"
-        alert.informativeText = "将停止该频道向全部会话的消息转发，并删除本机频道连接与消息历史；云端 Membership 仍会保留。"
-        alert.addButton(withTitle: "移除")
+        alert.messageText = "退出 \(profile.displayName)？"
+        alert.informativeText = "将退出该频道并停止所有会话转发，频道不再显示；以后需要新邀请才能重新加入。本机消息文件不会主动删除。"
+        alert.addButton(withTitle: "退出频道")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        feedTasks.removeValue(forKey: profile.id)?.cancel()
-        channelStatus.removeValue(forKey: profile.id)
-        for subscription in state.subscriptions where subscription.channelID == profile.id {
-            stopListener(subscription.id)
-            try? MessageLedger.removeDeliveries(subscription.id)
+        busy = true
+        defer { busy = false }
+        do {
+            let credential = try accountCredential()
+            _ = try await authorizedJSON(profile, suffix: "members/me", method: "DELETE")
+            try await syncAccountChannels(credential: credential)
+        } catch {
+            fail(error)
         }
-        if profile.credentialAccount != accountSessionKey {
-            try? KeychainStore.delete(service: keychainService, account: profile.credentialAccount)
-        }
-        try? MessageLedger.remove(profile.id)
-        let removedTaskIDs = Set(state.subscriptions.filter { $0.channelID == profile.id }.map(\.taskID))
-        state.subscriptions.removeAll { $0.channelID == profile.id }
-        state.channels.removeAll { $0.id == profile.id }
-        state.tasks.removeAll { task in
-            removedTaskIDs.contains(task.id) && !state.subscriptions.contains { $0.taskID == task.id }
-        }
-        for taskID in removedTaskIDs where !state.tasks.contains(where: { $0.id == taskID }) {
-            hostConversationStates.removeValue(forKey: taskID)
-            automaticallyReconnectingTaskIDs.remove(taskID)
-        }
-        selectedChannelID = state.channels.first?.id
-        persistState()
-        refreshSelectedChannel()
     }
 
     func renameSelectedChannel() {

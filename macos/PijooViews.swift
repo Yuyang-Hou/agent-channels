@@ -508,7 +508,11 @@ struct ChannelDetailView: View {
                             .disabled(model.messages.isEmpty)
                     }
                     Divider()
-                    Button("移除本机频道", role: .destructive) { model.removeSelectedChannel() }
+                    Button("退出频道", role: .destructive) {
+                        Task { await model.leaveSelectedChannel() }
+                    }
+                    .disabled(channel.role == "owner" || model.busy)
+                    .help(channel.role == "owner" ? "请先转移频道所有权" : "退出后需要新邀请才能重新加入")
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
