@@ -1,3 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Pijoo round-bodied pigeon">
-  <path fill="black" fill-rule="evenodd" d="M13 37c3-3 7-6 12-6 1-10 9-17 20-17 7 0 13 3 17 8 21 0 39 11 47 29 4 9 5 19 2 27 5 0 9 3 12 6-3 3-7 5-11 6 4 2 7 4 9 7-5 4-11 5-17 3-9 10-22 15-38 16-26 0-45-16-49-39-2-11-1-23 5-33-4 0-7-2-9-4-1-1-1-2 0-3ZM37 26a5 5 0 1 0 0 10 5 5 0 1 0 0-10Z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Pijoo pigeon with tail">
+  <path fill="black" d="M109 79c6-2 12 0 16 4-4 4-9 6-15 6 5 1 10 4 13 8-5 3-11 3-16 1Z"/>
+  <path fill="black" fill-rule="evenodd" d="M76.6 16.2c25.2 0 41.4 18 41.4 45 0 28.8-18.9 48.6-46.8 48.6-27 0-45-18-45-45 0-28.8 19.8-48.6 50.4-48.6ZM54 39.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 1 0 0-17ZM51.8 45.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 1 0 0-4.8Z"/>
+  <path fill="black" d="M31 55c-6 0-13 3-19 7-3 2-3 5 0 7 6 4 13 6 19 5 5-1 9-5 9-10s-4-8-9-9Z"/>
 </svg>

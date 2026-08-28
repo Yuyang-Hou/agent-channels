@@ -147,7 +147,7 @@ App MUST 提供正式版和 Beta 两个独立的手动检查入口，并且 MUST
 
 ### Requirement: 品牌图标
 
-App MUST 使用仓库现有圆身传信鸽图作为 App icon，并使用同轮廓的单色 SVG Template Image
+App MUST 使用仓库现有原版传信鸽加小尾巴图作为 App icon，并使用同轮廓的单色 SVG Template Image
 作为菜单栏常态图标。
 
 #### Scenario: 明暗菜单栏
