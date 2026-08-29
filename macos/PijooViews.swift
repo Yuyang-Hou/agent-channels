@@ -128,7 +128,7 @@ struct MainWindowView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
-                .background(.orange.opacity(0.12))
+                .background(.orange.opacity(0.12), ignoresSafeAreaEdges: [])
                 Divider()
             }
             if model.recoveryPendingMessageCount > 0 {
