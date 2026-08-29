@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { lstatSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -67,15 +67,24 @@ function permissionState(
 ): CodexPermission {
   const sandboxType = isRecord(sandboxPolicy) ? sandboxPolicy.type : undefined;
   const profileId = isRecord(activePermissionProfile) ? activePermissionProfile.id : undefined;
+  const dangerSandbox = sandboxType === "dangerFullAccess"
+    || sandboxType === "danger-full-access"
+    || profileId === ":danger-full-access";
+  const workspaceSandbox = !dangerSandbox && (
+    sandboxType === "workspaceWrite"
+    || sandboxType === "workspace-write"
+    || profileId === ":workspace"
+  );
   if (
     approvalMode === "never" &&
-    (sandboxType === "dangerFullAccess" || sandboxType === "danger-full-access" || profileId === ":danger-full-access")
+    dangerSandbox
   ) return "full-access";
   if (
     approvalMode === "on-request" &&
+    workspaceSandbox &&
     (approvalsReviewer === "auto_review" || approvalsReviewer === "guardian_subagent")
   ) return "approve-for-me";
-  if (approvalMode === "on-request" && approvalsReviewer === "user") return "request-approval";
+  if (approvalMode === "on-request" && workspaceSandbox && approvalsReviewer === "user") return "request-approval";
   return "unknown";
 }
 
@@ -232,30 +241,10 @@ export async function createCodexThread(options: {
           threadId = thread.id.toLowerCase();
           send({
             id: 3,
-            method: "thread/inject_items",
-            params: {
-              threadId,
-              items: [{
-                type: "message",
-                role: "developer",
-                content: [{
-                  type: "input_text",
-                  text: "This Codex task was created by Pijoo as a dedicated channel conversation.",
-                }],
-              }],
-            },
-          });
-        } else if (message.id === 3) {
-          if (message.error !== undefined) {
-            fail(new Error(`Codex app-server thread/inject_items failed: ${responseErrorMessage(message.error)}`));
-            return;
-          }
-          send({
-            id: 4,
             method: "thread/name/set",
             params: { threadId, name: title },
           });
-        } else if (message.id === 4) {
+        } else if (message.id === 3) {
           if (message.error !== undefined) {
             fail(new Error(`Codex app-server thread/name/set failed: ${responseErrorMessage(message.error)}`));
             return;
@@ -290,6 +279,8 @@ export function createCodexDelivery(options: {
   socketPath?: string;
   channelName?: string;
   messageTemplate?: string;
+  expectedWorkspace?: string;
+  expectedPermission?: Exclude<CodexPermission, "unknown">;
 }): HostDelivery {
   const threadId = parseCodexThreadId(options.threadId);
   const sourceThreadId = options.sourceThreadId
@@ -298,6 +289,19 @@ export function createCodexDelivery(options: {
   requireCodexSocket(options.socketPath);
 
   return serializeHostDelivery(async (message) => {
+    if (options.expectedWorkspace || options.expectedPermission) {
+      const state = await getCodexConversationState({ threadId, socketPath: options.socketPath });
+      if (!state.connected) throw new Error("Pijoo managed task is not connected");
+      if (options.expectedWorkspace) {
+        const workspace = state.workspace && realpathSync(state.workspace);
+        if (workspace !== realpathSync(options.expectedWorkspace)) {
+          throw new Error("Pijoo managed task workspace changed; restore it in the local app");
+        }
+      }
+      if (options.expectedPermission && state.permission !== options.expectedPermission) {
+        throw new Error("Pijoo managed task permission changed; restore it in the local app");
+      }
+    }
     const text = formatChannelMessage({
       channel: options.channelName || message.channelId,
       id: message.messageId,

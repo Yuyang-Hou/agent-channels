@@ -2,7 +2,7 @@ schema: spec-driven
 
 context: |
   Product: Pijoo, a personal context assistant that lives in one dedicated Codex task.
-  Current phase: reuse the shipped Channel model for every conversation; present a designated single-member channel as My Assistant and a two-member channel as a Friend.
+  Current phase: keep the default channel assistant in an app-managed workspace; treat other Codex tasks as allowlisted read-only sources, never as channel execution targets.
   Product authority: PRODUCT.md.
   Development status authority: docs/STATUS.md.
   Roadmap authority: docs/ROADMAP.md.
@@ -16,6 +16,7 @@ rules:
   design:
     - Explain local history authorization, source attribution, revocation and relay trust boundaries.
     - Keep history reading, outbound sending and tool execution as separate grants.
+    - Treat AGENTS.md as identity context, not as a sandbox or authorization boundary.
     - Reuse the existing Hono service and Channel APIs before adding any Web-specific service or protocol.
   specs:
     - Every authorization requirement must include denied and revoked scenarios.

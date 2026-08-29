@@ -90,15 +90,10 @@ process.stdin.on("data", (chunk) => {
         ? { id: 2, result: { thread: { id: ${JSON.stringify(THREAD_ID)} } } }
         : { id: 2, error: { message: "invalid params" } }) + "\\n");
     } else if (message.id === 3) {
-      const valid = message.method === "thread/inject_items"
-        && message.params.threadId === ${JSON.stringify(THREAD_ID)}
-        && message.params.items?.[0]?.role === "developer";
-      process.stdout.write(JSON.stringify(valid ? { id: 3, result: {} } : { id: 3, error: { message: "invalid history" } }) + "\\n");
-    } else if (message.id === 4) {
       const valid = message.method === "thread/name/set"
         && message.params.threadId === ${JSON.stringify(THREAD_ID)}
         && message.params.name === "Pijoo · frontend";
-      process.stdout.write(JSON.stringify(valid ? { id: 4, result: {} } : { id: 4, error: { message: "invalid name" } }) + "\\n");
+      process.stdout.write(JSON.stringify(valid ? { id: 3, result: {} } : { id: 3, error: { message: "invalid name" } }) + "\\n");
     }
   }
 });
@@ -275,7 +270,15 @@ process.stdin.on("data", (chunk) => {
                 revision: 1,
                 conversationState: {
                   cwd: "/tmp/workspace",
-                  latestThreadSettings: permission === "approve-for-me"
+                  latestThreadSettings: permission === "unsafe"
+                    ? {
+                        cwd: "/tmp/workspace",
+                        approvalPolicy: "on-request",
+                        approvalsReviewer: "user",
+                        sandboxPolicy: { type: "dangerFullAccess" },
+                        activePermissionProfile: { id: ":danger-full-access", extends: null },
+                      }
+                    : permission === "approve-for-me"
                     ? {
                         cwd: "/tmp/workspace",
                         approvalPolicy: "on-request",
@@ -362,6 +365,12 @@ process.stdin.on("data", (chunk) => {
       workspace: "/tmp/workspace",
       permission: "approve-for-me",
     });
+    permission = "unsafe";
+    await expect(getCodexConversationState({ threadId: THREAD_ID, socketPath })).resolves.toEqual({
+      connected: true,
+      workspace: "/tmp/workspace",
+      permission: "unknown",
+    });
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
     expect(methods).toEqual([
       "initialize",
@@ -369,8 +378,97 @@ process.stdin.on("data", (chunk) => {
       "initialize",
       "thread-owner-discovery",
       "thread-follower-update-thread-settings",
+      "initialize",
+      "thread-owner-discovery",
     ]);
-    expect(following).toEqual([true, false, true, false]);
+    expect(following).toEqual([true, false, true, false, true, false]);
+  });
+
+  it("blocks managed delivery when the live workspace changed", async () => {
+    const socketPath = join(mkdtempSync(join(tmpdir(), "rogerthat-codex-")), "ipc.sock");
+    const expectedWorkspace = mkdtempSync(join(tmpdir(), "pijoo-managed-"));
+    const actualWorkspace = mkdtempSync(join(tmpdir(), "pijoo-other-"));
+    const server = createServer();
+    const sockets = new Set<Socket>();
+    const methods: string[] = [];
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+      readFrames(socket, (message) => {
+        if (message.type === "broadcast" && message.method === "thread-stream-following-changed") {
+          const params = message.params as { following?: boolean };
+          if (!params.following) return;
+          socket.write(frame({
+            type: "broadcast",
+            method: "thread-stream-state-changed",
+            sourceClientId: "desktop-owner",
+            targetClientIds: ["bridge-client"],
+            version: 11,
+            params: {
+              hostId: "local",
+              conversationId: THREAD_ID,
+              change: {
+                type: "snapshot",
+                revision: 1,
+                conversationState: {
+                  cwd: actualWorkspace,
+                  latestThreadSettings: {
+                    cwd: actualWorkspace,
+                    approvalPolicy: "on-request",
+                    approvalsReviewer: "user",
+                    sandboxPolicy: { type: "workspaceWrite" },
+                    activePermissionProfile: { id: ":workspace", extends: null },
+                  },
+                },
+              },
+            },
+          }));
+          return;
+        }
+        if (message.type !== "request" || typeof message.method !== "string") return;
+        methods.push(message.method);
+        const requestId = String(message.requestId);
+        if (message.method === "initialize") {
+          socket.write(frame({
+            type: "response",
+            requestId,
+            resultType: "success",
+            method: "initialize",
+            result: { clientId: "bridge-client" },
+          }));
+        } else if (message.method === "thread-owner-discovery") {
+          socket.write(frame({
+            type: "response",
+            requestId,
+            resultType: "success",
+            method: "thread-owner-discovery",
+            handledByClientId: "desktop-owner",
+            result: {},
+          }));
+        }
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    closers.push(() => new Promise<void>((resolve) => {
+      for (const socket of sockets) socket.destroy();
+      server.close(() => resolve());
+    }));
+
+    const delivery = createCodexDelivery({
+      threadId: THREAD_ID,
+      socketPath,
+      expectedWorkspace,
+      expectedPermission: "request-approval",
+    });
+    await expect(delivery({
+      channelId: "test-channel",
+      messageId: 9,
+      from: "backend",
+      text: "do not deliver",
+      receivedAt: Date.now(),
+      untrusted: true,
+    })).rejects.toThrow("workspace changed");
+    expect(methods).toEqual(["initialize", "thread-owner-discovery"]);
   });
 
   it("discovers the Desktop owner and starts exactly one targeted turn", async () => {
