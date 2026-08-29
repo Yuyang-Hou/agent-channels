@@ -80,8 +80,6 @@ describe("channel MCP", () => {
     expect(tools.map((tool) => tool.name)).toEqual([
       "send_to_channel",
       "list_channels",
-      "subscribe_to_channel",
-      "unsubscribe_from_channel",
       "get_channel_settings",
       "update_channel_settings",
       "inspect_message_source",
@@ -94,15 +92,11 @@ describe("channel MCP", () => {
         properties: { mentions: { maxItems: 100, uniqueItems: true } },
       },
     });
-    expect(tools[5]).toMatchObject({
+    expect(tools[3]).toMatchObject({
       inputSchema: {
         required: ["channel"],
         properties: {
           sent_message_template: { type: "string" },
-          self_message_policy: {
-            enum: ["include_other_endpoints", "exclude_member"],
-          },
-          receive_scope: { enum: ["all_messages", "mentions_only"] },
           default_send: { type: "boolean" },
         },
       },
@@ -224,23 +218,17 @@ describe("channel MCP", () => {
     const handle = createReplyMcpHandler({ requestApp });
 
     await handle(toolCall("list_channels", { channel: "frontend" }));
-    await handle(toolCall("subscribe_to_channel", { channel: "frontend" }));
-    await handle(toolCall("unsubscribe_from_channel", { channel: "frontend" }));
     await handle(toolCall("get_channel_settings", { channel: "frontend" }));
     await handle(toolCall("update_channel_settings", {
       channel: "frontend",
       template: "服务端说：{{message}}",
       sent_message_template: "已发到频道：{message_text}",
-      self_message_policy: "include_other_endpoints",
-      receive_scope: "mentions_only",
       default_send: true,
     }));
 
     const source = { provider: "codex", conversationId: THREAD_ID };
     expect(requestApp.mock.calls.map(([request]) => request)).toEqual([
       { version: 2, operation: "list_channels", source, channel: "frontend" },
-      { version: 2, operation: "subscribe", source, channel: "frontend" },
-      { version: 2, operation: "unsubscribe", source, channel: "frontend" },
       { version: 2, operation: "get_settings", source, channel: "frontend" },
       {
         version: 2,
@@ -250,8 +238,6 @@ describe("channel MCP", () => {
         settings: {
           template: "服务端说：{{message}}",
           sent_message_template: "已发到频道：{message_text}",
-          self_message_policy: "include_other_endpoints",
-          receive_scope: "mentions_only",
           default_send: true,
         },
       },
@@ -293,12 +279,7 @@ describe("channel MCP", () => {
       handle(toolCall("send_to_channel", { message: "x", mentions: [] })),
       handle(toolCall("send_to_channel", { message: "x", mentions: ["all", "member-a"] })),
       handle(toolCall("send_to_channel", { message: "x", mentions: ["member-a", "member-a"] })),
-      handle(toolCall("subscribe_to_channel", {})),
       handle(toolCall("update_channel_settings", { channel: "frontend" })),
-      handle(toolCall("update_channel_settings", {
-        channel: "frontend",
-        self_message_policy: "include_all",
-      })),
       handle(toolCall("list_channels", { threadId: THREAD_ID })),
       handle(toolCall("inspect_message_source", { message_id: "42" })),
     ]);
@@ -467,7 +448,7 @@ describe("channel MCP", () => {
       },
     });
     expect(lines[1]).toEqual({ jsonrpc: "2.0", id: 2, result: {} });
-    expect(lines[2].result.tools).toHaveLength(8);
+    expect(lines[2].result.tools).toHaveLength(6);
     expect(lines[2].result.tools).toContainEqual(expect.objectContaining({ name: "list_channels" }));
     expect(requestApp).toHaveBeenCalledWith({
       version: 2,

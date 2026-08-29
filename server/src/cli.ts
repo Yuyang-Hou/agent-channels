@@ -65,7 +65,7 @@ usage:
   rogerthat host-create [options]      # create a new Host conversation
   rogerthat host-preflight [options]   # verify a Host conversation without a turn
   rogerthat host-conversations [opts]  # search local Host conversations
-  rogerthat assistant-history [opts]   # search user-authorized Codex history
+  rogerthat channel-history [opts]     # search Channel-authorized Codex history
   rogerthat host-state [options]       # read or update a loaded Host conversation
   rogerthat channel-mcp [options]      # run the local one-tool channel MCP over stdio
 
@@ -268,7 +268,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
   }
-  if (first === "assistant-history") {
+  if (first === "channel-history") {
     const { parseArgs } = await import("node:util");
     let parsed;
     try {
@@ -276,6 +276,7 @@ async function main(): Promise<void> {
         args: process.argv.slice(3),
         options: {
           config: { type: "string" },
+          channel: { type: "string" },
           query: { type: "string" },
           "codex-executable": { type: "string" },
           help: { type: "boolean", short: "h" },
@@ -288,20 +289,21 @@ async function main(): Promise<void> {
       process.exit(2);
     }
     if (parsed.values.help) {
-      console.log("usage: rogerthat assistant-history --config <assistant.json> --query <text> --codex-executable <absolute path>");
+      console.log("usage: rogerthat channel-history --config <channels.json> --channel <id> --query <text> --codex-executable <absolute path>");
       process.exit(0);
     }
     const configPath = parsed.values.config;
+    const channel = parsed.values.channel;
     const query = parsed.values.query;
     const executable = parsed.values["codex-executable"];
-    if (!configPath || !query || !executable) {
-      console.error("error: --config, --query and --codex-executable are required");
+    if (!configPath || !channel || !query || !executable) {
+      console.error("error: --config, --channel, --query and --codex-executable are required");
       process.exit(2);
     }
     try {
-      const { loadAssistantConfig, searchCodexHistoryViaAppServer } = await import("./codex-history.js");
+      const { loadChannelConfig, searchCodexHistoryViaAppServer } = await import("./codex-history.js");
       const response = await searchCodexHistoryViaAppServer({
-        config: loadAssistantConfig(configPath),
+        config: loadChannelConfig(configPath, channel),
         query,
         codexExecutable: executable,
       });

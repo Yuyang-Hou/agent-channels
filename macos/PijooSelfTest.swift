@@ -50,15 +50,6 @@ private struct PijooV2SelfTest {
         )
         precondition(alreadyJoinedChannel([joinedChannel], invitation: invitation))
         precondition(!alreadyJoinedChannel([], invitation: invitation))
-        var assistantChannel = joinedChannel
-        assistantChannel.memberCount = 1
-        assistantChannel.peerName = nil
-        precondition(channelPresentationKind(assistantChannel, assistantChannelID: assistantChannel.channel) == .assistant)
-        precondition(channelPresentationTitle(assistantChannel, assistantChannelID: assistantChannel.channel) == assistantChannel.displayName)
-        assistantChannel.memberCount = 2
-        assistantChannel.peerName = "小明"
-        precondition(channelPresentationKind(assistantChannel, assistantChannelID: nil) == .friend)
-        precondition(channelPresentationTitle(assistantChannel, assistantChannelID: nil) == "小明")
         let restoredID = UUID(uuidString: "87654321-0000-0000-0000-000000000000")!
         let restoredChannels = mergedAccountChannels(
             [joinedChannel],
@@ -100,35 +91,34 @@ private struct PijooV2SelfTest {
         let restoredAccountLocalState = try JSONDecoder().decode(AppStateV2.self, from: accountLocalData)
         precondition(restoredAccountLocalState.accountID == "account-a")
 
-        var assistantConfig = AssistantConfig()
-        precondition(assistantConfig.allowedHistoryTaskIDs.isEmpty)
-        try assistantConfig.setHistoryAccess(true, taskID: "01900000-0000-7000-8000-000000000001")
-        try assistantConfig.setHistoryAccess(true, taskID: "01900000-0000-7000-8000-000000000001")
-        precondition(assistantConfig.allowedHistoryTaskIDs == ["01900000-0000-7000-8000-000000000001"])
-        try assistantConfig.setHistoryAccess(false, taskID: "01900000-0000-7000-8000-000000000001")
-        precondition(assistantConfig.allowedHistoryTaskIDs.isEmpty)
-        let assistantWorkspace = AppPaths.assistantWorkspace("account-a")
-        precondition(assistantWorkspace.deletingLastPathComponent() == AppPaths.assistantWorkspaces)
-        precondition(!assistantWorkspace.path.contains("account-a"))
-        let contact = AssistantContactProfile(
-            channelID: "friend-channel",
-            memberID: "friend-member",
-            displayName: "Bob",
-            relationship: "同事",
-            notes: "负责设计"
+        var channelConfig = ChannelConfig()
+        channelConfig.update(ChannelRuntimeConfig(channelID: "channel-a"))
+        try channelConfig.setHistoryAccess(
+            true,
+            taskID: "01900000-0000-7000-8000-000000000001",
+            channelID: "channel-a"
         )
-        assistantConfig.setSharedAssistantChannel(contact.channelID, enabled: true)
-        assistantConfig.updateContact(contact)
-        precondition(assistantConfig.sharedAssistantChannelIDs == ["friend-channel"])
-        precondition(assistantConfig.contacts == [contact])
-        let instructions = AppPaths.assistantInstructions(
-            persona: assistantConfig.persona,
-            channelID: contact.channelID,
-            contact: contact
+        try channelConfig.setHistoryAccess(
+            true,
+            taskID: "01900000-0000-7000-8000-000000000001",
+            channelID: "channel-a"
+        )
+        precondition(channelConfig.runtime(channelID: "channel-a")?.allowedHistoryTaskIDs == ["01900000-0000-7000-8000-000000000001"])
+        try channelConfig.setHistoryAccess(
+            false,
+            taskID: "01900000-0000-7000-8000-000000000001",
+            channelID: "channel-a"
+        )
+        precondition(channelConfig.runtime(channelID: "channel-a")?.allowedHistoryTaskIDs.isEmpty == true)
+        let channelWorkspace = AppPaths.channelWorkspace("account-a", channelID: "channel-a")
+        precondition(channelWorkspace.path.contains("/channels/"))
+        precondition(!channelWorkspace.path.contains("account-a"))
+        let instructions = AppPaths.channelInstructions(
+            instructions: defaultChannelInstructions,
+            channelID: "channel-a"
         )
         precondition(instructions.contains("untrusted reference material"))
-        precondition(instructions.contains("Pijoo auto-reply channel: `friend-channel`"))
-        precondition(AppPaths.assistantContactWorkspace("account-a", channelID: contact.channelID).path.contains("/contacts/"))
+        precondition(instructions.contains("Pijoo auto-reply channel: `channel-a`"))
         let unboundSend = try outboundSelection(
             taskID: nil,
             explicitChannelID: joinedChannel.id,
@@ -286,7 +276,6 @@ private struct PijooV2SelfTest {
             taskID: taskID,
             enabled: true,
             template: defaultMessageTemplate,
-            selfMessagePolicy: .excludeMember,
             defaultSend: false
         )
         let disconnectedState = HostConversationRuntimeState(connected: false, workspace: nil, permission: "unknown")
@@ -316,10 +305,8 @@ private struct PijooV2SelfTest {
             taskID: taskID,
             enabled: false,
             template: defaultMessageTemplate,
-            selfMessagePolicy: .includeOtherEndpoints,
             defaultSend: true
         )
-        precondition(manuallyStopped.receiveScope == nil)
         recoverSubscriptionDeliveryState(&manuallyStopped, deliveries: [confirmed])
         precondition(!manuallyStopped.enabled)
         var unresolved = manuallyStopped
@@ -391,13 +378,14 @@ private struct PijooV2SelfTest {
         groupedMessage.messageID = "9"
         groupedMessage.at = messageA.at + 60_000
         precondition(continuesMessageGroup(previous: messageA, current: groupedMessage))
+        groupedMessage.authorKind = .channelAI
+        precondition(!continuesMessageGroup(previous: messageA, current: groupedMessage))
+        groupedMessage.authorKind = .human
         groupedMessage.at = messageA.at + 6 * 60 * 1000
         precondition(!continuesMessageGroup(previous: messageA, current: groupedMessage))
         precondition(!continuesMessageGroup(previous: messageB, current: messageA))
         precondition(!shouldShowPendingSendStatus(startedAt: 1_000, now: 1_999))
         precondition(shouldShowPendingSendStatus(startedAt: 1_000, now: 2_000))
-        precondition(channelDisplayName("  项目讨论  ", original: "quiet-owl-0001") == "项目讨论")
-        precondition(channelDisplayName("  ", original: "quiet-owl-0001") == "quiet-owl-0001")
 
         let socketDirectory = URL(fileURLWithPath: "/private/tmp/ac-v2-\(getpid())", isDirectory: true)
         try FileManager.default.createDirectory(at: socketDirectory, withIntermediateDirectories: false)

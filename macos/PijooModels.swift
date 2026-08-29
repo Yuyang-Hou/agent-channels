@@ -20,6 +20,7 @@ let shownCodexRestartVersionKey = "shownCodexRestartVersion"
 let localSendProtocolVersion = 2
 let maxChannelMessageLength = 8192
 let maxLocalSendFrameBytes = 64 * 1024
+let defaultChannelInstructions = "友好、自然、简洁地参与当前频道；不确定时坦诚说明。"
 let defaultMessageTemplate = """
 > **↗ Pijoo · 外部频道消息**
 >
@@ -160,27 +161,6 @@ func codexIntegrationReadiness(configured: Bool, appVersion: String, loadedMCPVe
     return loadedMCPVersion == appVersion ? .ready : .versionMismatch
 }
 
-enum SelfMessagePolicy: String, Codable, CaseIterable, Identifiable {
-    case excludeMember = "exclude_member"
-    case includeOtherEndpoints = "include_other_endpoints"
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .excludeMember: return "忽略本成员所有端点发送的消息"
-        case .includeOtherEndpoints: return "接收本成员其他端点的消息"
-        }
-    }
-}
-
-enum ReceiveScope: String, Codable, CaseIterable, Identifiable {
-    case allMessages = "all_messages"
-    case mentionsOnly = "mentions_only"
-
-    var id: String { rawValue }
-    var title: String { self == .allMessages ? "所有消息" : "仅 @我的消息" }
-}
-
 struct ChannelProfile: Codable, Equatable, Identifiable {
     let id: UUID
     var origin: String
@@ -191,8 +171,6 @@ struct ChannelProfile: Codable, Equatable, Identifiable {
     var role: String
     var credentialAccount: String
     var lastViewedMessageID: Int64?
-    var memberCount: Int? = nil
-    var peerName: String? = nil
 }
 
 struct AccountChannelSnapshot: Equatable {
@@ -201,31 +179,6 @@ struct AccountChannelSnapshot: Equatable {
     let membershipID: String
     let role: String
     let memberName: String
-    var memberCount: Int? = nil
-    var peerName: String? = nil
-}
-
-enum ChannelPresentationKind: Equatable {
-    case assistant, friend, group, channel
-}
-
-func channelPresentationKind(_ channel: ChannelProfile, assistantChannelID: String?) -> ChannelPresentationKind {
-    if channel.channel == assistantChannelID { return .assistant }
-    switch channel.memberCount {
-    case 2: return .friend
-    case let count? where count > 2: return .group
-    default: return .channel
-    }
-}
-
-func channelPresentationTitle(_ channel: ChannelProfile, assistantChannelID: String?) -> String {
-    switch channelPresentationKind(channel, assistantChannelID: assistantChannelID) {
-    case .assistant: return channel.displayName
-    case .friend: return channel.peerName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        ? channel.peerName!
-        : channel.displayName
-    case .group, .channel: return channel.displayName
-    }
 }
 
 func channelCallsign(_ membershipID: String) -> String {
@@ -245,8 +198,6 @@ func mergedAccountChannels(
             channel.memberID = snapshot.membershipID
             channel.role = snapshot.role
             channel.credentialAccount = credentialAccount
-            channel.memberCount = snapshot.memberCount
-            channel.peerName = snapshot.peerName
             return channel
         }
         return ChannelProfile(
@@ -258,9 +209,7 @@ func mergedAccountChannels(
             memberID: snapshot.membershipID,
             role: snapshot.role,
             credentialAccount: credentialAccount,
-            lastViewedMessageID: nil,
-            memberCount: snapshot.memberCount,
-            peerName: snapshot.peerName
+            lastViewedMessageID: nil
         )
     }
 }
@@ -378,8 +327,6 @@ struct ChannelSubscription: Codable, Equatable, Identifiable {
     var enabled: Bool
     var template: String
     var sentMessageTemplate: String? = nil
-    var selfMessagePolicy: SelfMessagePolicy
-    var receiveScope: ReceiveScope? = nil
     var defaultSend: Bool
     var lastDeliveredMessageID: Int64?
     var lastDeliveredAt: Double?
@@ -397,67 +344,45 @@ struct AppStateV2: Codable, Equatable {
     var selectedChannelID: UUID?
 }
 
-enum AssistantReplyMode: String, Codable {
-    case automatic
-    case draft
-}
-
-struct AssistantContactProfile: Codable, Equatable, Identifiable {
+struct ChannelRuntimeConfig: Codable, Equatable, Identifiable {
     var channelID: String
-    var memberID: String?
-    var displayName: String
-    var relationship: String
-    var notes: String
+    var taskID: String? = nil
+    var allowedHistoryTaskIDs: [String] = []
+    var instructions = defaultChannelInstructions
 
     var id: String { channelID }
 
     enum CodingKeys: String, CodingKey {
-        case relationship, notes
+        case instructions
         case channelID = "channel_id"
-        case memberID = "member_id"
-        case displayName = "display_name"
+        case taskID = "task_id"
+        case allowedHistoryTaskIDs = "allowed_history_task_ids"
     }
 }
 
-struct AssistantConfig: Codable, Equatable {
-    var version = 2
-    var assistantTaskID: String? = nil
-    var assistantChannelID: String? = nil
-    var allowedHistoryTaskIDs: [String] = []
-    var replyMode: AssistantReplyMode = .automatic
-    var persona = "你是我的 Pijoo 助理。友好、自然、简洁地帮助我和来访者；不确定时坦诚说明。"
-    var sharedAssistantChannelIDs: [String] = []
-    var contacts: [AssistantContactProfile] = []
+struct ChannelConfig: Codable, Equatable {
+    var version = 1
+    var channels: [ChannelRuntimeConfig] = []
 
-    enum CodingKeys: String, CodingKey {
-        case version
-        case assistantTaskID = "assistant_task_id"
-        case assistantChannelID = "assistant_channel_id"
-        case allowedHistoryTaskIDs = "allowed_history_task_ids"
-        case replyMode = "reply_mode"
-        case persona, contacts
-        case sharedAssistantChannelIDs = "shared_assistant_channel_ids"
+    func runtime(channelID: String) -> ChannelRuntimeConfig? {
+        channels.first { $0.channelID == channelID }
     }
 
-    mutating func setHistoryAccess(_ allowed: Bool, taskID rawTaskID: String) throws {
+    mutating func update(_ runtime: ChannelRuntimeConfig) {
+        channels.removeAll { $0.channelID == runtime.channelID }
+        channels.append(runtime)
+        channels.sort { $0.channelID < $1.channelID }
+    }
+
+    mutating func setHistoryAccess(_ allowed: Bool, taskID rawTaskID: String, channelID: String) throws {
         guard let taskID = UUID(uuidString: rawTaskID)?.uuidString.lowercased() else {
             throw AppFailure("Codex task ID 无效")
         }
-        allowedHistoryTaskIDs.removeAll { $0.caseInsensitiveCompare(taskID) == .orderedSame }
-        if allowed { allowedHistoryTaskIDs.append(taskID) }
-        allowedHistoryTaskIDs.sort()
-    }
-
-    mutating func setSharedAssistantChannel(_ channelID: String, enabled: Bool) {
-        sharedAssistantChannelIDs.removeAll { $0 == channelID }
-        if enabled { sharedAssistantChannelIDs.append(channelID) }
-        sharedAssistantChannelIDs.sort()
-    }
-
-    mutating func updateContact(_ contact: AssistantContactProfile) {
-        contacts.removeAll { $0.channelID == contact.channelID }
-        contacts.append(contact)
-        contacts.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        var runtime = runtime(channelID: channelID) ?? ChannelRuntimeConfig(channelID: channelID)
+        runtime.allowedHistoryTaskIDs.removeAll { $0.caseInsensitiveCompare(taskID) == .orderedSame }
+        if allowed { runtime.allowedHistoryTaskIDs.append(taskID) }
+        runtime.allowedHistoryTaskIDs.sort()
+        update(runtime)
     }
 }
 
@@ -496,6 +421,7 @@ func outboundSelection(
 }
 
 enum MessageDirection: String, Codable { case inbound, outbound }
+enum MessageAuthorKind: String, Codable { case human, channelAI = "channel_ai" }
 enum MessageDeliveryState: String, Codable {
     case pending, received, attempting, filtered, delivered, skipped, accepted, failed, unknown
 }
@@ -541,6 +467,7 @@ struct ChannelMessageRecord: Codable, Equatable, Identifiable {
     var state: MessageDeliveryState
     var senderMemberID: String? = nil
     var senderEndpointID: String? = nil
+    var authorKind: MessageAuthorKind = .human
     var source: MessageSourceReference? = nil
     var mention: MessageMention? = nil
 
@@ -654,7 +581,11 @@ func continuesMessageGroup(
 ) -> Bool {
     guard let previous else { return false }
     let interval = current.at - previous.at
-    return current.from == previous.from && current.direction == previous.direction
+    let sameAuthor = current.authorKind == previous.authorKind && (
+        current.authorKind == .channelAI || current.senderMemberID == previous.senderMemberID
+            && current.from == previous.from
+    )
+    return sameAuthor && current.direction == previous.direction
         && interval >= 0 && interval <= 5 * 60 * 1000
 }
 
@@ -662,11 +593,6 @@ let pendingSendStatusDelayMilliseconds = 1_000.0
 
 func shouldShowPendingSendStatus(startedAt: Double, now: Double) -> Bool {
     now - startedAt >= pendingSendStatusDelayMilliseconds
-}
-
-func channelDisplayName(_ nickname: String, original: String) -> String {
-    let value = nickname.trimmingCharacters(in: .whitespacesAndNewlines)
-    return value.isEmpty ? original : value
 }
 
 func recoverSubscriptionDeliveryState(

@@ -158,7 +158,7 @@ struct MainWindowView: View {
                                 .frame(width: 7, height: 7)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(model.channelTitle(channel)).lineLimit(1)
-                                Text("\(model.channelKindLabel(channel)) · \(channel.role == "owner" ? "所有者" : "成员")")
+                                Text(channel.role == "owner" ? "所有者" : "成员")
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -239,11 +239,11 @@ struct MainWindowView: View {
                 ChannelDetailView(model: model, channel: channel)
             } else {
                 EmptyStateView(
-                    title: "正在准备默认频道",
+                    title: "还没有频道",
                     systemImage: "bubble.left.and.bubble.right",
-                    detail: "Pijoo 会自动创建以你的昵称命名的助理频道。"
+                    detail: "创建一个频道后即可与 AI 对话或邀请成员。"
                 ) {
-                    Button("重新同步") { Task { await model.refreshAccount() } }
+                    Button("创建频道") { model.showAddChannel = true }
                         .buttonStyle(.borderedProminent)
                 }
             }
@@ -443,122 +443,50 @@ struct CreateInvitationSheet: View {
     }
 }
 
-struct ShareAssistantSheet: View {
-    @ObservedObject var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var label = ""
-    @State private var validHours = 24
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("分享助理").font(.title2.bold())
-            Text("将为这一位好友创建独立频道、独立 AI 会话和联系人记忆。")
-                .foregroundStyle(.secondary)
-            Form {
-                TextField("好友备注（可选）", text: $label)
-                TextField("有效小时数", value: $validHours, format: .number)
-            }
-            .formStyle(.grouped)
-            Label("链接只允许一个账号加入；好友不会进入你的默认助理频道。", systemImage: "person.crop.circle.badge.checkmark")
-                .font(.caption).foregroundStyle(.secondary)
-            Divider()
-            HStack {
-                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                Spacer()
-                if model.busy { ProgressView().controlSize(.small) }
-                Button("创建并复制") {
-                    Task { if await model.shareAssistant(label: label, validHours: validHours) { dismiss() } }
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(model.busy || label.utf16.count > 64 || !(1...720).contains(validHours))
-            }
-        }
-        .padding(24)
-        .frame(width: 460)
-    }
-}
-
-struct AssistantPersonaSheet: View {
-    @ObservedObject var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var persona: String
-
-    init(model: AppModel) {
-        self.model = model
-        _persona = State(initialValue: model.assistantConfig.persona)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("助理身份卡").font(.title2.bold())
-            Text("这段身份会应用到默认助理和所有好友助理；固定安全规则不可修改。")
-                .font(.caption).foregroundStyle(.secondary)
-            TextEditor(text: $persona)
-                .frame(height: 240)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-            HStack {
-                Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("保存") {
-                    model.saveAssistantPersona(persona)
-                    if model.lastError.isEmpty { dismiss() }
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(persona.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || persona.count > 4_000)
-            }
-        }
-        .padding(24)
-        .frame(width: 560)
-    }
-}
-
-struct AssistantContactSheet: View {
+struct ChannelContextSheet: View {
     @ObservedObject var model: AppModel
     let channelID: UUID
     @Environment(\.dismiss) private var dismiss
-    @State private var relationship: String
-    @State private var notes: String
-    @State private var impression: String
+    @State private var instructions: String
+    @State private var memory: String
 
     init(model: AppModel, channelID: UUID) {
         self.model = model
         self.channelID = channelID
-        let contact = model.assistantContact(channelID)
-        _relationship = State(initialValue: contact?.relationship ?? "")
-        _notes = State(initialValue: contact?.notes ?? "")
-        _impression = State(initialValue: model.assistantContactImpression(channelID))
+        _instructions = State(initialValue: model.channelRuntime(channelID)?.instructions ?? defaultChannelInstructions)
+        _memory = State(initialValue: model.channelMemory(channelID))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(model.assistantContact(channelID)?.displayName ?? "联系人").font(.title2.bold())
-            TextField("关系，例如：同事", text: $relationship)
-            Text("我的备注").font(.caption.bold())
-            TextEditor(text: $notes).frame(height: 100)
+            Text("频道 AI").font(.title2.bold())
+            Text("指令和记忆仅应用于当前频道；固定安全规则不可修改。")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("频道指令").font(.caption.bold())
+            TextEditor(text: $instructions).frame(height: 130)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-            Text("AI 印象").font(.caption.bold())
-            TextEditor(text: $impression).frame(height: 150)
+            Text("频道记忆").font(.caption.bold())
+            TextEditor(text: $memory).frame(height: 180)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(.quaternary))
-            Text("AI 仅根据这位联系人的直接对话更新印象；身份和权限以认证成员 ID 为准。")
+            Text("记忆是频道上下文，不是成员身份或权限。")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Button("取消") { dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("保存") {
-                    model.saveAssistantContact(channelID, relationship: relationship, notes: notes, impression: impression)
+                    model.saveChannelContext(channelID, instructions: instructions, memory: memory)
                     if model.lastError.isEmpty { dismiss() }
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
+                .disabled(instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    || instructions.count > 4_000 || memory.count > 8_000)
             }
         }
         .padding(24)
         .frame(width: 560)
     }
 }
-
 enum ChannelDetailTab: Hashable {
     case messages
     case members
@@ -570,11 +498,7 @@ struct ChannelDetailView: View {
     let channel: ChannelProfile
     @State private var selectedTab = ChannelDetailTab.messages
     @State private var showCreateInvitation = false
-    @State private var showShareAssistant = false
-    @State private var showAssistantPersona = false
-
-    private var isAssistant: Bool { model.isAssistantChannel(channel.id) }
-    private var isManagedAssistant: Bool { model.isManagedAssistantChannel(channel.id) }
+    @State private var showChannelContext = false
 
     @ViewBuilder
     private func tabButton(_ title: String, tab: ChannelDetailTab, showsAttention: Bool = false) -> some View {
@@ -608,39 +532,22 @@ struct ChannelDetailView: View {
         VStack(spacing: 0) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    if isAssistant {
-                        Text(model.channelTitle(channel)).font(.title2.bold())
-                    } else {
-                        Text(model.channelTitle(channel))
-                            .font(.title2.bold())
-                            .onTapGesture(count: 2) { model.renameSelectedChannel() }
-                            .help("双击修改频道名称")
-                    }
-                    Text(isAssistant
-                        ? "默认助理频道 · \(model.channelStatus[channel.id] ?? "未连接")"
-                        : isManagedAssistant
-                            ? "好友助理 · 独立会话 · \(model.channelStatus[channel.id] ?? "未连接")"
-                        : "\(model.channelKindLabel(channel)) · \(channel.channel) · \(model.channelStatus[channel.id] ?? "未连接")")
+                    Text(model.channelTitle(channel))
+                        .font(.title2.bold())
+                    Text("频道 · \(channel.channel) · \(model.channelStatus[channel.id] ?? "未连接")")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if channel.role == "owner" {
-                    if isAssistant {
-                        Button("分享助理…") { showShareAssistant = true }
-                    } else if !isManagedAssistant {
-                        Button("创建邀请…") { showCreateInvitation = true }
-                    }
+                    Button("邀请成员…") { showCreateInvitation = true }
                 }
                 if model.channelStatus[channel.id]?.contains("权限已撤销") == true {
                     Button("重新连接") { model.reconnectChannel(channel.id) }
                 }
                 Menu {
-                    if isAssistant {
-                        Button("编辑助理身份卡…") { showAssistantPersona = true }
+                    if channel.role == "owner" {
+                        Button("编辑频道 AI…") { showChannelContext = true }
                         Divider()
-                    }
-                    if !isAssistant {
-                        Button("修改频道昵称…") { model.renameSelectedChannel() }
                     }
                     Button("刷新") {
                         Task {
@@ -669,7 +576,7 @@ struct ChannelDetailView: View {
                 tabButton("消息", tab: .messages)
                 tabButton("成员", tab: .members)
                 tabButton(
-                    isManagedAssistant ? "助理会话" : "转发到会话",
+                    "AI",
                     tab: .subscriptions,
                     showsAttention: model.channelHasDisconnectedConversation(channel.id)
                 )
@@ -692,11 +599,8 @@ struct ChannelDetailView: View {
         .sheet(isPresented: $showCreateInvitation) {
             CreateInvitationSheet(model: model)
         }
-        .sheet(isPresented: $showShareAssistant) {
-            ShareAssistantSheet(model: model)
-        }
-        .sheet(isPresented: $showAssistantPersona) {
-            AssistantPersonaSheet(model: model)
+        .sheet(isPresented: $showChannelContext) {
+            ChannelContextSheet(model: model, channelID: channel.id)
         }
         .onChange(of: channel.id) { _ in selectedTab = .messages }
     }
@@ -718,9 +622,7 @@ struct ChannelMessagesView: View {
                 EmptyStateView(
                     title: "暂无消息",
                     systemImage: "text.bubble",
-                    detail: model.selectedChannelID.map(model.isManagedAssistantChannel) == true
-                        ? "连接助理会话后，直接在这里开始聊天。"
-                        : "频道消息会先显示在这里，再转发到已连接的 AI 会话。"
+                    detail: "发送消息后，频道 AI 会在这里回复。"
                 ) { EmptyView() }
                     .frame(maxHeight: .infinity)
             } else {
@@ -741,33 +643,25 @@ struct ChannelMessagesView: View {
             }
             Divider()
             HStack(alignment: .bottom) {
-                if model.selectedChannelID.map(model.isManagedAssistantChannel) != true {
-                    Menu {
-                        Button { model.toggleComposerMentionAll() } label: {
-                            Label("@所有人", systemImage: model.composerMentionAll ? "checkmark" : "person.3")
-                        }
-                        Divider()
-                        ForEach(model.activeMentionMembers) { member in
-                            Button { model.toggleComposerMention(member.memberID) } label: {
-                                Label(
-                                    member.name + (member.memberID == model.selectedChannel?.memberID ? "（我）" : ""),
-                                    systemImage: model.composerMentionMemberIDs.contains(member.memberID) ? "checkmark" : "person"
-                                )
-                            }
-                        }
-                    } label: {
-                        if model.composerMentionLabel.isEmpty {
-                            Image(systemName: "at")
-                        } else {
-                            Label(model.composerMentionLabel, systemImage: "at")
+                Menu {
+                    Button { model.toggleComposerMentionAll() } label: {
+                        Label("@所有人", systemImage: model.composerMentionAll ? "checkmark" : "person.3")
+                    }
+                    Divider()
+                    ForEach(model.activeMentionMembers) { member in
+                        Button { model.toggleComposerMention(member.memberID) } label: {
+                            Label(
+                                member.name + (member.memberID == model.selectedChannel?.memberID ? "（我）" : ""),
+                                systemImage: model.composerMentionMemberIDs.contains(member.memberID) ? "checkmark" : "person"
+                            )
                         }
                     }
-                    .fixedSize()
+                } label: {
+                    if model.composerMentionLabel.isEmpty { Image(systemName: "at") }
+                    else { Label(model.composerMentionLabel, systemImage: "at") }
                 }
-                TextField(
-                    model.selectedChannelID.map(model.isManagedAssistantChannel) == true ? "和助理聊天" : "发送消息",
-                    text: $model.composerText
-                )
+                .fixedSize()
+                TextField("发送消息", text: $model.composerText)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { Task { await model.sendComposerMessage() } }
                 Button("发送") { Task { await model.sendComposerMessage() } }
@@ -800,20 +694,26 @@ struct MessageRow: View {
             if continuation {
                 Color.clear.frame(width: 30, height: 1)
             } else {
-                Text(String(message.from.prefix(1)).uppercased())
-                    .font(.caption.bold())
-                    .frame(width: 30, height: 30)
-                    .foregroundStyle(message.direction == .outbound ? Color.blue : Color.secondary)
-                    .background(
-                        message.direction == .outbound ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 8)
-                    )
+                Group {
+                    if message.authorKind == .channelAI {
+                        Image(systemName: "sparkles")
+                    } else {
+                        Text(String(message.from.prefix(1)).uppercased()).font(.caption.bold())
+                    }
+                }
+                .frame(width: 30, height: 30)
+                .foregroundStyle(message.authorKind == .channelAI ? Color.green : message.direction == .outbound ? Color.blue : Color.secondary)
+                .background(
+                    message.authorKind == .channelAI ? Color.green.opacity(0.12)
+                        : message.direction == .outbound ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
             }
             VStack(alignment: .leading, spacing: 4) {
                 if !continuation {
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 8) {
-                            Text(message.from).font(.subheadline.bold())
+                            Text(message.authorKind == .channelAI ? "AI" : message.from).font(.subheadline.bold())
                             Text(DateFormatter.delivery.string(from: Date(timeIntervalSince1970: message.at / 1000)))
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
@@ -865,8 +765,6 @@ struct MessageRow: View {
 struct ChannelMembersView: View {
     @ObservedObject var model: AppModel
     let channel: ChannelProfile
-    @State private var showAssistantContact = false
-    @State private var loadedInvitations = false
 
     private func memberSummary(_ member: ChannelMember) -> String {
         let role = member.role == "owner" ? "所有者" : "成员"
@@ -897,29 +795,8 @@ struct ChannelMembersView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             List {
-                if model.isSharedAssistantChannel(channel.id), channel.role == "owner" {
-                    Section("联系人记忆") {
-                        Button("编辑关系、备注与 AI 印象…") { showAssistantContact = true }
-                    }
-                }
                 if channel.role == "owner" {
                     Section("邀请") {
-                        if loadedInvitations,
-                           model.isSharedAssistantChannel(channel.id),
-                           !model.invitations.contains(where: { $0.status == "active" }),
-                           model.invitations.allSatisfy({ $0.useCount == 0 }),
-                           model.members.filter({ $0.status == "active" }).count <= 1 {
-                            Button("创建并复制单次邀请") {
-                                Task {
-                                    _ = await model.createInvitation(
-                                        label: model.assistantContact(channel.id)?.displayName ?? "",
-                                        maxUses: 1,
-                                        validHours: 24
-                                    )
-                                }
-                            }
-                            .disabled(model.busy)
-                        }
                         if model.invitations.isEmpty {
                             Text("暂无邀请")
                                 .font(.caption)
@@ -981,13 +858,8 @@ struct ChannelMembersView: View {
             .listStyle(.plain)
         }
         .task(id: channel.id) {
-            loadedInvitations = false
             await model.refreshMembers()
             await model.refreshInvitations()
-            loadedInvitations = true
-        }
-        .sheet(isPresented: $showAssistantContact) {
-            AssistantContactSheet(model: model, channelID: channel.id)
         }
     }
 }
@@ -995,509 +867,135 @@ struct ChannelMembersView: View {
 struct ChannelSubscriptionsView: View {
     @ObservedObject var model: AppModel
     @State private var refreshingCodexIntegration = false
+    @State private var showChannelContext = false
 
-    var body: some View {
-        let isAssistant = model.selectedChannelID.map(model.isAssistantChannel) == true
-        let isSharedAssistant = model.selectedChannelID.map(model.isSharedAssistantChannel) == true
-        let isManagedAssistant = model.selectedChannelID.map(model.isManagedAssistantChannel) == true
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
-                if !model.codexIntegrationReady {
-                    Label(model.codexIntegrationBlockingTitle, systemImage: "bolt.horizontal.circle")
-                        .font(.headline)
-                    Text(model.codexIntegrationBlockingMessage)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    Button {
-                        if model.codexReadiness == .notConfigured {
-                            model.enableCodexIntegration()
-                        } else {
-                            refreshCodexIntegration()
-                        }
-                    } label: {
-                        if refreshingCodexIntegration {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text("正在检查…")
-                            }
-                        } else {
-                            Text(model.codexReadiness == .notConfigured ? "配置 Codex 集成" : "重新检查")
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(refreshingCodexIntegration)
-                } else if isSharedAssistant {
-                    Label("该好友使用独立的受管助理会话，不能连接其他会话。", systemImage: "person.crop.circle.badge.checkmark")
-                        .font(.callout).foregroundStyle(.secondary)
-                    if model.selectedSubscriptions.isEmpty {
-                        Button("重新创建独立会话") { Task { await model.createTaskSubscription() } }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(model.busy)
-                    }
-                } else {
-                if HostProviderChoice.available.count > 1 {
-                    HStack {
-                        Text("AI App")
-                            .font(.headline)
-                        Picker("AI App", selection: $model.selectedHostProvider) {
-                            ForEach(HostProviderChoice.available) { provider in
-                                Text(provider.displayName)
-                                    .tag(provider)
-                            }
-                        }
-                        .labelsHidden()
-                        .frame(width: 180)
-                        Spacer()
-                    }
-                    .onChange(of: model.selectedHostProvider) { _ in
-                        model.draftTask = ""
-                        model.conversationSearchResults = []
-                        model.conversationSearchStatus = ""
-                    }
-                }
-
-                if HostProviderChoice.available.contains(model.selectedHostProvider) {
-                    HStack {
-                        Button {
-                            Task { await model.createTaskSubscription() }
-                        } label: {
-                            if model.taskCreationStatus.isEmpty {
-                                Label("新建专属会话", systemImage: "plus.message")
-                            } else {
-                                HStack(spacing: 6) {
-                                    ProgressView().controlSize(.small)
-                                    Text("正在新建…")
-                                }
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(model.busy)
-                        Text(model.taskCreationStatus.isEmpty
-                            ? isAssistant
-                                ? "\(model.selectedHostProvider.displayName) · Pijoo 账号受管目录 · 唯一执行会话"
-                                : "\(model.selectedHostProvider.displayName) · ~/Pijoo · 自动连接当前频道"
-                            : model.taskCreationStatus)
-                            .font(.caption)
-                            .foregroundStyle(model.taskCreationStatus.isEmpty ? Color.secondary : Color.accentColor)
-                        Spacer()
-                    }
-                    HStack {
-                        TextField(
-                            isAssistant
-                                ? "搜索可授权只读的 \(model.selectedHostProvider.displayName) 会话，或输入 ID / 链接"
-                                : "搜索 \(model.selectedHostProvider.displayName) 会话，或输入 ID / 链接",
-                            text: $model.draftTask
-                        )
-                            .textFieldStyle(.roundedBorder)
-                            .onSubmit { Task { await model.searchHostConversations() } }
-                            .onChange(of: model.draftTask) { _ in
-                                model.conversationSearchResults = []
-                                model.conversationSearchStatus = ""
-                            }
-                            .overlay(alignment: .topLeading) {
-                                if !model.conversationSearchResults.isEmpty {
-                                    ScrollView {
-                                        LazyVStack(spacing: 0) {
-                                            ForEach(model.conversationSearchResults) { conversation in
-                                                Button {
-                                                    Task { await model.bindHostConversation(conversation) }
-                                                } label: {
-                                                    VStack(alignment: .leading, spacing: 2) {
-                                                        HStack {
-                                                            Text(conversation.title).lineLimit(1)
-                                                            if isAssistant {
-                                                                Spacer()
-                                                                Text(model.hasAssistantHistoryAccess(conversation.conversationID) ? "已授权" : "授权读取")
-                                                                    .font(.caption2).foregroundStyle(.secondary)
-                                                            }
-                                                        }
-                                                        Text("\(hostDisplayName(conversation.provider)) · \(conversation.conversationID)")
-                                                            .font(.caption2).foregroundStyle(.secondary)
-                                                        Text(conversation.searchStateLabel)
-                                                            .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                                                    }
-                                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                                    .padding(.horizontal, 10)
-                                                    .padding(.vertical, 7)
-                                                    .contentShape(Rectangle())
-                                                }
-                                                .buttonStyle(.plain)
-                                                .disabled(model.busy)
-                                                if conversation.id != model.conversationSearchResults.last?.id { Divider() }
-                                            }
-                                        }
-                                    }
-                                    .frame(height: min(CGFloat(model.conversationSearchResults.count) * 64, 240))
-                                    .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
-                                    .overlay { RoundedRectangle(cornerRadius: 7).stroke(.separator) }
-                                    .shadow(color: .black.opacity(0.16), radius: 10, y: 4)
-                                    .offset(y: 30)
-                                } else if !model.conversationSearchStatus.isEmpty {
-                                    Text(model.conversationSearchStatus)
-                                        .font(.caption).foregroundStyle(.secondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(10)
-                                        .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
-                                        .overlay { RoundedRectangle(cornerRadius: 7).stroke(.separator) }
-                                        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
-                                        .offset(y: 30)
-                                }
-                            }
-                        Button("搜索") { Task { await model.searchHostConversations() } }
-                            .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        Button(isAssistant ? "按 ID 授权" : "按 ID 连接") { Task { await model.addTaskSubscription() } }
-                            .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                    .zIndex(1)
-                    if isAssistant {
-                        Text("授权仅允许 Pijoo 助理按需读取有界片段，不会向原会话发送消息。撤销会阻止后续读取；已读片段仍保留在助理会话历史中。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if !model.assistantConfig.allowedHistoryTaskIDs.isEmpty {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("已授权只读会话").font(.caption.bold())
-                                ForEach(model.assistantConfig.allowedHistoryTaskIDs, id: \.self) { taskID in
-                                    HStack {
-                                        Text(taskID).font(.caption.monospaced()).lineLimit(1)
-                                        Spacer()
-                                        Button("撤销") { model.setAssistantHistoryAccess(false, taskID: taskID) }
-                                            .buttonStyle(.borderless)
-                                    }
-                                }
-                            }
-                            .padding(.top, 4)
-                        }
-                    }
-                } else {
-                    Label("未发现支持会话转发的 AI App", systemImage: "exclamationmark.triangle")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 8)
-                }
-                }
-            }
-            .padding(16)
-            .zIndex(1)
-            Divider()
-            if model.selectedSubscriptions.isEmpty {
-                EmptyStateView(
-                    title: isManagedAssistant ? "尚未创建受管助理" : "尚未连接会话",
-                    systemImage: "link.badge.plus",
-                    detail: isManagedAssistant ? "创建专属会话后，频道消息只会进入该受管会话。" : "新建专属会话，或连接已有会话来接收本频道消息。"
-                ) { EmptyView() }
-                    .frame(maxHeight: .infinity)
-            } else {
-                List(model.selectedSubscriptions) { subscription in
-                    SubscriptionCard(model: model, subscriptionID: subscription.id)
-                        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
-                }
-                .listStyle(.plain)
-            }
-        }
-        .task(id: model.selectedChannelID) {
-            await model.refreshHostConversationStates()
-        }
-    }
+    private var channel: ChannelProfile? { model.selectedChannel }
 
     private func refreshCodexIntegration() {
         refreshingCodexIntegration = true
         model.refreshCodexIntegrationStatus()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            refreshingCodexIntegration = false
-        }
-    }
-}
-
-struct SubscriptionCard: View {
-    @ObservedObject var model: AppModel
-    let subscriptionID: UUID
-    @State private var templateDraft = ""
-    @State private var sentMessageTemplateDraft = ""
-    @State private var isExpanded = false
-    @State private var isPreviewingTemplate = false
-    @State private var isEditingSentMessageTemplate = false
-    @State private var isConfirmingFullAccess = false
-    @State private var isRefreshingHostConversation = false
-
-    private var subscription: ChannelSubscription? {
-        model.state.subscriptions.first { $0.id == subscriptionID }
-    }
-
-    private func statusColor(_ status: String) -> Color {
-        if status.contains("已连接") || status.contains("正在接收") { return .green }
-        if status.contains("未连接") || status.contains("异常") ||
-            status.contains("不可用") || status.contains("失败") { return .red }
-        if status.contains("暂停") { return .secondary }
-        return .orange
-    }
-
-    private func actionIcon(_ title: String, systemImage: String) -> some View {
-        Label(title, systemImage: systemImage)
-            .labelStyle(.iconOnly)
-            .symbolRenderingMode(.monochrome)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(.secondary)
-            .frame(width: 24, height: 24)
-            .contentShape(Rectangle())
-    }
-
-    private var templatePreview: AttributedString {
-        let draft = isEditingSentMessageTemplate ? sentMessageTemplateDraft : templateDraft
-        return (try? AttributedString(
-            markdown: draft,
-            options: .init(interpretedSyntax: .full)
-        )) ?? AttributedString(draft)
-    }
-
-    private var activeTemplateDraft: Binding<String> {
-        Binding(
-            get: { isEditingSentMessageTemplate ? sentMessageTemplateDraft : templateDraft },
-            set: {
-                if isEditingSentMessageTemplate { sentMessageTemplateDraft = $0 }
-                else { templateDraft = $0 }
-            }
-        )
+        refreshingCodexIntegration = false
     }
 
     var body: some View {
-        if let subscription {
-            let isManagedAssistant = model.isManagedAssistantChannel(subscription.channelID)
-            let isDisconnected = model.hostConversationStates[subscription.taskID]?.connected == false
-            let status = !subscription.enabled
-                ? "已暂停"
-                : isDisconnected
-                    ? "会话未连接"
-                    : model.listenerStatus[subscription.id] ?? "准备接收"
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 10) {
-                    Button {
-                        isExpanded.toggle()
-                    } label: {
-                        HStack(spacing: 10) {
-                            Circle().fill(statusColor(status)).frame(width: 8, height: 8)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(model.taskLabel(subscription.taskID)).font(.headline)
-                                Text(status).font(.caption).foregroundStyle(.secondary)
-                                Text(model.hostStateLabel(subscription.taskID))
-                                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        VStack(alignment: .leading, spacing: 0) {
+            if let channel, channel.role != "owner" {
+                EmptyStateView(
+                    title: "频道 AI 由所有者运行",
+                    systemImage: "sparkles",
+                    detail: "你的消息会与其他成员消息一样交给频道 AI。"
+                ) { EmptyView() }
+            } else if let channel {
+                VStack(alignment: .leading, spacing: 12) {
+                    if !model.codexIntegrationReady {
+                        Label(model.codexIntegrationBlockingTitle, systemImage: "bolt.horizontal.circle")
+                            .font(.headline)
+                        Text(model.codexIntegrationBlockingMessage)
+                            .font(.callout).foregroundStyle(.secondary)
+                        Button {
+                            if model.codexReadiness == .notConfigured { model.enableCodexIntegration() }
+                            else { refreshCodexIntegration() }
+                        } label: {
+                            if refreshingCodexIntegration {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    Text("正在检查…")
+                                }
+                            } else {
+                                Text(model.codexReadiness == .notConfigured ? "配置 Codex 集成" : "重新检查")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(refreshingCodexIntegration)
+                    } else {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Label(
+                                    model.selectedSubscriptions.isEmpty ? "AI 未连接" : "AI 已连接",
+                                    systemImage: "sparkles"
+                                )
+                                .font(.headline)
+                                Text(model.selectedSubscriptions.first.flatMap { model.listenerStatus[$0.id] }
+                                    ?? model.taskCreationStatus)
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            if subscription.uncertainMessageID != nil {
-                                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            Button("编辑指令与记忆…") { showChannelContext = true }
+                            if model.selectedSubscriptions.isEmpty {
+                                Button("重新连接 AI") { Task { await model.createTaskSubscription() } }
+                                    .buttonStyle(.borderedProminent)
+                                    .disabled(model.busy)
                             }
                         }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    HStack(spacing: 2) {
-                        Button {
-                            model.openTask(subscription.taskID)
-                        } label: {
-                            actionIcon("打开会话", systemImage: "arrow.up.right")
-                        }
-                        .help("打开会话")
-                        Button {
-                            isRefreshingHostConversation = true
-                            Task {
-                                await model.refreshHostConversation(subscription.taskID)
-                                isRefreshingHostConversation = false
-                            }
-                        } label: {
-                            if isRefreshingHostConversation {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .frame(width: 24, height: 24)
-                            } else {
-                                actionIcon("刷新会话状态", systemImage: "arrow.clockwise")
-                            }
-                        }
-                        .help("刷新会话状态")
-                        .accessibilityLabel(isRefreshingHostConversation ? "正在刷新会话状态" : "刷新会话状态")
-                        .disabled(isRefreshingHostConversation)
-                        Button {
-                            isExpanded.toggle()
-                        } label: {
-                            actionIcon(
-                                isExpanded ? "收起详情" : "展开详情",
-                                systemImage: isExpanded ? "chevron.up" : "chevron.down"
-                            )
-                        }
-                        .help(isExpanded ? "收起详情" : "展开详情")
-                    }
-                    .buttonStyle(.borderless)
-                }
-                if isExpanded {
-                    Divider().padding(.vertical, 12)
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack(spacing: 8) {
-                            Text("ChatGPT 权限").font(.caption.bold())
-                            if isManagedAssistant {
-                                if model.hostPermission(subscription.taskID) == .approveForMe {
-                                    Text(HostPermissionChoice.approveForMe.title)
-                                        .font(.caption)
-                                } else {
-                                    Button("恢复安全权限") {
-                                        Task { await model.updateHostPermission(subscription.taskID, permission: .approveForMe) }
-                                    }
-                                    .disabled(!model.hostPermissionCanChange(subscription.taskID) || model.busy)
-                                }
-                            } else {
-                                Menu(model.hostPermission(subscription.taskID)?.title ?? "权限未知") {
-                                    Button(HostPermissionChoice.requestApproval.title) {
-                                        Task { await model.updateHostPermission(subscription.taskID, permission: .requestApproval) }
-                                    }
-                                    Button(HostPermissionChoice.approveForMe.title) {
-                                        Task { await model.updateHostPermission(subscription.taskID, permission: .approveForMe) }
-                                    }
-                                    Divider()
-                                    Button(HostPermissionChoice.fullAccess.title) {
-                                        isConfirmingFullAccess = true
-                                    }
-                                }
-                                .disabled(!model.hostPermissionCanChange(subscription.taskID) || model.busy)
-                            }
-                            Text(model.hostPermissionCanChange(subscription.taskID)
-                                ? isManagedAssistant ? "受管助理仅在风险操作时请求批准" : "修改后同步到 ChatGPT 当前会话"
-                                : "请先在 ChatGPT 中打开会话")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        HStack(spacing: 24) {
-                            Toggle("接收消息", isOn: Binding(
-                                get: { subscription.enabled },
-                                set: { model.setSubscriptionEnabled(subscription.id, enabled: $0) }
-                            ))
-                            .toggleStyle(.switch)
-                            .fixedSize()
-                            Toggle("默认回复频道", isOn: Binding(
-                                get: { subscription.defaultSend },
-                                set: { model.setSubscriptionDefault(subscription.id, enabled: $0) }
-                            ))
-                            .toggleStyle(.switch)
-                            .fixedSize()
-                        }
-                        HStack(spacing: 8) {
-                            Text("接收范围").font(.caption.bold())
-                            Picker("接收范围", selection: Binding(
-                                get: { subscription.receiveScope ?? .allMessages },
-                                set: { model.setSubscriptionReceiveScope(subscription.id, scope: $0) }
-                            )) {
-                                ForEach(ReceiveScope.allCases) { scope in Text(scope.title).tag(scope) }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .fixedSize()
-                        }
-                        Text("仅 @我时，@所有人和包含当前成员的消息会进入此会话；其他消息仍保留在消息页。")
+
+                        Divider()
+
+                        Text("只读上下文").font(.headline)
+                        Text("已有 Codex 任务只作为当前频道的只读参考，不会成为频道 AI。")
                             .font(.caption).foregroundStyle(.secondary)
-                        if let messageID = subscription.uncertainMessageID {
+                        HStack {
+                            TextField("搜索 Codex 任务，或输入任务 ID / 链接", text: $model.draftTask)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { Task { await model.searchHostConversations() } }
+                                .onChange(of: model.draftTask) { _ in
+                                    model.conversationSearchResults = []
+                                    model.conversationSearchStatus = ""
+                                }
+                            Button("搜索") { Task { await model.searchHostConversations() } }
+                                .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button("授权读取") { Task { await model.addTaskSubscription() } }
+                                .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                        if !model.conversationSearchResults.isEmpty {
+                            List(model.conversationSearchResults) { conversation in
+                                Button {
+                                    Task { await model.bindHostConversation(conversation) }
+                                } label: {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(conversation.title).lineLimit(1)
+                                            Text(conversation.conversationID)
+                                                .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                                        }
+                                        Spacer()
+                                        Text(model.hasChannelHistoryAccess(conversation.conversationID, channelID: channel.id)
+                                            ? "已授权" : "授权读取")
+                                            .font(.caption)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .frame(height: min(CGFloat(model.conversationSearchResults.count) * 54, 220))
+                        } else if !model.conversationSearchStatus.isEmpty {
+                            Text(model.conversationSearchStatus).font(.caption).foregroundStyle(.secondary)
+                        }
+
+                        if let runtime = model.channelRuntime(channel.id), !runtime.allowedHistoryTaskIDs.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
-                                Text("消息 #\(messageID) 的会话转发结果未知").font(.subheadline.bold())
-                                if let detail = subscription.uncertainDetail { Text(detail).font(.caption).foregroundStyle(.secondary) }
-                                HStack {
-                                    Button("目标会话未出现，重试") {
-                                        model.resolveUncertainDelivery(subscription.id, retry: true)
+                                ForEach(runtime.allowedHistoryTaskIDs, id: \.self) { taskID in
+                                    HStack {
+                                        Text(taskID).font(.caption.monospaced()).lineLimit(1)
+                                        Spacer()
+                                        Button("撤销") {
+                                            model.setChannelHistoryAccess(false, taskID: taskID, channelID: channel.id)
+                                        }
+                                        .buttonStyle(.borderless)
                                     }
-                                    Button("目标会话已出现，跳过") {
-                                        model.resolveUncertainDelivery(subscription.id, retry: false)
-                                    }
                                 }
                             }
-                            .padding(8)
-                            .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
-                        }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("同成员消息").font(.caption.bold())
-                            Picker("", selection: Binding(
-                                get: { subscription.selfMessagePolicy },
-                                set: { model.setSubscriptionPolicy(subscription.id, policy: $0) }
-                            )) {
-                                ForEach(SelfMessagePolicy.allCases) { policy in Text(policy.title).tag(policy) }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .fixedSize()
-                            Text("当前会话自己发送的消息始终不会转发回来，以避免循环。")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                        HStack {
-                            Text("会话消息模板").font(.caption.bold())
-                            Picker("消息方向", selection: $isEditingSentMessageTemplate) {
-                                Text("收到频道消息").tag(false)
-                                Text("发送成功").tag(true)
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .fixedSize()
-                            Spacer()
-                            Picker("模板显示模式", selection: $isPreviewingTemplate) {
-                                Text("编辑").tag(false)
-                                Text("预览").tag(true)
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .fixedSize()
-                        }
-                        Group {
-                            if isPreviewingTemplate {
-                                ScrollView {
-                                    Text(templatePreview)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(8)
-                                        .textSelection(.enabled)
-                                }
-                            } else {
-                                TextEditor(text: activeTemplateDraft)
-                                    .font(.system(.body, design: .monospaced))
-                            }
-                        }
-                        .frame(height: 130)
-                        .overlay(RoundedRectangle(cornerRadius: 5).stroke(.quaternary))
-                        Text(isEditingSentMessageTemplate
-                            ? "发送成功后作为频道标志返回当前会话，不改写频道正文。"
-                            : "收到频道消息时，整段 Markdown 作为会话输入。")
-                            .font(.caption2).foregroundStyle(.secondary)
-                        Text("变量：{channel_name} {sender_name} {sender_member_id} {message_source} {message_text} {message_id} {mentions}")
-                            .font(.caption2).foregroundStyle(.secondary)
-                        HStack {
-                            if !isManagedAssistant {
-                                Button("停止转发到此会话", role: .destructive) { model.removeSubscription(subscription.id) }
-                            }
-                            Spacer()
-                            Button("恢复默认") {
-                                if isEditingSentMessageTemplate { sentMessageTemplateDraft = defaultSentMessageTemplate }
-                                else { templateDraft = defaultMessageTemplate }
-                            }
-                            Button("保存模板") {
-                                if isEditingSentMessageTemplate {
-                                    model.setSubscriptionSentMessageTemplate(subscription.id, template: sentMessageTemplateDraft)
-                                } else {
-                                    model.setSubscriptionTemplate(subscription.id, template: templateDraft)
-                                }
-                            }
-                                .buttonStyle(.borderedProminent)
                         }
                     }
-                    .frame(maxWidth: 760, alignment: .leading)
-                    .padding(.leading, 18)
-                    .padding(.bottom, 4)
                 }
+                .padding(16)
+            } else {
+                EmptyStateView(title: "未选择频道", systemImage: "bubble.left", detail: "") { EmptyView() }
             }
-            .onAppear {
-                templateDraft = subscription.template
-                sentMessageTemplateDraft = subscription.sentMessageTemplate ?? defaultSentMessageTemplate
-            }
-            .alert("启用完全访问权限？", isPresented: $isConfirmingFullAccess) {
-                Button("取消", role: .cancel) {}
-                Button("启用", role: .destructive) {
-                    Task { await model.updateHostPermission(subscription.taskID, permission: .fullAccess) }
-                }
-            } message: {
-                Text("ChatGPT 将可不受限制地访问互联网和电脑上的任何文件。")
-            }
+        }
+        .sheet(isPresented: $showChannelContext) {
+            if let channel { ChannelContextSheet(model: model, channelID: channel.id) }
         }
     }
 }
-
 struct EmptyStateView<Actions: View>: View {
     let title: String
     let systemImage: String
@@ -1526,7 +1024,7 @@ struct PijooSettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(initialSetup ? "开始使用 Pijoo" : "设置").font(.title2.bold())
                 if initialSetup {
-                    Text("请先设置名字并启用 AI 集成，完成后会自动进入频道。")
+                    Text("请先设置名字并启用 AI 集成，完成后即可创建频道。")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1562,7 +1060,7 @@ struct PijooSettingsView: View {
                             }
                         }
                     }
-                    Text("登录后会恢复你加入的频道；账号会话仅保存在本机 Keychain，频道消息、AI 会话和工作目录不会上传。")
+                    Text("登录后会恢复你加入的频道；频道消息会经过服务端中继，AI 运行数据和工作目录不会上传。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

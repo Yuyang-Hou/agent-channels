@@ -342,8 +342,10 @@ describe("GitHub account login", () => {
     const page = await app.request("/join/shared-one");
     expect(page.status).toBe(200);
     const html = await page.text();
-    expect(html).toContain("Pijoo · 共享会话");
+    expect(html).toContain("Pijoo · 频道");
     expect(html).toContain('<div class="gate hidden" id="gate">');
+    expect(html).toContain('message.author_kind === "channel_ai"');
+    expect(html).toContain('isAI ? "AI"');
   });
 
   it("restores account channel memberships and blocks banned re-entry", async () => {
@@ -412,8 +414,6 @@ describe("GitHub account login", () => {
         channel_name: "Account channel",
         membership_id: membership.member_id,
         role: "member",
-        member_count: 2,
-        peer_name: "Owner",
       }],
     });
 

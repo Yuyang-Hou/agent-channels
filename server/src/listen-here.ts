@@ -72,14 +72,6 @@ options:
   --message-template <t>
                       render {channel_name}, {sender_name}, {message_source},
                       {message_text}, {mentions}, and {message_id} as the complete Host input
-  --receive-scope <p> all_messages (default) or mentions_only
-  --self-message-policy <p>
-                      include_other_endpoints (default) or exclude_member;
-                      the exact current task endpoint is always excluded
-  --self-endpoint-id <id>
-                      exact authenticated sender endpoint used by this task
-  --self-member-id <id>
-                      authenticated channel member used by exclude_member
   --app-socket <p>    private Pijoo App socket used to durably record a
                       message before Host delivery (requires --subscription-id)
   --subscription-id <uuid>
@@ -139,8 +131,6 @@ examples:
 `;
 
 type Format = "jsonl" | "text";
-type SelfMessagePolicy = "include_other_endpoints" | "exclude_member";
-type ReceiveScope = "all_messages" | "mentions_only";
 
 type Priority = "min" | "low" | "default" | "high" | "urgent";
 
@@ -175,10 +165,6 @@ type Args = {
   codexSocket?: string;
   channelName?: string;
   messageTemplate?: string;
-  receiveScope: ReceiveScope;
-  selfMessagePolicy: SelfMessagePolicy;
-  selfEndpointId?: string;
-  selfMemberId?: string;
   appSocket?: string;
   subscriptionId?: string;
   statusJson: boolean;
@@ -220,10 +206,6 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
         "codex-socket": { type: "string" },
         "channel-name": { type: "string" },
         "message-template": { type: "string" },
-        "receive-scope": { type: "string" },
-        "self-message-policy": { type: "string" },
-        "self-endpoint-id": { type: "string" },
-        "self-member-id": { type: "string" },
         "app-socket": { type: "string" },
         "subscription-id": { type: "string" },
         "status-json": { type: "boolean" },
@@ -286,19 +268,6 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
     if (!Number.isFinite(n) || n <= 0) return { error: "--heartbeat must be a positive number of seconds" };
     heartbeat = n;
   }
-  const selfMessagePolicy = parsed.values["self-message-policy"] ?? "include_other_endpoints";
-  if (
-    selfMessagePolicy !== "include_other_endpoints" && selfMessagePolicy !== "exclude_member"
-  ) {
-    return { error: "--self-message-policy must be include_other_endpoints|exclude_member" };
-  }
-  const receiveScope = parsed.values["receive-scope"] ?? "all_messages";
-  if (receiveScope !== "all_messages" && receiveScope !== "mentions_only") {
-    return { error: "--receive-scope must be all_messages|mentions_only" };
-  }
-  if (receiveScope === "mentions_only" && !parsed.values["self-member-id"]) {
-    return { error: "--receive-scope mentions_only requires --self-member-id" };
-  }
   const appSocket = parsed.values["app-socket"];
   const subscriptionId = parsed.values["subscription-id"];
   if (Boolean(appSocket) !== Boolean(subscriptionId)) {
@@ -347,10 +316,6 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
     codexSocket: parsed.values["codex-socket"],
     channelName: parsed.values["channel-name"],
     messageTemplate: parsed.values["message-template"],
-    receiveScope,
-    selfMessagePolicy,
-    selfEndpointId: parsed.values["self-endpoint-id"],
-    selfMemberId: parsed.values["self-member-id"],
     appSocket,
     subscriptionId,
     statusJson: parsed.values["status-json"] === true,
@@ -478,6 +443,7 @@ type IncomingMessage = {
   };
   sender_member_id: string;
   sender_endpoint_id: string;
+  author_kind: "human" | "channel_ai";
   to: string;
   text: string;
   at: number;
@@ -679,6 +645,7 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
       at: msg.at,
       sender_member_id: msg.sender_member_id,
       sender_endpoint_id: msg.sender_endpoint_id,
+      author_kind: msg.author_kind,
       state: "received",
     });
     if (ledgerResult === "already_processed") return;
@@ -705,27 +672,9 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
       },
     });
   }
-  const filteredSelfMessage =
-    args.selfEndpointId === msg.sender_endpoint_id ||
-    (args.selfMessagePolicy === "exclude_member" &&
-      Boolean(args.selfMemberId) &&
-      args.selfMemberId === msg.sender_member_id);
-  if (filteredSelfMessage) {
-    await recordWithApp(args, "record_outcome", { id: msg.id, state: "filtered", error: "self_message" });
-    emitStatus(args, "filtered", { messageId: msg.id, reason: args.selfMessagePolicy });
-    return;
-  }
-  const mentionedSelf = msg.mention?.kind === "all" || (
-    msg.mention?.kind === "members" &&
-    msg.mention.members.some((member) => member.member_id === args.selfMemberId)
-  );
-  if (args.receiveScope === "mentions_only" && !mentionedSelf) {
-    await recordWithApp(args, "record_outcome", {
-      id: msg.id,
-      state: "filtered",
-      error: "mention_not_matched",
-    });
-    emitStatus(args, "filtered", { messageId: msg.id, reason: "mention_not_matched" });
+  if (msg.author_kind === "channel_ai") {
+    await recordWithApp(args, "record_outcome", { id: msg.id, state: "filtered", error: "channel_ai" });
+    emitStatus(args, "filtered", { messageId: msg.id, reason: "channel_ai" });
     return;
   }
   if (hostDelivery && msg.kind !== "status") {
@@ -1100,7 +1049,6 @@ export async function runListenHere(
     try {
       const joined = await joinForSession(args);
       args.session = joined.sessionId;
-      args.selfMemberId ??= joined.memberId;
       if (!args.quiet) console.error(`[listen-here] joined as session ${args.session.slice(0, 8)}…`);
       emitStatus(args, "joined", { session: args.session.slice(0, 8) });
     } catch (err) {
@@ -1196,7 +1144,6 @@ export async function runListenHere(
         try {
           const joined = await joinForSession(args);
           args.session = joined.sessionId;
-          args.selfMemberId ??= joined.memberId;
           if (!args.quiet) {
             console.error(`[listen-here] re-joined after ${status} as session ${args.session.slice(0, 8)}… — resuming`);
           }

@@ -5,7 +5,7 @@ export function webAppHtml(accountEnabled: boolean): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#f4f1ea">
-  <title>Pijoo · 共享会话</title>
+  <title>Pijoo · 频道</title>
   <style>
     :root {
       color-scheme: light;
@@ -155,6 +155,9 @@ export function webAppHtml(accountEnabled: boolean): string {
       border-color: var(--accent);
       border-radius: 20px 20px 6px 20px;
     }
+    .message-row.ai { justify-content: flex-start; }
+    .ai .message { background: var(--accent-soft); border-color: rgba(36,114,93,.22); }
+    .ai .message-head { color: var(--accent-strong); }
     .message-head { display: flex; gap: 12px; justify-content: space-between; margin-bottom: 4px; color: var(--muted); font-size: 11px; }
     .mine .message-head { color: rgba(255,255,255,.72); }
     .message-text { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -265,7 +268,7 @@ export function webAppHtml(accountEnabled: boolean): string {
     <aside class="sidebar" aria-label="频道列表">
       <div class="brand">
         <img src="/logo.svg" alt="">
-        <div><strong>Pijoo</strong><span>共享会话</span></div>
+        <div><strong>Pijoo</strong><span>频道</span></div>
       </div>
       <div class="sidebar-label">我的频道</div>
       <ul class="channels" id="channels"></ul>
@@ -279,13 +282,13 @@ export function webAppHtml(accountEnabled: boolean): string {
       <header class="conversation-header">
         <button class="icon-button mobile-menu" id="menu" type="button" aria-label="打开频道列表">☰</button>
         <span class="connection-dot" id="connectionDot" aria-hidden="true"></span>
-        <div><h1 id="title">Pijoo</h1><p id="subtitle">安全地加入共享会话</p></div>
+        <div><h1 id="title">Pijoo</h1><p id="subtitle">安全地加入频道</p></div>
       </header>
       <div class="content" id="content">
         <div class="gate hidden" id="gate">
           <div class="empty-mark">↗</div>
           <h2 id="gateTitle">连接你的频道</h2>
-          <p id="gateCopy">登录后即可恢复曾经加入的频道，或使用邀请链接加入新的共享会话。</p>
+          <p id="gateCopy">登录后即可恢复曾经加入的频道，或使用邀请链接加入频道。</p>
           <a class="primary-button" id="login" href="/web/auth/github/start?return_to=/app">使用 GitHub 登录</a>
         </div>
         <div class="messages hidden" id="messages" aria-live="polite"></div>
@@ -343,15 +346,7 @@ export function webAppHtml(accountEnabled: boolean): string {
       return body;
     }
 
-    function channelTitle(channel) {
-      return channel.peer_name || channel.channel_name || "未命名频道";
-    }
-
-    function channelKind(channel) {
-      if (channel.member_count === 1) return "我的助理";
-      if (channel.member_count === 2) return "共享会话";
-      return channel.member_count + " 人频道";
-    }
+    function channelTitle(channel) { return channel.channel_name || "未命名频道"; }
 
     function setGate(title, copy, action, href) {
       stopPolling();
@@ -385,7 +380,7 @@ export function webAppHtml(accountEnabled: boolean): string {
         name.textContent = channelTitle(channel);
         const meta = document.createElement("span");
         meta.className = "channel-meta";
-        meta.textContent = channelKind(channel);
+        meta.textContent = "频道";
         copy.append(name, meta);
         button.append(avatar, copy);
         button.addEventListener("click", () => openChannel(channel));
@@ -416,7 +411,7 @@ export function webAppHtml(accountEnabled: boolean): string {
         return;
       }
       if (!state.channels.length) {
-        setGate("还没有频道", "请使用邀请链接加入共享会话。");
+        setGate("还没有频道", "请使用邀请链接加入频道。");
         return;
       }
       const remembered = localStorage.getItem("pijoo:selected-channel");
@@ -424,13 +419,13 @@ export function webAppHtml(accountEnabled: boolean): string {
     }
 
     function showJoinGate() {
-      ui.title.textContent = "加入共享会话";
+      ui.title.textContent = "加入频道";
       ui.subtitle.textContent = "邀请只在首次加入时使用";
       if (!state.pendingInvite) {
         setGate("邀请信息缺失", "请重新打开完整的邀请链接。", "返回我的频道", "/app");
         return;
       }
-      setGate("加入共享会话？", "加入后，该频道会保存在你的账号中，以后登录即可直接回来。", "确认加入", "#");
+      setGate("加入频道？", "加入后，该频道会保存在你的账号中，以后登录即可直接回来。", "确认加入", "#");
       ui.login.onclick = async (event) => {
         event.preventDefault();
         ui.login.setAttribute("aria-busy", "true");
@@ -457,7 +452,7 @@ export function webAppHtml(accountEnabled: boolean): string {
       localStorage.setItem("pijoo:selected-channel", channel.channel_id);
       document.body.classList.remove("menu-open");
       ui.title.textContent = channelTitle(channel);
-      ui.subtitle.textContent = channelKind(channel) + " · 最近消息";
+      ui.subtitle.textContent = "频道 · 最近消息";
       ui.gate.classList.add("hidden");
       ui.messages.classList.remove("hidden");
       ui.composerWrap.classList.remove("hidden");
@@ -510,13 +505,14 @@ export function webAppHtml(accountEnabled: boolean): string {
       }).sort((a, b) => Number(a.id) - Number(b.id));
       for (const message of state.messages) {
         const row = document.createElement("div");
-        row.className = "message-row" + (message.sender_member_id === state.selected.membership_id ? " mine" : "");
+        const isAI = message.author_kind === "channel_ai";
+        row.className = "message-row" + (isAI ? " ai" : message.sender_member_id === state.selected.membership_id ? " mine" : "");
         const bubble = document.createElement("article");
         bubble.className = "message";
         const head = document.createElement("div");
         head.className = "message-head";
         const sender = document.createElement("span");
-        sender.textContent = message.sender_name || message.from || "频道成员";
+        sender.textContent = isAI ? "AI" : message.sender_name || message.from || "频道成员";
         const time = document.createElement("time");
         time.textContent = new Date(message.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
         const text = document.createElement("div");
@@ -597,7 +593,7 @@ export function webAppHtml(accountEnabled: boolean): string {
         state.messages.push({
           id: sent.id, at: sent.at, from: sent.from, sender_name: sent.sender_name,
           sender_member_id: channel.membership_id, sender_endpoint_id: sent.sender_endpoint_id,
-          to: sent.to, text: text, source: sent.source
+          author_kind: sent.author_kind || "human", to: sent.to, text: text, source: sent.source
         });
         connection.lastId = Math.max(connection.lastId, Number(sent.id) || 0);
         ui.input.value = "";
@@ -649,7 +645,7 @@ export function webAppHtml(accountEnabled: boolean): string {
         if (new URLSearchParams(location.search).get("login") === "cancelled") {
           ui.gateCopy.textContent = "登录已取消，你可以稍后重试。";
         }
-        setGate("连接你的频道", ui.gateCopy.textContent || "登录后即可恢复曾经加入的频道，或使用邀请链接加入新的共享会话。", "使用 GitHub 登录",
+        setGate("连接你的频道", ui.gateCopy.textContent || "登录后即可恢复曾经加入的频道，或使用邀请链接加入频道。", "使用 GitHub 登录",
           "/web/auth/github/start?return_to=" + encodeURIComponent(location.pathname + location.search));
       }
     }

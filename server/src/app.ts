@@ -9,6 +9,7 @@ import type { AccountSession } from "./account-store.js";
 import {
   ChannelError,
   type Message,
+  type MessageAuthorKind,
   type MessageMention,
   type MessageSource,
   type Priority,
@@ -227,17 +228,12 @@ export function createApp(opts: AppOptions): Hono {
             (candidate) => candidate.member_id === membership.membershipId,
           );
           if (!member) return [];
-          const peer = activeMembers.length === 2
-            ? activeMembers.find((candidate) => candidate.member_id !== membership.membershipId)
-            : undefined;
           return [{
             channel_id: membership.channelId,
             channel_name: getChannelName(membership.channelId),
             membership_id: membership.membershipId,
             role: membership.role,
             name: member.name,
-            member_count: activeMembers.length,
-            ...(peer ? { peer_name: peer.name } : {}),
           }];
         }),
       });
@@ -874,11 +870,20 @@ export function createApp(opts: AppOptions): Hono {
       : principal.memberId;
     const requestedName = typeof body.name === "string" ? body.name.trim() : "";
     if (requestedName.length > 64) return c.json({ error: "name must be 1-64 characters", code: "invalid" }, 400);
+    const rawAuthorKind = body.author_kind ?? "human";
+    if (rawAuthorKind !== "human" && rawAuthorKind !== "channel_ai") {
+      return c.json({ error: "author_kind must be human or channel_ai", code: "invalid" }, 400);
+    }
+    const authorKind: MessageAuthorKind = rawAuthorKind;
+    if (authorKind === "channel_ai" && (principal.isPublic || principal.role !== "owner")) {
+      return c.json({ error: "only the channel owner can create a channel_ai endpoint", code: "unauthorized" }, 403);
+    }
     if (requestedName && !principal.isPublic) updateMemberName(channelId, principal.memberId, requestedName);
     const source = {
       memberId: sourceMemberId,
       endpointId: authenticatedEndpointId(channelId, sourceMemberId, normalizedCallsign),
       memberName: principal.isPublic ? normalizedCallsign : (requestedName || undefined),
+      authorKind,
     };
     if (!principal.isPublic) {
       const existingMember = memberBySession.get(channelId)?.get(newId);
@@ -922,6 +927,7 @@ export function createApp(opts: AppOptions): Hono {
         session_id: result.sessionId,
         member_id: sourceMemberId,
         endpoint_id: source.endpointId,
+        author_kind: authorKind,
         role: principal.role,
         callsign: resolvedCallsign,
         human_authorized: humanAuthorized,
@@ -1087,6 +1093,7 @@ export function createApp(opts: AppOptions): Hono {
         sender_name: msg.sender_name,
         sender_member_id: msg.sender_member_id,
         sender_endpoint_id: msg.sender_endpoint_id,
+        author_kind: msg.author_kind,
         ...(msg.source ? { source: msg.source } : {}),
         ...(msg.mention ? { mention: msg.mention } : {}),
         queued,
