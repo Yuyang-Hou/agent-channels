@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Context, Hono } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { AccountSession, AccountStore } from "./account-store.js";
 
 const LOGIN_TTL_MS = 10 * 60 * 1000;
@@ -7,6 +8,8 @@ const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const CALLBACK_URI = "pijoo://oauth/callback";
 const START_LIMIT = 20;
 const START_WINDOW_MS = 60 * 60 * 1000;
+const WEB_LOGIN_COOKIE = "pijoo_web_login";
+export const WEB_SESSION_COOKIE = "pijoo_session";
 
 export type GitHubIdentity = { id: string; displayName: string };
 
@@ -93,8 +96,16 @@ export class GitHubOAuthClient implements GitHubIdentityProvider {
   }
 }
 
-export function registerAccountRoutes(app: Hono, auth: AccountAuth): void {
+type WebLogin = { clientState: string; verifier: string; returnTo: string };
+
+export function webSessionCredential(c: Context): string {
+  const value = getCookie(c, WEB_SESSION_COOKIE) ?? "";
+  return /^[A-Za-z0-9_-]{43}$/.test(value) ? value : "";
+}
+
+export function registerAccountRoutes(app: Hono, auth: AccountAuth, publicOrigin: string): void {
   const starts = new Map<string, StartBucket>();
+  const secureCookies = new URL(publicOrigin).protocol === "https:";
 
   app.get("/ready", async (c) => {
     try {
@@ -131,12 +142,50 @@ export function registerAccountRoutes(app: Hono, auth: AccountAuth): void {
     }
   });
 
+  app.get("/web/auth/github/start", async (c) => {
+    try {
+      enforceStartLimit(starts, requestAddress(c.req.header("x-forwarded-for")));
+      const clientState = randomValue();
+      const verifier = randomValue();
+      const githubState = randomValue();
+      const githubVerifier = randomValue();
+      const returnTo = safeWebReturnTo(c.req.query("return_to"));
+      await auth.store.createLoginAttempt({
+        githubStateHash: digest(githubState),
+        githubPkceVerifier: githubVerifier,
+        appCodeChallenge: challenge(verifier),
+        clientState,
+        deviceName: "Pijoo Web",
+        expiresAt: new Date(Date.now() + LOGIN_TTL_MS).toISOString(),
+      });
+      setCookie(c, WEB_LOGIN_COOKIE, encodeWebLogin({ clientState, verifier, returnTo }), {
+        httpOnly: true,
+        secure: secureCookies,
+        sameSite: "Lax",
+        path: "/",
+        maxAge: LOGIN_TTL_MS / 1000,
+      });
+      c.header("cache-control", "no-store");
+      return c.redirect(
+        auth.github.authorizationUrl({ state: githubState, codeChallenge: challenge(githubVerifier) }),
+        303,
+      );
+    } catch (error) {
+      return authError(c, error);
+    }
+  });
+
   app.get("/v1/auth/github/callback", async (c) => {
     const state = c.req.query("state") ?? "";
+    const webLogin = decodeWebLogin(getCookie(c, WEB_LOGIN_COOKIE));
     try {
       if (!state) throw new AccountAuthError("login-state-invalid", 400);
       if (c.req.query("error")) {
         const clientState = await auth.store.cancelLoginAttempt(digest(state));
+        if (webLogin?.clientState === clientState) {
+          deleteCookie(c, WEB_LOGIN_COOKIE, { path: "/" });
+          return c.redirect("/app?login=cancelled", 303);
+        }
         return c.redirect(callbackUrl({ error: "login_cancelled", state: clientState }), 303);
       }
       const code = c.req.query("code") ?? "";
@@ -150,6 +199,26 @@ export function registerAccountRoutes(app: Hono, auth: AccountAuth): void {
         githubDisplayName: identity.displayName,
         exchangeCodeHash: digest(exchangeCode),
       });
+      if (webLogin?.clientState === clientState) {
+        const sessionCredential = randomValue();
+        await auth.store.redeemLoginAttempt({
+          exchangeCodeHash: digest(exchangeCode),
+          appCodeChallenge: challenge(webLogin.verifier),
+          sessionCredentialHash: digest(sessionCredential),
+          sessionExpiresAt: new Date(Date.now() + SESSION_TTL_MS).toISOString(),
+          devicePlatform: "web",
+        });
+        deleteCookie(c, WEB_LOGIN_COOKIE, { path: "/" });
+        setCookie(c, WEB_SESSION_COOKIE, sessionCredential, {
+          httpOnly: true,
+          secure: secureCookies,
+          sameSite: "Lax",
+          path: "/",
+          maxAge: SESSION_TTL_MS / 1000,
+        });
+        c.header("cache-control", "no-store");
+        return c.redirect(webLogin.returnTo, 303);
+      }
       return c.redirect(callbackUrl({ code: exchangeCode, state: clientState }), 303);
     } catch (error) {
       return authError(c, error);
@@ -177,7 +246,7 @@ export function registerAccountRoutes(app: Hono, auth: AccountAuth): void {
 
   app.get("/v1/session", async (c) => {
     try {
-      const credential = bearer(c.req.header("authorization"));
+      const credential = sessionCredential(c);
       c.header("cache-control", "no-store");
       return c.json(sessionResponse(await auth.store.getSession(digest(credential))));
     } catch (error) {
@@ -187,10 +256,11 @@ export function registerAccountRoutes(app: Hono, auth: AccountAuth): void {
 
   app.post("/v1/session/logout", async (c) => {
     try {
-      const credential = bearer(c.req.header("authorization"));
+      const credential = sessionCredential(c);
       if (!(await auth.store.revokeSession(digest(credential)))) {
         throw new AccountAuthError("account-session-unavailable", 401);
       }
+      if (webSessionCredential(c)) deleteCookie(c, WEB_SESSION_COOKIE, { path: "/" });
       c.header("cache-control", "no-store");
       return c.json({ ok: true });
     } catch (error) {
@@ -273,6 +343,42 @@ function bearer(value: string | undefined): string {
   const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(value ?? "");
   if (!match) throw new AccountAuthError("account-session-unavailable", 401);
   return match[1];
+}
+
+function sessionCredential(c: Context): string {
+  const authorization = c.req.header("authorization");
+  return authorization ? bearer(authorization) : webSessionCredential(c) || bearer(undefined);
+}
+
+function safeWebReturnTo(value: string | undefined): string {
+  if (!value) return "/app";
+  try {
+    const url = new URL(value, "https://pijoo.invalid");
+    if (url.origin !== "https://pijoo.invalid") return "/app";
+    if (url.pathname !== "/app" && !url.pathname.startsWith("/join/")) return "/app";
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return "/app";
+  }
+}
+
+function encodeWebLogin(value: WebLogin): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function decodeWebLogin(value: string | undefined): WebLogin | undefined {
+  if (!value || value.length > 1024) return undefined;
+  try {
+    const parsed = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Partial<WebLogin>;
+    if (
+      typeof parsed.clientState !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(parsed.clientState) ||
+      typeof parsed.verifier !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(parsed.verifier) ||
+      typeof parsed.returnTo !== "string"
+    ) return undefined;
+    return { clientState: parsed.clientState, verifier: parsed.verifier, returnTo: safeWebReturnTo(parsed.returnTo) };
+  } catch {
+    return undefined;
+  }
 }
 
 async function jsonObject(c: Context): Promise<Record<string, unknown>> {

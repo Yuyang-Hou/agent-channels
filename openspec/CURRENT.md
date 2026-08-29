@@ -1,6 +1,11 @@
 # Pijoo Current Change
 
-当前唯一活动产品 change：
+当前优先产品 change：
+
+1. [`changes/add-web-shared-channel-client`](./changes/add-web-shared-channel-client/)：
+   由现有 Pijoo 服务托管 Web 共享入口；被邀请者可登录、幂等加入、恢复并切换频道和收发消息。
+
+已落地主干、继续作为基础的 change：
 
 1. [`changes/pivot-to-personal-context-assistant`](./changes/pivot-to-personal-context-assistant/)：
    将已验证的账号、消息中继和 Codex Connector 收敛为一个固定的个人上下文助理；首版增加本机
@@ -17,5 +22,5 @@
 4. [`../ARCHITECTURE.md`](../ARCHITECTURE.md)
 5. [`../docs/OPEN_QUESTIONS.md`](../docs/OPEN_QUESTIONS.md)
 
-当前不建设自动回复、第二个 Host、公开联系人目录、完整聊天客户端、自建模型 Runtime、向量数据库
-或通用插件框架。
+当前不建设独立 Web 后端、Web task 管理、永久云端聊天历史、第二个 Host、公开联系人目录、自建模型
+Runtime、向量数据库或通用插件框架。

@@ -14,6 +14,9 @@ App 消息框 -> 昵称命名的默认助理 Channel
   -> 回复草稿 -> 用户确认 -> Channel -> 好友
 
 助理 task -> 本机历史工具 -> Codex App Server thread/read
+
+邀请链接 -> Pijoo Web -> Account Session + Membership
+  -> Channel join/listen/send -> Subscription -> 已连接 Codex task
 ```
 
 Pijoo 不自建模型 Runtime。Codex 负责推理和任务历史；Pijoo 负责授权范围、外部消息传输、
@@ -60,11 +63,24 @@ Channel、Membership、Subscription 和 endpoint 继续作为唯一收发模型�
 - 账号同步会自动补建默认助理 Channel，并始终用当前用户昵称显示；普通待邀请频道仍显示为频道；
 - 双人 Channel 显示为“好友”，标题优先使用另一名 active Member 的昵称；
 - 三人及以上显示为“群聊”，首版不继续扩展群聊功能；
-- 默认助理频道隐藏邀请与成员管理，并且只保留一个启用的会话 Subscription；
+- Owner 可以为频道创建限时、限次邀请；默认助理频道仍只保留一个启用的会话 Subscription；
 - 服务端不能看到 `assistantTaskID`、allowed history task ids、工作目录或历史正文。
 
 当前传输是 TLS + 鉴权，不是 E2EE。联系人消息在服务端是明文；画像和 Codex 历史片段不得作为
 频道消息上传。面向真实个人敏感数据公开发布前，需单独完成 E2EE 设计与迁移。
+
+## Web 共享入口
+
+Web 由现有 Hono 服务在同一 Origin 托管，不新增前端服务或消息协议：
+
+- GitHub OAuth 复用同一 LoginAttempt 和 90 天 Account Session；Web Session 只写入
+  `HttpOnly + Secure + SameSite=Lax` Cookie，不进入 JS 或本地存储；
+- `/join/<channel>#invite=<token>` 在浏览器 Session Storage 暂存 token，并立即清除地址栏 Fragment；
+- 登录后先读取 `/v1/channels`。目标 Membership 已 active 时直接进入频道，不兑换或消耗邀请；
+- 未加入时才显示一次加入确认并调用既有邀请兑换接口；退出、移除或封禁后必须重新授权；
+- 每个频道使用独立的 Web endpoint session。首版只长轮询当前频道，切换时停止旧轮询；
+- Web 只展示服务端短期恢复的最近消息，不同步本机账本、TaskBinding、历史授权或工作目录；
+- 发送只在服务端返回消息 id 后显示为已发送；网络中断造成的未知结果不自动重试。
 
 ## 权限与信任边界
 
@@ -79,4 +95,4 @@ Channel、Membership、Subscription 和 endpoint 继续作为唯一收发模型�
 
 - 通用 Connector SDK、插件市场、向量数据库或自定义记忆框架；
 - 多助理路由、规则 DSL、自动回复队列或常驻模型进程；
-- 第二个 Host、完整聊天客户端或公开联系人目录。
+- 第二个 Host、公开联系人目录、独立 Web 后端、Web task 管理或永久云端聊天历史。

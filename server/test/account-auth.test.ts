@@ -28,6 +28,7 @@ class MemoryAccountStore implements AccountStore {
   attempts = new Map<string, Attempt>();
   sessions = new Map<string, AccountSession>();
   memberships = new Map<string, AccountMembership>();
+  lastDevicePlatform: "macos" | "web" | undefined;
 
   async ready() {}
 
@@ -77,6 +78,7 @@ class MemoryAccountStore implements AccountStore {
     appCodeChallenge: string;
     sessionCredentialHash: string;
     sessionExpiresAt: string;
+    devicePlatform?: "macos" | "web";
   }) {
     const entry = [...this.attempts.entries()].find(([, attempt]) =>
       attempt.exchangeCodeHash === input.exchangeCodeHash &&
@@ -91,6 +93,7 @@ class MemoryAccountStore implements AccountStore {
       displayName: attempt.githubDisplayName!,
       expiresAt: input.sessionExpiresAt,
     };
+    this.lastDevicePlatform = input.devicePlatform;
     this.sessions.set(input.sessionCredentialHash, session);
     return session;
   }
@@ -277,6 +280,72 @@ describe("GitHub account login", () => {
     })).status).toBe(401);
   });
 
+  it("signs a browser in with an HttpOnly cookie and returns to the shared channel", async () => {
+    const store = new MemoryAccountStore();
+    const app = createApp({
+      publicOrigin: ORIGIN,
+      authRequired: true,
+      accountAuth: { store, github: new FakeGitHub() },
+    });
+    const start = await app.request("/web/auth/github/start?return_to=%2Fjoin%2Fshared-one");
+    expect(start.status).toBe(303);
+    const loginCookie = cookieValue(start, "pijoo_web_login");
+    expect(loginCookie).toBeTruthy();
+    const providerState = new URL(start.headers.get("location")!).searchParams.get("state")!;
+
+    const callback = await app.request(
+      `/v1/auth/github/callback?state=${providerState}&code=github-code`,
+      { headers: { cookie: `pijoo_web_login=${loginCookie}` } },
+    );
+    expect(callback.status).toBe(303);
+    expect(callback.headers.get("location")).toBe("/join/shared-one");
+    expect(callback.headers.get("set-cookie")).toContain("HttpOnly");
+    expect(callback.headers.get("set-cookie")).toContain("SameSite=Lax");
+    expect(callback.headers.get("set-cookie")).toContain("Secure");
+    expect(store.lastDevicePlatform).toBe("web");
+
+    const sessionCookie = cookieValue(callback, "pijoo_session");
+    expect(sessionCookie).toHaveLength(43);
+    const session = await app.request("/v1/session", {
+      headers: { cookie: `pijoo_session=${sessionCookie}` },
+    });
+    expect(session.status).toBe(200);
+    expect(await session.json()).toMatchObject({ display_name: "Pijoo Tester" });
+
+    const created = await app.request("/api/channels", {
+      method: "POST",
+      headers: { cookie: `pijoo_session=${sessionCookie}`, "content-type": "application/json" },
+      body: JSON.stringify({ api_version: 2, channel_name: "Web channel", name: "Pijoo Tester" }),
+    });
+    expect(created.status).toBe(200);
+    const channel = await created.json() as { channel_id: string };
+    expect(await (await app.request("/v1/channels", {
+      headers: { cookie: `pijoo_session=${sessionCookie}` },
+    })).json()).toMatchObject({ channels: [{ channel_id: channel.channel_id }] });
+    const joined = await app.request(`/api/channels/${channel.channel_id}/join`, {
+      method: "POST",
+      headers: { cookie: `pijoo_session=${sessionCookie}`, "content-type": "application/json" },
+      body: JSON.stringify({ callsign: "web_test", name: "Pijoo Tester" }),
+    });
+    const endpoint = await joined.json() as { session_id: string };
+    expect(joined.status).toBe(200);
+    expect((await app.request(`/api/channels/${channel.channel_id}/send`, {
+      method: "POST",
+      headers: {
+        cookie: `pijoo_session=${sessionCookie}`,
+        "content-type": "application/json",
+        "x-session-id": endpoint.session_id,
+      },
+      body: JSON.stringify({ message: "Hello from Web" }),
+    })).status).toBe(200);
+
+    const page = await app.request("/join/shared-one");
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain("Pijoo · 共享会话");
+    expect(html).toContain('<div class="gate hidden" id="gate">');
+  });
+
   it("restores account channel memberships and blocks banned re-entry", async () => {
     const store = new MemoryAccountStore();
     const ownerCredential = "o".repeat(43);
@@ -321,6 +390,18 @@ describe("GitHub account login", () => {
     expect(joined.status).toBe(200);
     const membership = await joined.json() as { member_id: string };
     expect(membership).not.toHaveProperty("member_credential");
+
+    const repeated = await app.request(`/api/channels/${channel.channel_id}/invites/redeem`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${memberCredential}`, "content-type": "application/json" },
+      body: JSON.stringify({ invite_token: invite.invite_token, name: "Ignored rename" }),
+    });
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toMatchObject({ member_id: membership.member_id, name: "Member" });
+    const invitations = await app.request(`/api/channels/${channel.channel_id}/invites`, {
+      headers: { authorization: `Bearer ${ownerCredential}` },
+    });
+    expect(await invitations.json()).toMatchObject({ invitations: [{ use_count: 1 }] });
 
     const restored = await app.request("/v1/channels", {
       headers: { authorization: `Bearer ${memberCredential}` },
@@ -450,3 +531,8 @@ describe("GitHub account login", () => {
     expect(store.attempts.size).toBe(0);
   });
 });
+
+function cookieValue(response: Response, name: string): string {
+  const match = response.headers.get("set-cookie")?.match(new RegExp(`(?:^|,\\s*)${name}=([^;,]*)`));
+  return match?.[1] ?? "";
+}

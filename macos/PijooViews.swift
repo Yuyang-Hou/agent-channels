@@ -344,7 +344,7 @@ struct AddChannelSheet: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("邀请口令").font(.headline)
                     HStack {
-                        SecureField("ac2: ...", text: $model.invitationInput)
+                        SecureField("邀请链接或 ac2: 口令", text: $model.invitationInput)
                             .onSubmit(submit)
                         Button {
                             if let value = NSPasteboard.general.string(forType: .string) {
@@ -354,7 +354,7 @@ struct AddChannelSheet: View {
                             Label("粘贴", systemImage: "doc.on.clipboard")
                         }
                     }
-                    Text("口令已包含频道信息；加入后你会获得独立的成员凭证。")
+                    Text("邀请已包含频道信息；加入后你会获得独立的成员身份。")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -423,7 +423,9 @@ struct CreateInvitationSheet: View {
                 TextField("有效小时数", value: $validHours, format: .number)
             }
             .formStyle(.grouped)
-            Text("范围：1–100 人、1–720 小时。口令只会显示并复制一次。")
+            Text("范围：1–100 人、1–720 小时。邀请链接只会复制一次。")
+                .font(.caption).foregroundStyle(.secondary)
+            Label("加入者可以向当前频道及其已连接会话发消息，但不会获得本机文件或工具权限。", systemImage: "lock.shield")
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
             HStack {
@@ -501,8 +503,8 @@ struct ChannelDetailView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if channel.role == "owner" && !isAssistant {
-                    Button("创建邀请…") { showCreateInvitation = true }
+                if channel.role == "owner" {
+                    Button(isAssistant ? "分享会话…" : "创建邀请…") { showCreateInvitation = true }
                 }
                 if model.channelStatus[channel.id]?.contains("权限已撤销") == true {
                     Button("重新连接") { model.reconnectChannel(channel.id) }
@@ -536,7 +538,7 @@ struct ChannelDetailView: View {
             .padding(.vertical, 14)
             HStack(spacing: 24) {
                 tabButton("消息", tab: .messages)
-                if !isAssistant { tabButton("成员", tab: .members) }
+                tabButton("成员", tab: .members)
                 tabButton(
                     isAssistant ? "助理会话" : "转发到会话",
                     tab: .subscriptions,
@@ -551,8 +553,7 @@ struct ChannelDetailView: View {
                 case .messages:
                     ChannelMessagesView(model: model)
                 case .members:
-                    if isAssistant { ChannelMessagesView(model: model) }
-                    else { ChannelMembersView(model: model, channel: channel) }
+                    ChannelMembersView(model: model, channel: channel)
                 case .subscriptions:
                     ChannelSubscriptionsView(model: model)
                 }

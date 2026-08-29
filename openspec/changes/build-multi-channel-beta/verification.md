@@ -148,9 +148,14 @@ Gatekeeper gates pass. Clean-install, two-machine, real-Host and security inspec
 
 - “转发到会话”仅有一个可用 Host 时直接显示其完整操作，不显示 AI App 选择器；未支持的 Claude 不展示，也不调用 Codex 路径或出现假操作。
 - “转发到会话”以“新建专属会话”为主操作，使用原生目录选择器；搜索和按 ID 连接已有会话仍可用。
-- Sidecar 通过 ChatGPT Codex 自带 app-server 执行 `initialize -> thread/start -> thread/name/set`，以“Pijoo · 频道名”持久化空白 user task并校验返回 UUID；创建本身不发送输入。
+- Sidecar 通过 ChatGPT Codex 自带 app-server 执行 `initialize -> thread/start -> thread/inject_items -> thread/name/set`，以“Pijoo · 频道名”持久化空白 user task并校验返回 UUID；内部 developer 上下文只用于确保 rollout 落盘，创建本身不发送用户输入或触发 turn。
 - App 打开精确 `codex://threads/<id>`，等待 owner preflight 后才复用既有 TaskBinding 与 Subscription；超时错误保留 id 供恢复。
 - 隔离临时 `CODEX_HOME` 的真实 Codex CLI 探针可从现有会话搜索读回新 id 与标题；全量 11 个 server 测试文件 / 98 项测试、TypeScript typecheck/build、Swift warnings-as-errors typecheck 与本机 IPC 自测、OpenSpec strict 8/8 和 diff checks 均通过。本地 App-only 开发版已构建并启动，未创建 DMG、安装或发布。
+
+## 2026-08-29 Dedicated Codex Conversation Rollout Repair
+
+- Codex CLI `0.150.0-alpha.12.2` 的隔离探针确认：仅执行 `thread/start` 会留下数据库索引但不生成 rollout；追加不触发 turn 的 `thread/inject_items` 后，rollout 立即落盘，关闭创建进程后可由第二个 app-server 按同一 id 恢复。
+- 全量 13 个 server 测试文件 / 113 项测试、TypeScript typecheck/build、OpenSpec strict 17/17、Swift 自测、DMG 构建及 `verify-package.sh` 均通过。
 
 ## 2026-08-25 Beta.12 Local Package
 

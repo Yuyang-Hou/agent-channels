@@ -232,10 +232,30 @@ export async function createCodexThread(options: {
           threadId = thread.id.toLowerCase();
           send({
             id: 3,
+            method: "thread/inject_items",
+            params: {
+              threadId,
+              items: [{
+                type: "message",
+                role: "developer",
+                content: [{
+                  type: "input_text",
+                  text: "This Codex task was created by Pijoo as a dedicated channel conversation.",
+                }],
+              }],
+            },
+          });
+        } else if (message.id === 3) {
+          if (message.error !== undefined) {
+            fail(new Error(`Codex app-server thread/inject_items failed: ${responseErrorMessage(message.error)}`));
+            return;
+          }
+          send({
+            id: 4,
             method: "thread/name/set",
             params: { threadId, name: title },
           });
-        } else if (message.id === 3) {
+        } else if (message.id === 4) {
           if (message.error !== undefined) {
             fail(new Error(`Codex app-server thread/name/set failed: ${responseErrorMessage(message.error)}`));
             return;

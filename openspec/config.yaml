@@ -7,7 +7,7 @@ context: |
   Development status authority: docs/STATUS.md.
   Roadmap authority: docs/ROADMAP.md.
   Architecture authority: ARCHITECTURE.md.
-  Core boundary: Codex history is local, read-only and task-allowlisted; external messages use the existing relay; outbound replies require user confirmation.
+  Core boundary: Codex history and task bindings stay local; the same Channel, Account Session, Membership and relay serve macOS and Web; outbound replies still require user confirmation.
 
 rules:
   proposal:
@@ -16,8 +16,10 @@ rules:
   design:
     - Explain local history authorization, source attribution, revocation and relay trust boundaries.
     - Keep history reading, outbound sending and tool execution as separate grants.
+    - Reuse the existing Hono service and Channel APIs before adding any Web-specific service or protocol.
   specs:
     - Every authorization requirement must include denied and revoked scenarios.
     - Every outbound requirement must include a no-confirmation scenario.
   tasks:
     - Deliver the smallest real Codex history slice before changing the full macOS UI.
+    - Keep invite tokens out of server-rendered URLs and browser persistent storage.

@@ -729,8 +729,8 @@ enum InvitationCodec {
 
     static func decode(_ raw: String) throws -> ChannelInvitation {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("ac2:") else {
-            throw AppFailure("邀请口令格式不正确，应以 ac2: 开头")
+        if !trimmed.hasPrefix("ac2:") {
+            return try decodeWebURL(trimmed)
         }
         var encoded = String(trimmed.dropFirst(4))
             .replacingOccurrences(of: "-", with: "+")
@@ -739,7 +739,44 @@ enum InvitationCodec {
         guard let data = Data(base64Encoded: encoded) else {
             throw AppFailure("邀请口令已损坏")
         }
-        let invitation = try JSONDecoder().decode(ChannelInvitation.self, from: data)
+        return try validated(JSONDecoder().decode(ChannelInvitation.self, from: data))
+    }
+
+    static func webURL(_ invitation: ChannelInvitation) throws -> String {
+        let invitation = try validated(invitation)
+        guard var components = URLComponents(string: invitation.origin) else {
+            throw AppFailure("邀请地址无效")
+        }
+        let basePath = components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path
+        components.path = "\(basePath)/join/\(invitation.channel)"
+        components.query = nil
+        components.fragment = "invite=\(invitation.inviteToken)"
+        guard let value = components.url?.absoluteString else {
+            throw AppFailure("无法生成邀请链接")
+        }
+        return value
+    }
+
+    private static func decodeWebURL(_ raw: String) throws -> ChannelInvitation {
+        guard var components = URLComponents(string: raw),
+              components.scheme == "https" || components.scheme == "http",
+              let joinRange = components.path.range(of: "/join/", options: .backwards),
+              let fragment = components.fragment else {
+            throw AppFailure("邀请格式不正确，请粘贴完整邀请链接或 ac2: 口令")
+        }
+        let channel = String(components.path[joinRange.upperBound...]).removingPercentEncoding ?? ""
+        let token = URLComponents(string: "https://pijoo.invalid/?\(fragment)")?
+            .queryItems?.first(where: { $0.name == "invite" })?.value ?? ""
+        components.path = String(components.path[..<joinRange.lowerBound])
+        components.query = nil
+        components.fragment = nil
+        guard let origin = components.url?.absoluteString else {
+            throw AppFailure("邀请地址无效")
+        }
+        return try validated(ChannelInvitation(version: 2, origin: origin, channel: channel, inviteToken: token))
+    }
+
+    private static func validated(_ invitation: ChannelInvitation) throws -> ChannelInvitation {
         guard invitation.version == 2,
               let url = URL(string: invitation.origin),
               url.scheme == "https" || url.scheme == "http",
