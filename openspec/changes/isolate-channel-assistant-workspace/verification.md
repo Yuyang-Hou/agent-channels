@@ -13,8 +13,14 @@
 - `npm run typecheck --prefix server` 与 `npm run build --prefix server`；
 - Swift `-typecheck -warnings-as-errors` 与 macOS v2 self-test。
 
-当前源码验证：OpenSpec 18/18、server 115/115、TypeScript typecheck/build、Swift strict typecheck、
-macOS self-test 与 `git diff --check` 均通过。未打包、未发布，也未创建真实 Codex task 做 UI 验收。
+首轮源码验证：OpenSpec 18/18、server 115/115、TypeScript typecheck/build、Swift strict typecheck、
+macOS self-test 与 `git diff --check` 均通过；随后发布 `beta.25` 进入真实 Codex/UI 验收。
+
+真实 `beta.25` 验收发现：空 `thread/start` 在数据库登记了 rollout path，但未生成对应文件，Desktop
+打开时报 `failed to resolve rollout path ... file does not exist`。修复恢复中性 `thread/inject_items`
+持久化步骤，并由 task 创建协议测试固定该调用顺序；身份与权限仍分别来自 `AGENTS.md` 和运行时复验。
+修复后另用隔离临时 `CODEX_HOME` 调用真实 Codex `0.150.0-alpha.12.2`：task 创建成功、rollout JSONL
+存在且包含正确 cwd 与中性初始化记录，`host-preflight` 可重新解析该 task。
 
 ## Real Product Checks
 

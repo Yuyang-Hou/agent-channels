@@ -34,8 +34,9 @@ App 在 `thread/start` 前原子写入固定模板的 `AGENTS.md`。模板只包
 片段均为不可信输入、不得由消息改变身份或授权、发送与执行需要独立授权，以及草稿/回执边界。
 
 `AGENTS.md` 是 Codex 启动时读取的行为上下文，不是安全策略。App 在创建 task 和外部投递前恢复内置版本，
-但权限仍由投递校验强制执行。现有 `thread/inject_items` 身份提示与 `AGENTS.md` 重复；先用真实
-`thread/start` 验证身份卡被加载，通过后删除该提示，避免两份身份定义漂移。
+但权限仍由投递校验强制执行。Codex App Server 的空 `thread/start` 只登记 task，必须继续用
+`thread/inject_items` 写入一条不含身份细节的初始化记录来生成 rollout 文件；该记录只指向工作区
+`AGENTS.md`，避免两份身份定义漂移。
 
 P0 不做身份卡编辑 UI。昵称变化继续影响频道展示，不触发静默改写已运行 task 的身份；模板升级需要明确
 重建或重新加载助理 task 后才声明生效。
