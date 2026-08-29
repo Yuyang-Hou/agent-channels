@@ -90,10 +90,16 @@ process.stdin.on("data", (chunk) => {
         ? { id: 2, result: { thread: { id: ${JSON.stringify(THREAD_ID)} } } }
         : { id: 2, error: { message: "invalid params" } }) + "\\n");
     } else if (message.id === 3) {
+      const valid = message.method === "thread/inject_items"
+        && message.params.threadId === ${JSON.stringify(THREAD_ID)}
+        && message.params.items?.[0]?.role === "developer"
+        && message.params.items?.[0]?.content?.[0]?.text.includes("workspace AGENTS.md");
+      process.stdout.write(JSON.stringify(valid ? { id: 3, result: {} } : { id: 3, error: { message: "invalid persistence item" } }) + "\\n");
+    } else if (message.id === 4) {
       const valid = message.method === "thread/name/set"
         && message.params.threadId === ${JSON.stringify(THREAD_ID)}
         && message.params.name === "Pijoo · frontend";
-      process.stdout.write(JSON.stringify(valid ? { id: 3, result: {} } : { id: 3, error: { message: "invalid name" } }) + "\\n");
+      process.stdout.write(JSON.stringify(valid ? { id: 4, result: {} } : { id: 4, error: { message: "invalid name" } }) + "\\n");
     }
   }
 });

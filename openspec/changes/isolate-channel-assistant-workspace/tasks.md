@@ -9,7 +9,7 @@
 
 - [x] 将静态 `AppPaths.defaultWorkspace` 收敛为按账号摘要生成的助理工作区
 - [x] 以 0700 目录、原子写入和内置版本准备 `AGENTS.md`
-- [x] 在 `thread/start` 前完成工作区准备，并删除重复的 `thread/inject_items` 身份提示
+- [x] 在 `thread/start` 前完成工作区准备，并保留只用于生成 rollout 的中性 `thread/inject_items` 记录
 
 ## 3. Single Execution Target
 

@@ -239,12 +239,34 @@ export async function createCodexThread(options: {
             return;
           }
           threadId = thread.id.toLowerCase();
+          // thread/start indexes an empty task before its rollout file exists.
+          // Inject one neutral item so ChatGPT Desktop can reopen the task.
           send({
             id: 3,
+            method: "thread/inject_items",
+            params: {
+              threadId,
+              items: [{
+                type: "message",
+                role: "developer",
+                content: [{
+                  type: "input_text",
+                  text: "Pijoo initialized this managed task. Assistant identity and operating instructions come from the workspace AGENTS.md.",
+                }],
+              }],
+            },
+          });
+        } else if (message.id === 3) {
+          if (message.error !== undefined) {
+            fail(new Error(`Codex app-server thread/inject_items failed: ${responseErrorMessage(message.error)}`));
+            return;
+          }
+          send({
+            id: 4,
             method: "thread/name/set",
             params: { threadId, name: title },
           });
-        } else if (message.id === 3) {
+        } else if (message.id === 4) {
           if (message.error !== undefined) {
             fail(new Error(`Codex app-server thread/name/set failed: ${responseErrorMessage(message.error)}`));
             return;
