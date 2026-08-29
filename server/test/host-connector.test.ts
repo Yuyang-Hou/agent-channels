@@ -10,6 +10,7 @@ function message(messageId: number): InboundEnvelope {
     channelId: "test-channel",
     messageId,
     from: "backend",
+    senderMemberId: "member-backend",
     text: `message-${messageId}`,
     receivedAt: Date.now(),
     untrusted: true,

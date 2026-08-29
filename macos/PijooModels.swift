@@ -23,7 +23,7 @@ let maxLocalSendFrameBytes = 64 * 1024
 let defaultMessageTemplate = """
 > **↗ Pijoo · 外部频道消息**
 >
-> **频道** `{channel_name}` · **来自** `{sender_name}` · **提醒** {mentions} · `#{message_id}`
+> **频道** `{channel_name}` · **来自** `{sender_name}` · **成员** `{sender_member_id}` · **提醒** {mentions} · `#{message_id}`
 >
 > {message_text}
 """
@@ -398,15 +398,36 @@ struct AppStateV2: Codable, Equatable {
 }
 
 enum AssistantReplyMode: String, Codable {
+    case automatic
     case draft
 }
 
+struct AssistantContactProfile: Codable, Equatable, Identifiable {
+    var channelID: String
+    var memberID: String?
+    var displayName: String
+    var relationship: String
+    var notes: String
+
+    var id: String { channelID }
+
+    enum CodingKeys: String, CodingKey {
+        case relationship, notes
+        case channelID = "channel_id"
+        case memberID = "member_id"
+        case displayName = "display_name"
+    }
+}
+
 struct AssistantConfig: Codable, Equatable {
-    var version = 1
+    var version = 2
     var assistantTaskID: String? = nil
     var assistantChannelID: String? = nil
     var allowedHistoryTaskIDs: [String] = []
-    var replyMode: AssistantReplyMode = .draft
+    var replyMode: AssistantReplyMode = .automatic
+    var persona = "你是我的 Pijoo 助理。友好、自然、简洁地帮助我和来访者；不确定时坦诚说明。"
+    var sharedAssistantChannelIDs: [String] = []
+    var contacts: [AssistantContactProfile] = []
 
     enum CodingKeys: String, CodingKey {
         case version
@@ -414,6 +435,8 @@ struct AssistantConfig: Codable, Equatable {
         case assistantChannelID = "assistant_channel_id"
         case allowedHistoryTaskIDs = "allowed_history_task_ids"
         case replyMode = "reply_mode"
+        case persona, contacts
+        case sharedAssistantChannelIDs = "shared_assistant_channel_ids"
     }
 
     mutating func setHistoryAccess(_ allowed: Bool, taskID rawTaskID: String) throws {
@@ -423,6 +446,18 @@ struct AssistantConfig: Codable, Equatable {
         allowedHistoryTaskIDs.removeAll { $0.caseInsensitiveCompare(taskID) == .orderedSame }
         if allowed { allowedHistoryTaskIDs.append(taskID) }
         allowedHistoryTaskIDs.sort()
+    }
+
+    mutating func setSharedAssistantChannel(_ channelID: String, enabled: Bool) {
+        sharedAssistantChannelIDs.removeAll { $0 == channelID }
+        if enabled { sharedAssistantChannelIDs.append(channelID) }
+        sharedAssistantChannelIDs.sort()
+    }
+
+    mutating func updateContact(_ contact: AssistantContactProfile) {
+        contacts.removeAll { $0.channelID == contact.channelID }
+        contacts.append(contact)
+        contacts.sort { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
     }
 }
 
@@ -898,7 +933,7 @@ struct AppFailure: LocalizedError {
 }
 
 let messageTemplateVariables = Set([
-    "{channel_name}", "{sender_name}", "{message_source}", "{message_text}", "{message_id}", "{mentions}",
+    "{channel_name}", "{sender_name}", "{sender_member_id}", "{message_source}", "{message_text}", "{message_id}", "{mentions}",
 ])
 
 func validateMessageTemplate(_ raw: String, defaultTemplate: String) throws -> String {
@@ -910,7 +945,7 @@ func validateMessageTemplate(_ raw: String, defaultTemplate: String) throws -> S
     for match in expression.matches(in: value, range: range) {
         guard let tokenRange = Range(match.range, in: value),
               messageTemplateVariables.contains(String(value[tokenRange])) else {
-            throw AppFailure("模板只支持 {channel_name}、{sender_name}、{message_source}、{message_text}、{message_id}、{mentions}")
+            throw AppFailure("模板只支持 {channel_name}、{sender_name}、{sender_member_id}、{message_source}、{message_text}、{message_id}、{mentions}")
         }
     }
     return value
@@ -920,6 +955,7 @@ func renderMessageTemplate(
     _ template: String,
     channelName: String,
     senderName: String,
+    senderMemberID: String = "member-id",
     messageSource: String,
     messageText: String,
     messageID: String,
@@ -935,13 +971,14 @@ func renderMessageTemplate(
     let values = [
         "{channel_name}": safeInline(channelName),
         "{sender_name}": safeInline(senderName),
+        "{sender_member_id}": safeInline(senderMemberID),
         "{message_source}": safeInline(messageSource),
         "{message_text}": normalized(messageText),
         "{message_id}": messageID,
         "{mentions}": safeInline(mentions),
     ]
     let expression = try! NSRegularExpression(
-        pattern: #"\{(?:channel_name|sender_name|message_source|message_text|message_id|mentions)\}"#
+        pattern: #"\{(?:channel_name|sender_name|sender_member_id|message_source|message_text|message_id|mentions)\}"#
     )
     let quotePrefix = try! NSRegularExpression(pattern: #"^(?:[ \t]*>[ \t]?)+$"#)
     let sourceString = source as NSString

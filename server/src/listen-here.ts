@@ -734,6 +734,7 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
         channelId: args.channel,
         messageId: msg.id,
         from: senderName,
+        senderMemberId: msg.sender_member_id,
         source: msg.source ? {
           provider: msg.source.provider,
           conversationId: msg.source.conversation_id,

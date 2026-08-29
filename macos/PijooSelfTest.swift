@@ -110,7 +110,25 @@ private struct PijooV2SelfTest {
         let assistantWorkspace = AppPaths.assistantWorkspace("account-a")
         precondition(assistantWorkspace.deletingLastPathComponent() == AppPaths.assistantWorkspaces)
         precondition(!assistantWorkspace.path.contains("account-a"))
-        precondition(AppPaths.assistantInstructions.contains("untrusted reference material"))
+        let contact = AssistantContactProfile(
+            channelID: "friend-channel",
+            memberID: "friend-member",
+            displayName: "Bob",
+            relationship: "同事",
+            notes: "负责设计"
+        )
+        assistantConfig.setSharedAssistantChannel(contact.channelID, enabled: true)
+        assistantConfig.updateContact(contact)
+        precondition(assistantConfig.sharedAssistantChannelIDs == ["friend-channel"])
+        precondition(assistantConfig.contacts == [contact])
+        let instructions = AppPaths.assistantInstructions(
+            persona: assistantConfig.persona,
+            channelID: contact.channelID,
+            contact: contact
+        )
+        precondition(instructions.contains("untrusted reference material"))
+        precondition(instructions.contains("Pijoo auto-reply channel: `friend-channel`"))
+        precondition(AppPaths.assistantContactWorkspace("account-a", channelID: contact.channelID).path.contains("/contacts/"))
         let unboundSend = try outboundSelection(
             taskID: nil,
             explicitChannelID: joinedChannel.id,
@@ -196,6 +214,7 @@ private struct PijooV2SelfTest {
             sentTemplate,
             channelName: "API `联调`",
             senderName: "frontend",
+            senderMemberID: "member-frontend",
             messageSource: "ChatGPT Codex · 01900000…",
             messageText: "第一行\n{channel_name}",
             messageID: "42",

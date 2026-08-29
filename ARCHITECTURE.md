@@ -10,8 +10,8 @@ App 消息框 -> 昵称命名的默认助理 Channel
   -> Subscription -> Pijoo 受管 Codex task -> ~/Pijoo/accounts/<account-digest>
   -> send_to_channel -> Channel -> App 时间线
 
-好友 -> 双人 Channel -> Subscription -> 已连接 Codex task
-  -> 回复草稿 -> 用户确认 -> Channel -> 好友
+好友 -> 独立双人 Channel -> Subscription -> 独立受管 Codex task
+  -> 普通文字自动回复 -> Channel -> 好友
 
 助理 task -> 本机历史工具 -> Codex App Server thread/read
 
@@ -31,7 +31,10 @@ AssistantConfig
   assistantChannelID
   assistantTaskID
   allowedHistoryTaskIDs[]
-  replyMode = draft
+  persona
+  sharedAssistantChannelIDs[]
+  contacts[]
+  replyMode = automatic
 ```
 
 `assistantChannelID` 把一个自动创建的普通单人 Channel 标记为默认助理频道；`assistantTaskID` 是该频道唯一
@@ -42,7 +45,7 @@ AssistantConfig
 embedding、后台同步或文件监听。
 
 默认助理 task 只由 App 在账号摘要目录创建。App 在创建和监听启动时恢复固定 `AGENTS.md`，并在
-监听启动及每次消息投递前复验 task id、cwd 与 `request-approval`；不一致时停止投递且不推进游标。
+监听启动及每次消息投递前复验 task id、cwd 与 `approve-for-me`；不一致时停止投递且不推进游标。
 `AGENTS.md` 不是权限边界，共享邀请也不继承本机文件、Shell、网络或其他工具权限。
 
 ## Codex 历史读取
@@ -68,7 +71,7 @@ Channel、Membership、Subscription 和 endpoint 继续作为唯一收发模型�
 - 账号同步会自动补建默认助理 Channel，并始终用当前用户昵称显示；普通待邀请频道仍显示为频道；
 - 双人 Channel 显示为“好友”，标题优先使用另一名 active Member 的昵称；
 - 三人及以上显示为“群聊”，首版不继续扩展群聊功能；
-- Owner 可以为频道创建限时、限次邀请；默认助理频道仍只保留一个启用的会话 Subscription；
+- 默认助理频道不直接邀请好友；每次分享创建单用途双人 Channel，并只连接一个隔离的受管会话；
 - 服务端不能看到 `assistantTaskID`、allowed history task ids、工作目录或历史正文。
 
 当前传输是 TLS + 鉴权，不是 E2EE。联系人消息在服务端是明文；画像和 Codex 历史片段不得作为
@@ -92,8 +95,8 @@ Web 由现有 Hono 服务在同一 Origin 托管，不新增前端服务或消�
 - 历史读取、外部发送和工具执行是三种独立权限；
 - 联系人正文是不可信输入，不能扩大历史 allowlist，也不能授权工具或发送；
 - 画像只是用户可编辑的本地草稿，不自动成为联系人可见资料；
-- reply mode 首版固定为 `draft`，不存在远程消息开启自动回复的入口；
-- 只有用户在助理任务内明确确认发送，才调用现有发送工具；可靠回执前不得声称已发送；
+- 受管助理可向绑定的精确频道自动发送普通文字；风险操作仍需独立批准；
+- 只有可靠回执后才可声称已发送，结果未知时不得自动重试；
 - `@` 只表达提醒，不是私密路由或授权边界。
 
 ## 暂不建设

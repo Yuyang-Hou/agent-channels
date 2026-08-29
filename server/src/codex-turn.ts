@@ -328,6 +328,7 @@ export function createCodexDelivery(options: {
       channel: options.channelName || message.channelId,
       id: message.messageId,
       from: message.from,
+      senderMemberId: message.senderMemberId,
       sourceLabel: message.source?.label,
       text: message.text,
       mention: message.mention,
