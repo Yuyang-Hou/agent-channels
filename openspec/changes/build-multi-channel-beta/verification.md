@@ -313,3 +313,10 @@ Release records remain historical facts.
   content. Strict OpenSpec validation passed 15/15.
 - An ad-hoc `Pijoo-0.3.0-beta.24-arm64.dmg` candidate passed the Swift/updater self-tests and mounted package,
   embedded Skill and MCP verification. It is not Developer ID notarized, pushed or published.
+
+## 2026-08-29 Disconnected Banner Safe Area
+
+- The disconnected-conversation banner keeps its existing orange emphasis inside the content area and no
+  longer extends its background into the macOS title bar.
+- A focused SwiftUI typecheck for the constrained background call, strict OpenSpec validation (16/16) and
+  `git diff --check` pass. No App package was built or published.
