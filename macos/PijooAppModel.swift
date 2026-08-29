@@ -2369,10 +2369,6 @@ extension AppModel {
 
     func createInvitation(label: String, maxUses: Int, validHours: Int) async -> Bool {
         guard !busy, let profile = selectedChannel, profile.role == "owner" else { return false }
-        guard !isAssistantChannel(profile.id) else {
-            fail(AppFailure("默认助理频道不能邀请其他成员"))
-            return false
-        }
         let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalizedLabel.utf16.count <= 64, (1...100).contains(maxUses), (1...720).contains(validHours) else {
             fail(AppFailure("邀请备注最多 64 个字符，可加入人数为 1–100，有效期为 1–720 小时"))
@@ -2394,16 +2390,16 @@ extension AppModel {
             guard let token = json["invite_token"] as? String else {
                 throw AppFailure("服务端未返回邀请凭证")
             }
-            let code = try InvitationCodec.encode(ChannelInvitation(
+            let link = try InvitationCodec.webURL(ChannelInvitation(
                 version: 2,
                 origin: profile.origin,
                 channel: profile.channel,
                 inviteToken: token
             ))
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(code, forType: .string)
+            NSPasteboard.general.setString(link, forType: .string)
             await refreshInvitations()
-            showNotice(title: "邀请已创建并复制", message: "对方粘贴 ac2: 邀请口令即可加入；服务端不会保存或再次展示明文口令。")
+            showNotice(title: "邀请链接已复制", message: "对方打开链接即可登录网页版并加入频道；已经加入过的账号会直接进入。")
             return true
         } catch {
             fail(error)
@@ -2412,7 +2408,7 @@ extension AppModel {
     }
 
     func refreshInvitations() async {
-        guard let profile = selectedChannel, profile.role == "owner", !isAssistantChannel(profile.id) else {
+        guard let profile = selectedChannel, profile.role == "owner" else {
             invitations = []
             return
         }

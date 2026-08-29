@@ -4,7 +4,7 @@ import { dirname, join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { type AccountAuth, registerAccountRoutes } from "./account-auth.js";
+import { type AccountAuth, registerAccountRoutes, webSessionCredential } from "./account-auth.js";
 import type { AccountSession } from "./account-store.js";
 import {
   ChannelError,
@@ -43,6 +43,7 @@ import { llmsText, mcpDescriptor, serviceInfo } from "./discovery.js";
 import { landingHtml } from "./landing.js";
 import { handleMcpRequest } from "./mcp.js";
 import { policyHtml, policyText } from "./policy.js";
+import { webAppHtml } from "./web-client.js";
 import {
   applyPresetDefaults,
   getPreset,
@@ -203,9 +204,15 @@ export function createApp(opts: AppOptions): Hono {
     }
     return c.html(landingHtml());
   });
+  const serveWebApp = (c: Context) => {
+    c.header("Cache-Control", "no-store");
+    return c.html(webAppHtml(Boolean(opts.accountAuth)));
+  };
+  app.get("/app", serveWebApp);
+  app.get("/join/:channelId", serveWebApp);
   app.get("/healthz", (c) => c.text("ok"));
   if (opts.accountAuth) {
-    registerAccountRoutes(app, opts.accountAuth);
+    registerAccountRoutes(app, opts.accountAuth, opts.publicOrigin);
     app.get("/v1/channels", async (c) => {
       const session = await requireAccountSession(c);
       if (session instanceof Response) return session;
@@ -448,7 +455,8 @@ export function createApp(opts: AppOptions): Hono {
 
   function bearerToken(c: Context): string {
     const auth = c.req.header("authorization") ?? c.req.header("Authorization") ?? "";
-    return auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
+    if (auth.startsWith("Bearer ")) return auth.slice(7).trim();
+    return opts.accountAuth ? webSessionCredential(c) : "";
   }
 
   function credentialHash(value: string): string {

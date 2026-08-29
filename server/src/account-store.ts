@@ -47,6 +47,7 @@ export interface AccountStore {
     appCodeChallenge: string;
     sessionCredentialHash: string;
     sessionExpiresAt: string;
+    devicePlatform?: "macos" | "web";
   }): Promise<AccountSession>;
   getSession(sessionCredentialHash: string): Promise<AccountSession>;
   revokeSession(sessionCredentialHash: string): Promise<boolean>;
@@ -248,6 +249,7 @@ export class PostgresAccountStore implements AccountStore {
     appCodeChallenge: string;
     sessionCredentialHash: string;
     sessionExpiresAt: string;
+    devicePlatform?: "macos" | "web";
   }): Promise<AccountSession> {
     const client = await this.pool.connect();
     try {
@@ -276,8 +278,8 @@ export class PostgresAccountStore implements AccountStore {
       await client.query(
         `INSERT INTO pijoo_devices (
           device_id, account_id, name, platform, created_at, last_seen_at
-        ) VALUES ($1, $2, $3, 'macos', $4, $4)`,
-        [deviceId, accountId, row.device_name, now],
+        ) VALUES ($1, $2, $3, $4, $5, $5)`,
+        [deviceId, accountId, row.device_name, input.devicePlatform ?? "macos", now],
       );
       await client.query(
         `INSERT INTO pijoo_sessions (
