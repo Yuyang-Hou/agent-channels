@@ -4,6 +4,7 @@ export type InboundEnvelope = {
   channelId: string;
   messageId: number;
   from: string;
+  senderMemberId: string;
   source?: {
     provider: string;
     conversationId?: string;
@@ -25,15 +26,16 @@ export type HostDelivery = (message: InboundEnvelope) => Promise<DeliveryReceipt
 const DEFAULT_CHANNEL_MESSAGE_TEMPLATE = [
   "> **↗ Pijoo · 外部频道消息**",
   ">",
-  "> **频道** `{channel_name}` · **来自** `{sender_name}` · **提醒** {mentions} · `#{message_id}`",
+  "> **频道** `{channel_name}` · **来自** `{sender_name}` · **成员** `{sender_member_id}` · **提醒** {mentions} · `#{message_id}`",
   ">",
   "> {message_text}",
 ].join("\n");
 
 export function formatChannelMessage(message: {
   channel: string;
-  id: number;
-  from: string;
+    id: number;
+    from: string;
+    senderMemberId: string;
     sourceLabel?: string;
     text: string;
     mention?: MessageMention;
@@ -43,6 +45,7 @@ export function formatChannelMessage(message: {
     "{channel_name}": safeInlineValue(message.channel),
     "{message_id}": String(message.id),
     "{sender_name}": safeInlineValue(message.from),
+    "{sender_member_id}": safeInlineValue(message.senderMemberId),
     "{message_source}": safeInlineValue(message.sourceLabel?.trim() || message.from),
     "{message_text}": message.text.replace(/\r\n?/g, "\n"),
     "{mentions}": message.mention?.kind === "all"
@@ -53,7 +56,7 @@ export function formatChannelMessage(message: {
   };
   const source = (template || DEFAULT_CHANNEL_MESSAGE_TEMPLATE).replace(/\r\n?/g, "\n");
   return source.replace(
-    /\{(?:channel_name|message_id|sender_name|message_source|message_text|mentions)\}/g,
+    /\{(?:channel_name|message_id|sender_name|sender_member_id|message_source|message_text|mentions)\}/g,
     (key, offset: number) => {
       const value = values[key];
       const linePrefix = source.slice(source.lastIndexOf("\n", offset - 1) + 1, offset);

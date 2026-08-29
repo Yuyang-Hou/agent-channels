@@ -1,13 +1,13 @@
 schema: spec-driven
 
 context: |
-  Product: Pijoo, a personal context assistant that lives in one dedicated Codex task.
-  Current phase: keep the default channel assistant in an app-managed workspace; treat other Codex tasks as allowlisted read-only sources, never as channel execution targets.
+  Product: Pijoo, a personal context assistant with one private owner task and one isolated managed task per shared contact.
+  Current phase: editable persona, authenticated per-contact memory, and ordinary-text auto replies inside one-use two-member channels.
   Product authority: PRODUCT.md.
   Development status authority: docs/STATUS.md.
   Roadmap authority: docs/ROADMAP.md.
   Architecture authority: ARCHITECTURE.md.
-  Core boundary: Codex history and task bindings stay local; the same Channel, Account Session, Membership and relay serve macOS and Web; outbound replies still require user confirmation.
+  Core boundary: Codex history, persona, contact memory and task bindings stay local; the same Channel, Account Session, Membership and relay serve macOS and Web; risky actions still require separate approval.
 
 rules:
   proposal:
@@ -20,7 +20,7 @@ rules:
     - Reuse the existing Hono service and Channel APIs before adding any Web-specific service or protocol.
   specs:
     - Every authorization requirement must include denied and revoked scenarios.
-    - Every outbound requirement must include a no-confirmation scenario.
+    - Every outbound requirement must distinguish ordinary auto replies from risky actions that require approval.
   tasks:
     - Deliver the smallest real Codex history slice before changing the full macOS UI.
     - Keep invite tokens out of server-rendered URLs and browser persistent storage.

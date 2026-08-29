@@ -140,12 +140,46 @@ final class AppModel: ObservableObject {
         return channel.channel == assistantConfig.assistantChannelID
     }
 
+    func isSharedAssistantChannel(_ channelID: UUID) -> Bool {
+        guard let channel = state.channels.first(where: { $0.id == channelID }) else { return false }
+        return assistantConfig.sharedAssistantChannelIDs.contains(channel.channel)
+    }
+
+    func isManagedAssistantChannel(_ channelID: UUID) -> Bool {
+        isAssistantChannel(channelID) || isSharedAssistantChannel(channelID)
+    }
+
+    private func managedAssistantWorkspace(_ channel: ChannelProfile) throws -> URL? {
+        guard isManagedAssistantChannel(channel.id) else { return nil }
+        guard let accountID = accountSession?.accountID else { throw AppFailure("请先登录") }
+        return try AppPaths.prepareAssistantWorkspace(
+            accountID: accountID,
+            persona: assistantConfig.persona,
+            channelID: channel.channel,
+            contact: isSharedAssistantChannel(channel.id) ? assistantContact(channel.id) : nil
+        )
+    }
+
+    func assistantContact(_ channelID: UUID) -> AssistantContactProfile? {
+        guard let channel = state.channels.first(where: { $0.id == channelID }),
+              isSharedAssistantChannel(channelID) else { return nil }
+        return assistantConfig.contacts.first { $0.channelID == channel.channel }
+            ?? AssistantContactProfile(
+                channelID: channel.channel,
+                memberID: nil,
+                displayName: channel.peerName ?? channel.displayName,
+                relationship: "",
+                notes: ""
+            )
+    }
+
     func channelTitle(_ channel: ChannelProfile) -> String {
         if channel.channel == assistantConfig.assistantChannelID { return state.defaultCallsign }
         return channelPresentationTitle(channel, assistantChannelID: assistantConfig.assistantChannelID)
     }
 
     func channelKindLabel(_ channel: ChannelProfile) -> String {
+        if isSharedAssistantChannel(channel.id) { return "好友助理" }
         switch channelPresentationKind(channel, assistantChannelID: assistantConfig.assistantChannelID) {
         case .assistant: return "助理"
         case .friend: return "好友"
@@ -367,6 +401,92 @@ final class AppModel: ObservableObject {
     private func saveAssistantConfig(_ config: AssistantConfig, accountID: String) throws {
         try AssistantConfigStore.save(config, accountID: accountID)
         assistantConfig = config
+        for channel in state.channels where isManagedAssistantChannel(channel.id) {
+            let contact = assistantContact(channel.id)
+            _ = try AppPaths.prepareAssistantWorkspace(
+                accountID: accountID,
+                persona: config.persona,
+                channelID: channel.channel,
+                contact: contact
+            )
+        }
+    }
+
+    func saveAssistantPersona(_ raw: String) {
+        guard let accountID = accountSession?.accountID else { return }
+        let persona = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !persona.isEmpty, persona.count <= 4_000 else {
+            fail(AppFailure("身份卡须为 1–4000 个字符"))
+            return
+        }
+        do {
+            var updated = assistantConfig
+            updated.persona = persona
+            try saveAssistantConfig(updated, accountID: accountID)
+        } catch {
+            fail(error)
+        }
+    }
+
+    func assistantContactImpression(_ channelID: UUID) -> String {
+        guard let accountID = accountSession?.accountID,
+              let channel = state.channels.first(where: { $0.id == channelID }) else { return "" }
+        return AppPaths.readAssistantContactImpression(accountID, channelID: channel.channel)
+    }
+
+    func saveAssistantContact(
+        _ channelID: UUID,
+        relationship rawRelationship: String,
+        notes rawNotes: String,
+        impression: String
+    ) {
+        guard let accountID = accountSession?.accountID,
+              let channel = state.channels.first(where: { $0.id == channelID }),
+              var contact = assistantContact(channelID) else { return }
+        let relationship = rawRelationship.trimmingCharacters(in: .whitespacesAndNewlines)
+        let notes = rawNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard relationship.count <= 64, notes.count <= 4_000, impression.count <= 8_000 else {
+            fail(AppFailure("关系最多 64 字，备注最多 4000 字，AI 印象最多 8000 字"))
+            return
+        }
+        do {
+            contact.relationship = relationship
+            contact.notes = notes
+            var updated = assistantConfig
+            updated.updateContact(contact)
+            try saveAssistantConfig(updated, accountID: accountID)
+            try AppPaths.saveAssistantContactImpression(impression, accountID: accountID, channelID: channel.channel)
+        } catch {
+            fail(error)
+        }
+    }
+
+    private func updateAuthenticatedAssistantContact(
+        profile: ChannelProfile,
+        memberID: String,
+        displayName: String
+    ) {
+        guard isSharedAssistantChannel(profile.id),
+              memberID != profile.memberID,
+              let accountID = accountSession?.accountID else { return }
+        var contact = assistantContact(profile.id) ?? AssistantContactProfile(
+            channelID: profile.channel,
+            memberID: nil,
+            displayName: displayName,
+            relationship: "",
+            notes: ""
+        )
+        let normalizedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard contact.memberID != memberID || (!normalizedName.isEmpty && contact.displayName != normalizedName) else { return }
+        contact.memberID = memberID
+        if !normalizedName.isEmpty { contact.displayName = normalizedName }
+        var updated = assistantConfig
+        updated.updateContact(contact)
+        do {
+            try saveAssistantConfig(updated, accountID: accountID)
+        } catch {
+            ClientLog.record("warning", "assistant_contact_update_failed", detail: error.localizedDescription)
+        }
     }
 
     private func reconcileChannelMemberIdentity(
@@ -557,6 +677,7 @@ extension AppModel {
                         subscription?.sentMessageTemplate ?? defaultSentMessageTemplate,
                         channelName: profile.displayName,
                         senderName: state.defaultCallsign,
+                        senderMemberID: receipt.memberID,
                         messageSource: sourceLabel,
                         messageText: message,
                         messageID: receipt.id,
@@ -749,72 +870,69 @@ extension AppModel {
             taskCreationStatus = ""
         }
         do {
-            try AppPaths.prepare()
-            let provider = selectedHostProvider
-            let executable = try codexExecutable(for: provider)
-            let workspace: URL
-            if isAssistantChannel(profile.id) {
-                guard let accountID = accountSession?.accountID else { throw AppFailure("请先登录") }
-                workspace = try AppPaths.prepareAssistantWorkspace(accountID: accountID)
-            } else {
-                workspace = AppPaths.defaultWorkspace
-            }
-            let result = try await Sidecar.run([
-                "host-create",
-                "--host-provider", provider.rawValue,
-                "--host-workspace", workspace.path,
-                "--host-title", "Pijoo · \(profile.displayName)",
-                "--codex-executable", executable.path,
-            ])
-            guard result.status == 0,
-                  let data = result.stdout.data(using: .utf8),
-                  let response = try? JSONDecoder().decode(HostConversationCreateResponse.self, from: data),
-                  response.ok,
-                  UUID(uuidString: response.conversationID) != nil else {
-                let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-                throw AppFailure(detail.isEmpty ? "无法新建 AI 会话" : detail)
-            }
-            let conversationID = response.conversationID.lowercased()
-            taskCreationStatus = "会话已创建，正在等待 ChatGPT 连接…"
-            guard let url = URL(string: "codex://threads/\(conversationID)") else {
-                throw AppFailure("会话已创建（\(conversationID)），但无法在 \(provider.displayName) 中打开")
-            }
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = false
-            _ = try await NSWorkspace.shared.open(url, configuration: configuration)
-
-            var lastPreflightError = ""
-            var verified: (provider: String, conversationID: String)?
-            for attempt in 0..<20 {
-                do {
-                    verified = try await preflightHostConversation(conversationID, provider: provider)
-                    break
-                } catch {
-                    lastPreflightError = error.localizedDescription
-                    if attempt < 19 { try await Task.sleep(nanoseconds: 500_000_000) }
-                }
-            }
-            guard let verified else {
-                throw AppFailure("会话已创建（\(conversationID)），但暂时无法连接。请在 Codex 中打开后按 ID 连接。\(lastPreflightError.isEmpty ? "" : "\n\(lastPreflightError)")")
-            }
-            if isAssistantChannel(profile.id) {
-                let safeState = try await setAndReadHostPermission(
-                    conversationID: verified.conversationID,
-                    provider: provider,
-                    permission: .requestApproval
-                )
-                try validateManagedAssistantState(safeState, expectedWorkspace: workspace)
-            }
-            taskCreationStatus = "正在关联当前频道…"
-            _ = try await subscribe(
-                source: LocalSource(provider: verified.provider, conversationId: verified.conversationID),
-                profile: profile,
-                allowAssistantAssignment: true
-            )
+            try await createTaskSubscription(for: profile)
             clearConversationDraft()
         } catch {
             fail(error)
         }
+    }
+
+    private func createTaskSubscription(for profile: ChannelProfile) async throws {
+        try AppPaths.prepare()
+        let provider = selectedHostProvider
+        let executable = try codexExecutable(for: provider)
+        let workspace = try managedAssistantWorkspace(profile) ?? AppPaths.defaultWorkspace
+        let result = try await Sidecar.run([
+            "host-create",
+            "--host-provider", provider.rawValue,
+            "--host-workspace", workspace.path,
+            "--host-title", "Pijoo · \(channelTitle(profile))",
+            "--codex-executable", executable.path,
+        ])
+        guard result.status == 0,
+              let data = result.stdout.data(using: .utf8),
+              let response = try? JSONDecoder().decode(HostConversationCreateResponse.self, from: data),
+              response.ok,
+              UUID(uuidString: response.conversationID) != nil else {
+            let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw AppFailure(detail.isEmpty ? "无法新建 AI 会话" : detail)
+        }
+        let conversationID = response.conversationID.lowercased()
+        taskCreationStatus = "会话已创建，正在等待 ChatGPT 连接…"
+        guard let url = URL(string: "codex://threads/\(conversationID)") else {
+            throw AppFailure("会话已创建（\(conversationID)），但无法在 \(provider.displayName) 中打开")
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = false
+        _ = try await NSWorkspace.shared.open(url, configuration: configuration)
+        var lastPreflightError = ""
+        var verified: (provider: String, conversationID: String)?
+        for attempt in 0..<20 {
+            do {
+                verified = try await preflightHostConversation(conversationID, provider: provider)
+                break
+            } catch {
+                lastPreflightError = error.localizedDescription
+                if attempt < 19 { try await Task.sleep(nanoseconds: 500_000_000) }
+            }
+        }
+        guard let verified else {
+            throw AppFailure("会话已创建（\(conversationID)），但暂时无法连接。请在 Codex 中打开后按 ID 连接。\(lastPreflightError.isEmpty ? "" : "\n\(lastPreflightError)")")
+        }
+        if isManagedAssistantChannel(profile.id) {
+            let safeState = try await setAndReadHostPermission(
+                conversationID: verified.conversationID,
+                provider: provider,
+                permission: .approveForMe
+            )
+            try validateManagedAssistantState(safeState, expectedWorkspace: workspace)
+        }
+        taskCreationStatus = "正在关联当前频道…"
+        _ = try await subscribe(
+            source: LocalSource(provider: verified.provider, conversationId: verified.conversationID),
+            profile: profile,
+            allowAssistantAssignment: true
+        )
     }
 
     func addTaskSubscription() async {
@@ -840,6 +958,9 @@ extension AppModel {
                 try saveAssistantConfig(updated, accountID: accountID)
                 clearConversationDraft()
                 return
+            }
+            if isSharedAssistantChannel(profile.id) {
+                throw AppFailure("好友助理使用自动创建的独立受管会话")
             }
             _ = try await subscribe(
                 source: LocalSource(provider: verified.provider, conversationId: verified.conversationID),
@@ -887,7 +1008,7 @@ extension AppModel {
     ) throws {
         let actual = state.workspace.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
         let expected = expectedWorkspace.resolvingSymlinksInPath().standardizedFileURL.path
-        guard state.connected, actual == expected, state.permission == HostPermissionChoice.requestApproval.rawValue else {
+        guard state.connected, actual == expected, state.permission == HostPermissionChoice.approveForMe.rawValue else {
             throw AppFailure("助理工作区或权限已变化，需要在 Pijoo 中恢复")
         }
     }
@@ -1101,9 +1222,9 @@ extension AppModel {
         profile: ChannelProfile,
         allowAssistantAssignment: Bool = false
     ) async throws -> ChannelSubscription {
-        if profile.channel == assistantConfig.assistantChannelID {
+        if isManagedAssistantChannel(profile.id) {
             let isCurrentAssistant = assistantConfig.assistantTaskID?.caseInsensitiveCompare(source.conversationId) == .orderedSame
-            guard allowAssistantAssignment || isCurrentAssistant else {
+            guard allowAssistantAssignment || (isAssistantChannel(profile.id) && isCurrentAssistant) else {
                 throw AppFailure("默认助理只能使用 Pijoo 新建的受管会话；已有会话仅可授权只读")
             }
         }
@@ -1120,7 +1241,7 @@ extension AppModel {
             )
             state.tasks.append(task)
         }
-        if profile.channel == assistantConfig.assistantChannelID {
+        if isManagedAssistantChannel(profile.id) {
             let replaced = state.subscriptions.filter { $0.channelID == profile.id && $0.taskID != task.id }
             for old in replaced { stopListener(old.id) }
             state.subscriptions.removeAll { $0.channelID == profile.id && $0.taskID != task.id }
@@ -1249,12 +1370,12 @@ extension AppModel {
         listenerStatus[id] = "正在检查 \(hostDisplayName(task.provider))…"
         do {
             let managedWorkspace: URL?
-            if isAssistantChannel(profile.id) {
-                guard let accountID = accountSession?.accountID,
-                      assistantConfig.assistantTaskID?.caseInsensitiveCompare(task.conversationID) == .orderedSame else {
+            if isManagedAssistantChannel(profile.id) {
+                if isAssistantChannel(profile.id),
+                   assistantConfig.assistantTaskID?.caseInsensitiveCompare(task.conversationID) != .orderedSame {
                     throw AppFailure("默认助理未绑定受管会话")
                 }
-                managedWorkspace = try AppPaths.prepareAssistantWorkspace(accountID: accountID)
+                managedWorkspace = try managedAssistantWorkspace(profile)
             } else {
                 managedWorkspace = nil
             }
@@ -1350,7 +1471,7 @@ extension AppModel {
             if let managedWorkspace {
                 arguments.append(contentsOf: [
                     "--expected-workspace", managedWorkspace.path,
-                    "--expected-permission", HostPermissionChoice.requestApproval.rawValue,
+                    "--expected-permission", HostPermissionChoice.approveForMe.rawValue,
                 ])
             }
             process.arguments = arguments
@@ -1640,6 +1761,11 @@ extension AppModel {
         }
         if decision == .unresolved { return decision.rawValue }
         let senderName = event.senderName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateAuthenticatedAssistantContact(
+            profile: profile,
+            memberID: senderMemberID,
+            displayName: senderName.flatMap { $0.isEmpty ? nil : $0 } ?? from
+        )
         let record = ChannelMessageRecord(
             channelID: profile.id,
             messageID: key,
@@ -2516,27 +2642,7 @@ extension AppModel {
         busy = true
         defer { busy = false }
         do {
-            let json = try await authorizedJSON(
-                profile,
-                suffix: "invites",
-                method: "POST",
-                body: [
-                    "label": normalizedLabel,
-                    "max_uses": maxUses,
-                    "expires_in_seconds": validHours * 60 * 60,
-                ]
-            )
-            guard let token = json["invite_token"] as? String else {
-                throw AppFailure("服务端未返回邀请凭证")
-            }
-            let link = try InvitationCodec.webURL(ChannelInvitation(
-                version: 2,
-                origin: profile.origin,
-                channel: profile.channel,
-                inviteToken: token
-            ))
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(link, forType: .string)
+            try await copyInvitation(for: profile, label: normalizedLabel, maxUses: maxUses, validHours: validHours)
             await refreshInvitations()
             showNotice(title: "邀请链接已复制", message: "对方打开链接即可登录网页版并加入频道；已经加入过的账号会直接进入。")
             return true
@@ -2544,6 +2650,80 @@ extension AppModel {
             fail(error)
             return false
         }
+    }
+
+    func shareAssistant(label: String, validHours: Int) async -> Bool {
+        guard !busy,
+              let profile = selectedChannel,
+              isAssistantChannel(profile.id),
+              profile.role == "owner",
+              ensureCodexIntegrationReadyForBinding() else { return false }
+        guard selectedHostProvider.supportsForwarding else {
+            showNotice(title: "暂不支持", message: "Pijoo 目前还不能向 Claude 会话转发消息。")
+            return false
+        }
+        let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedLabel.utf16.count <= 64, (1...720).contains(validHours) else {
+            fail(AppFailure("联系人备注最多 64 个字符，有效期为 1–720 小时"))
+            return false
+        }
+        busy = true
+        taskCreationStatus = "正在创建好友助理会话…"
+        defer {
+            busy = false
+            taskCreationStatus = ""
+        }
+        do {
+            let channel = try await createOwnedChannel(named: normalizedLabel.isEmpty ? "好友助理" : normalizedLabel, assistant: false)
+            guard let accountID = accountSession?.accountID else { throw AppFailure("请先登录") }
+            var updated = assistantConfig
+            updated.setSharedAssistantChannel(channel.channel, enabled: true)
+            updated.updateContact(AssistantContactProfile(
+                channelID: channel.channel,
+                memberID: nil,
+                displayName: normalizedLabel.isEmpty ? "等待好友加入" : normalizedLabel,
+                relationship: "",
+                notes: ""
+            ))
+            try saveAssistantConfig(updated, accountID: accountID)
+            try await createTaskSubscription(for: channel)
+            try await copyInvitation(for: channel, label: normalizedLabel, maxUses: 1, validHours: validHours)
+            await refreshInvitations()
+            showNotice(title: "助理邀请已复制", message: "每个邀请只允许一位好友加入，并使用独立的助理会话和联系人记忆。")
+            return true
+        } catch {
+            fail(error)
+            return false
+        }
+    }
+
+    private func copyInvitation(
+        for profile: ChannelProfile,
+        label: String,
+        maxUses: Int,
+        validHours: Int
+    ) async throws {
+        let json = try await authorizedJSON(
+            profile,
+            suffix: "invites",
+            method: "POST",
+            body: [
+                "label": label,
+                "max_uses": maxUses,
+                "expires_in_seconds": validHours * 60 * 60,
+            ]
+        )
+        guard let token = json["invite_token"] as? String else {
+            throw AppFailure("服务端未返回邀请凭证")
+        }
+        let link = try InvitationCodec.webURL(ChannelInvitation(
+            version: 2,
+            origin: profile.origin,
+            channel: profile.channel,
+            inviteToken: token
+        ))
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(link, forType: .string)
     }
 
     func refreshInvitations() async {
