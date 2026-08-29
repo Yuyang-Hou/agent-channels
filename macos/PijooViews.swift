@@ -834,6 +834,7 @@ struct ChannelSubscriptionsView: View {
     @State private var refreshingCodexIntegration = false
 
     var body: some View {
+        let isAssistant = model.selectedChannelID.map(model.isAssistantChannel) == true
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 if !model.codexIntegrationReady {
@@ -899,14 +900,21 @@ struct ChannelSubscriptionsView: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(model.busy)
                         Text(model.taskCreationStatus.isEmpty
-                            ? "\(model.selectedHostProvider.displayName) · ~/Pijoo · 自动连接当前频道"
+                            ? isAssistant
+                                ? "\(model.selectedHostProvider.displayName) · Pijoo 账号受管目录 · 唯一执行会话"
+                                : "\(model.selectedHostProvider.displayName) · ~/Pijoo · 自动连接当前频道"
                             : model.taskCreationStatus)
                             .font(.caption)
                             .foregroundStyle(model.taskCreationStatus.isEmpty ? Color.secondary : Color.accentColor)
                         Spacer()
                     }
                     HStack {
-                        TextField("搜索 \(model.selectedHostProvider.displayName) 会话，或输入 ID / 链接", text: $model.draftTask)
+                        TextField(
+                            isAssistant
+                                ? "搜索可授权只读的 \(model.selectedHostProvider.displayName) 会话，或输入 ID / 链接"
+                                : "搜索 \(model.selectedHostProvider.displayName) 会话，或输入 ID / 链接",
+                            text: $model.draftTask
+                        )
                             .textFieldStyle(.roundedBorder)
                             .onSubmit { Task { await model.searchHostConversations() } }
                             .onChange(of: model.draftTask) { _ in
@@ -922,7 +930,14 @@ struct ChannelSubscriptionsView: View {
                                                     Task { await model.bindHostConversation(conversation) }
                                                 } label: {
                                                     VStack(alignment: .leading, spacing: 2) {
-                                                        Text(conversation.title).lineLimit(1)
+                                                        HStack {
+                                                            Text(conversation.title).lineLimit(1)
+                                                            if isAssistant {
+                                                                Spacer()
+                                                                Text(model.hasAssistantHistoryAccess(conversation.conversationID) ? "已授权" : "授权读取")
+                                                                    .font(.caption2).foregroundStyle(.secondary)
+                                                            }
+                                                        }
                                                         Text("\(hostDisplayName(conversation.provider)) · \(conversation.conversationID)")
                                                             .font(.caption2).foregroundStyle(.secondary)
                                                         Text(conversation.searchStateLabel)
@@ -957,10 +972,29 @@ struct ChannelSubscriptionsView: View {
                             }
                         Button("搜索") { Task { await model.searchHostConversations() } }
                             .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        Button("按 ID 连接") { Task { await model.addTaskSubscription() } }
+                        Button(isAssistant ? "按 ID 授权" : "按 ID 连接") { Task { await model.addTaskSubscription() } }
                             .disabled(model.busy || model.draftTask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     .zIndex(1)
+                    if isAssistant {
+                        Text("授权仅允许 Pijoo 助理按需读取有界片段，不会向原会话发送消息。撤销会阻止后续读取；已读片段仍保留在助理会话历史中。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !model.assistantConfig.allowedHistoryTaskIDs.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("已授权只读会话").font(.caption.bold())
+                                ForEach(model.assistantConfig.allowedHistoryTaskIDs, id: \.self) { taskID in
+                                    HStack {
+                                        Text(taskID).font(.caption.monospaced()).lineLimit(1)
+                                        Spacer()
+                                        Button("撤销") { model.setAssistantHistoryAccess(false, taskID: taskID) }
+                                            .buttonStyle(.borderless)
+                                    }
+                                }
+                            }
+                            .padding(.top, 4)
+                        }
+                    }
                 } else {
                     Label("未发现支持会话转发的 AI App", systemImage: "exclamationmark.triangle")
                         .font(.callout)
@@ -973,7 +1007,11 @@ struct ChannelSubscriptionsView: View {
             .zIndex(1)
             Divider()
             if model.selectedSubscriptions.isEmpty {
-                EmptyStateView(title: "尚未连接会话", systemImage: "link.badge.plus", detail: "新建专属会话，或连接已有会话来接收本频道消息。") { EmptyView() }
+                EmptyStateView(
+                    title: isAssistant ? "尚未创建受管助理" : "尚未连接会话",
+                    systemImage: "link.badge.plus",
+                    detail: isAssistant ? "新建专属会话后，频道消息只会进入该受管会话。" : "新建专属会话，或连接已有会话来接收本频道消息。"
+                ) { EmptyView() }
                     .frame(maxHeight: .infinity)
             } else {
                 List(model.selectedSubscriptions) { subscription in
@@ -1050,6 +1088,7 @@ struct SubscriptionCard: View {
 
     var body: some View {
         if let subscription {
+            let isManagedAssistant = model.isAssistantChannel(subscription.channelID)
             let isDisconnected = model.hostConversationStates[subscription.taskID]?.connected == false
             let status = !subscription.enabled
                 ? "已暂停"
@@ -1119,21 +1158,33 @@ struct SubscriptionCard: View {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack(spacing: 8) {
                             Text("ChatGPT 权限").font(.caption.bold())
-                            Menu(model.hostPermission(subscription.taskID)?.title ?? "权限未知") {
-                                Button(HostPermissionChoice.requestApproval.title) {
-                                    Task { await model.updateHostPermission(subscription.taskID, permission: .requestApproval) }
+                            if isManagedAssistant {
+                                if model.hostPermission(subscription.taskID) == .requestApproval {
+                                    Text(HostPermissionChoice.requestApproval.title)
+                                        .font(.caption)
+                                } else {
+                                    Button("恢复安全权限") {
+                                        Task { await model.updateHostPermission(subscription.taskID, permission: .requestApproval) }
+                                    }
+                                    .disabled(!model.hostPermissionCanChange(subscription.taskID) || model.busy)
                                 }
-                                Button(HostPermissionChoice.approveForMe.title) {
-                                    Task { await model.updateHostPermission(subscription.taskID, permission: .approveForMe) }
+                            } else {
+                                Menu(model.hostPermission(subscription.taskID)?.title ?? "权限未知") {
+                                    Button(HostPermissionChoice.requestApproval.title) {
+                                        Task { await model.updateHostPermission(subscription.taskID, permission: .requestApproval) }
+                                    }
+                                    Button(HostPermissionChoice.approveForMe.title) {
+                                        Task { await model.updateHostPermission(subscription.taskID, permission: .approveForMe) }
+                                    }
+                                    Divider()
+                                    Button(HostPermissionChoice.fullAccess.title) {
+                                        isConfirmingFullAccess = true
+                                    }
                                 }
-                                Divider()
-                                Button(HostPermissionChoice.fullAccess.title) {
-                                    isConfirmingFullAccess = true
-                                }
+                                .disabled(!model.hostPermissionCanChange(subscription.taskID) || model.busy)
                             }
-                            .disabled(!model.hostPermissionCanChange(subscription.taskID) || model.busy)
                             Text(model.hostPermissionCanChange(subscription.taskID)
-                                ? "修改后同步到 ChatGPT 当前会话"
+                                ? isManagedAssistant ? "受管助理固定使用请求批准" : "修改后同步到 ChatGPT 当前会话"
                                 : "请先在 ChatGPT 中打开会话")
                                 .font(.caption).foregroundStyle(.secondary)
                         }

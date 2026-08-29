@@ -7,7 +7,7 @@
 
 ```text
 App 消息框 -> 昵称命名的默认助理 Channel
-  -> Subscription -> 助理 Codex task
+  -> Subscription -> Pijoo 受管 Codex task -> ~/Pijoo/accounts/<account-digest>
   -> send_to_channel -> Channel -> App 时间线
 
 好友 -> 双人 Channel -> Subscription -> 已连接 Codex task
@@ -24,7 +24,7 @@ Pijoo 不自建模型 Runtime。Codex 负责推理和任务历史；Pijoo 负责
 
 ## 本机权威
 
-首版只新增一个独立的 `AssistantConfig`，不迁移现有 `AppStateV2`：
+首版使用独立的 `AssistantConfig`：
 
 ```text
 AssistantConfig
@@ -41,12 +41,17 @@ AssistantConfig
 历史正文按请求临时读取，不在 Pijoo 再复制一份完整索引。首版数据量不足以证明需要向量库、
 embedding、后台同步或文件监听。
 
+默认助理 task 只由 App 在账号摘要目录创建。App 在创建和监听启动时恢复固定 `AGENTS.md`，并在
+监听启动及每次消息投递前复验 task id、cwd 与 `request-approval`；不一致时停止投递且不推进游标。
+`AGENTS.md` 不是权限边界，共享邀请也不继承本机文件、Shell、网络或其他工具权限。
+
 ## Codex 历史读取
 
 使用 Codex App Server 的 STDIO 接口：
 
 - `thread/list` 仅用于发现用户可选择授权的任务；
 - `thread/read(includeTurns: true)` 只读取 allowlist 中的任务；
+- 助理频道中的既有 task 搜索只改变 allowlist，不创建 Subscription；
 - 返回助理任务前限制任务数、片段数和文本长度，携带 task id 与标题，并标记为不可信历史数据；
 - 读取失败关闭，不回退为扫描 `~/.codex` 内部数据库、rollout 或 memory 文件；
 - 不启动、恢复或修改被读取任务，不创建额外 turn。

@@ -63,6 +63,10 @@ options:
   --host-source-conversation <id>
                       trusted local source conversation used by Host-native
                       provenance UI; requires --host-conversation.
+  --expected-workspace <path>
+                      require this Host workspace before every delivery
+  --expected-permission <p>
+                      require request-approval before every delivery
   --codex-socket <p>  override the ChatGPT Desktop IPC socket path (diagnostics)
   --channel-name <n>  display name used for {channel_name}; defaults to channel id
   --message-template <t>
@@ -166,6 +170,8 @@ type Args = {
   hostProvider?: string;
   hostConversation?: string;
   hostSourceConversation?: string;
+  expectedWorkspace?: string;
+  expectedPermission?: "request-approval";
   codexSocket?: string;
   channelName?: string;
   messageTemplate?: string;
@@ -209,6 +215,8 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
         "host-provider": { type: "string" },
         "host-conversation": { type: "string" },
         "host-source-conversation": { type: "string" },
+        "expected-workspace": { type: "string" },
+        "expected-permission": { type: "string" },
         "codex-socket": { type: "string" },
         "channel-name": { type: "string" },
         "message-template": { type: "string" },
@@ -307,6 +315,18 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
   if (appSocket && !hostConversation) {
     return { error: "--app-socket requires --host-conversation" };
   }
+  const expectedWorkspace = parsed.values["expected-workspace"];
+  const expectedPermissionValue = parsed.values["expected-permission"];
+  if (Boolean(expectedWorkspace) !== Boolean(expectedPermissionValue)) {
+    return { error: "--expected-workspace and --expected-permission must be provided together" };
+  }
+  if (expectedPermissionValue && expectedPermissionValue !== "request-approval") {
+    return { error: "--expected-permission must be request-approval" };
+  }
+  if (expectedWorkspace && !hostConversation) {
+    return { error: "--expected-workspace requires --host-conversation" };
+  }
+  const expectedPermission = expectedPermissionValue === "request-approval" ? expectedPermissionValue : undefined;
   return {
     channel,
     token: token ?? "",
@@ -320,6 +340,8 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
     hostProvider,
     hostConversation,
     hostSourceConversation: parsed.values["host-source-conversation"],
+    expectedWorkspace,
+    expectedPermission,
     codexSocket: parsed.values["codex-socket"],
     channelName: parsed.values["channel-name"],
     messageTemplate: parsed.values["message-template"],
@@ -1061,6 +1083,8 @@ export async function runListenHere(
         socketPath: args.codexSocket,
         channelName: args.channelName,
         messageTemplate: args.messageTemplate,
+        expectedWorkspace: args.expectedWorkspace,
+        expectedPermission: args.expectedPermission,
       });
     } catch (err) {
       console.error(`error: ${(err as Error).message}`);

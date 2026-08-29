@@ -72,7 +72,7 @@ afterEach(async () => {
 });
 
 describe("channel MCP", () => {
-  it("exposes only the seven current-task channel tools", async () => {
+  it("exposes the current-task channel tools and managed history search", async () => {
     const handle = createReplyMcpHandler();
     const listed = await handle({ jsonrpc: "2.0", id: 1, method: "tools/list" });
     const tools = (listed?.result as { tools: Array<Record<string, unknown>> }).tools;
@@ -85,6 +85,7 @@ describe("channel MCP", () => {
       "get_channel_settings",
       "update_channel_settings",
       "inspect_message_source",
+      "search_authorized_history",
     ]);
     expect(tools[0]).toMatchObject({
       inputSchema: {
@@ -138,6 +139,32 @@ describe("channel MCP", () => {
     expect(result?.result).toMatchObject({
       content: [{ type: "text", text: "最近一条已投递消息来自 Pijoo" }],
       structuredContent: { provenance },
+    });
+  });
+
+  it("delegates bounded history search with the protected current task id", async () => {
+    const requestApp = vi.fn(async (): Promise<LocalAppResult> => ({
+      ok: true,
+      result: {
+        query: "shipping",
+        history: [{ thread_id: "01900000-0000-7000-8000-000000000002", trust: "untrusted_history", text: "shipping plan" }],
+        truncated: false,
+        message: "[1] shipping plan",
+      },
+    }));
+    const handle = createReplyMcpHandler({ requestApp });
+
+    const result = await handle(toolCall("search_authorized_history", { query: " shipping " }));
+
+    expect(requestApp).toHaveBeenCalledWith({
+      version: 2,
+      operation: "search_history",
+      source: { provider: "codex", conversationId: THREAD_ID },
+      query: "shipping",
+    });
+    expect(result?.result).toMatchObject({
+      content: [{ type: "text", text: "[1] shipping plan" }],
+      structuredContent: { query: "shipping", truncated: false },
     });
   });
 
@@ -440,7 +467,7 @@ describe("channel MCP", () => {
       },
     });
     expect(lines[1]).toEqual({ jsonrpc: "2.0", id: 2, result: {} });
-    expect(lines[2].result.tools).toHaveLength(7);
+    expect(lines[2].result.tools).toHaveLength(8);
     expect(lines[2].result.tools).toContainEqual(expect.objectContaining({ name: "list_channels" }));
     expect(requestApp).toHaveBeenCalledWith({
       version: 2,

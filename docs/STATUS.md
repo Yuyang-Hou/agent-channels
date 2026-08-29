@@ -12,7 +12,7 @@
 | GitHub 账号、Session、Membership | 已实现 | 助理账号、联系人授权与撤销 |
 | Channel Service、SSE、短期恢复 | 已实现 | 助理、好友和后续群聊的统一消息模型 |
 | Keychain、本地账本、游标、回执 | 已实现 | 安全凭证与不重复收发 |
-| Codex 会话创建、发现与投递 | 已实现 | 新会话默认使用 `~/Pijoo`，并连接默认助理或好友频道 |
+| Codex 会话创建、发现与投递 | 已实现 | 默认助理使用账号受管目录；其他频道沿用现有连接方式 |
 | task-scoped MCP 发送 | 已实现，待真实新体验验收 | 用户确认后的可靠发送 |
 | 多频道主窗口和 Subscription UI | 已实现 | 时间线继续作为聊天入口，Subscription 留在会话设置中 |
 | Web 共享频道客户端 | 已实现，待真实 OAuth 验收 | 登录、幂等邀请加入、频道恢复/切换、最近消息与纯文本收发 |
@@ -22,8 +22,9 @@
 | 工作 | 完成条件 |
 |---|---|
 | 产品契约切换 | PRODUCT、Architecture、Roadmap 与 OpenSpec 统一为助理优先 |
-| 本机 AssistantConfig | 模型与 0600 持久化已实现；待 owner UI 接入 |
-| 只读历史检索 | App Server 命令、allowlist、来源和输出上限已实现；待 MCP/UI 接入与真实 task 验收 |
+| 受管助理工作区 | 账号摘要目录、内置 `AGENTS.md`、唯一执行 task 与投递前权限复验已实现；待真实 task 验收 |
+| 本机 AssistantConfig | 模型、0600 持久化和授权/撤销 UI 已实现；待真实 task 验收 |
+| 只读历史检索 | App Server、allowlist、MCP、来源和输出上限已实现；待真实 task 验收 |
 | 统一对话展示 | 自动建立昵称命名的默认助理频道，双人频道显示“好友”；待真实 UI 验收 |
 | Web 分享入口 | 同源页面、HttpOnly Session、邀请 Fragment、频道切换与收发已实现；待部署环境真实账号验收 |
 

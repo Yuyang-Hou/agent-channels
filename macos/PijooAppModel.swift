@@ -346,11 +346,21 @@ final class AppModel: ObservableObject {
             return
         }
         do {
+            if allowed,
+               assistantConfig.assistantTaskID?.caseInsensitiveCompare(taskID) == .orderedSame {
+                throw AppFailure("助理自己的会话不能作为历史来源")
+            }
             var updated = assistantConfig
             try updated.setHistoryAccess(allowed, taskID: taskID)
             try saveAssistantConfig(updated, accountID: accountID)
         } catch {
             fail(error)
+        }
+    }
+
+    func hasAssistantHistoryAccess(_ taskID: String) -> Bool {
+        assistantConfig.allowedHistoryTaskIDs.contains {
+            $0.caseInsensitiveCompare(taskID) == .orderedSame
         }
     }
 
@@ -478,6 +488,37 @@ extension AppModel {
                         receivedAt: record.at
                     ),
                     message: "最近一条已投递消息来自 Pijoo：\(profile.displayName) #\(record.messageID)，发送者 \(record.from)"
+                ))
+            case "search_history":
+                guard let accountID = accountSession?.accountID,
+                      assistantConfig.assistantTaskID?.caseInsensitiveCompare(request.sourceContext.conversationId) == .orderedSame else {
+                    throw AppFailure("只有 Pijoo 受管助理会话可以读取授权历史")
+                }
+                guard let query = request.query else { throw AppFailure("query is required") }
+                let executable = try codexExecutable()
+                let result = try await Sidecar.run([
+                    "assistant-history",
+                    "--config", AppPaths.assistantConfig(accountID).path,
+                    "--query", query,
+                    "--codex-executable", executable.path,
+                ])
+                guard result.status == 0,
+                      let data = result.stdout.data(using: .utf8),
+                      let response = try? JSONDecoder().decode(AssistantHistorySearchResponse.self, from: data),
+                      response.ok else {
+                    let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                    throw AppFailure(detail.isEmpty ? "无法读取授权历史" : detail)
+                }
+                let summary = response.results.isEmpty
+                    ? "授权历史中没有找到“\(response.query)”"
+                    : response.results.enumerated().map { index, item in
+                        "[\(index + 1)] \(item.title) · \(item.role) · untrusted_history\n\(item.text)"
+                    }.joined(separator: "\n\n")
+                return .success(LocalOperationResult(
+                    query: response.query,
+                    history: response.results,
+                    truncated: response.truncated,
+                    message: summary
                 ))
             case "send":
                 guard let message = request.message else { throw AppFailure("message is required") }
@@ -710,17 +751,18 @@ extension AppModel {
         do {
             try AppPaths.prepare()
             let provider = selectedHostProvider
-            guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: provider.bundleIdentifier) else {
-                throw AppFailure("未找到 \(provider.displayName) App")
-            }
-            let executable = app.appendingPathComponent("Contents/Resources/codex")
-            guard FileManager.default.isExecutableFile(atPath: executable.path) else {
-                throw AppFailure("\(provider.displayName) App 缺少可用的 Codex 组件")
+            let executable = try codexExecutable(for: provider)
+            let workspace: URL
+            if isAssistantChannel(profile.id) {
+                guard let accountID = accountSession?.accountID else { throw AppFailure("请先登录") }
+                workspace = try AppPaths.prepareAssistantWorkspace(accountID: accountID)
+            } else {
+                workspace = AppPaths.defaultWorkspace
             }
             let result = try await Sidecar.run([
                 "host-create",
                 "--host-provider", provider.rawValue,
-                "--host-workspace", AppPaths.defaultWorkspace.path,
+                "--host-workspace", workspace.path,
                 "--host-title", "Pijoo · \(profile.displayName)",
                 "--codex-executable", executable.path,
             ])
@@ -755,10 +797,19 @@ extension AppModel {
             guard let verified else {
                 throw AppFailure("会话已创建（\(conversationID)），但暂时无法连接。请在 Codex 中打开后按 ID 连接。\(lastPreflightError.isEmpty ? "" : "\n\(lastPreflightError)")")
             }
+            if isAssistantChannel(profile.id) {
+                let safeState = try await setAndReadHostPermission(
+                    conversationID: verified.conversationID,
+                    provider: provider,
+                    permission: .requestApproval
+                )
+                try validateManagedAssistantState(safeState, expectedWorkspace: workspace)
+            }
             taskCreationStatus = "正在关联当前频道…"
             _ = try await subscribe(
                 source: LocalSource(provider: verified.provider, conversationId: verified.conversationID),
-                profile: profile
+                profile: profile,
+                allowAssistantAssignment: true
             )
             clearConversationDraft()
         } catch {
@@ -779,6 +830,17 @@ extension AppModel {
             let raw = draftTask.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !raw.isEmpty else { throw AppFailure("请输入 AI 会话 ID 或链接") }
             let verified = try await preflightHostConversation(raw, provider: selectedHostProvider)
+            if isAssistantChannel(profile.id) {
+                guard let accountID = accountSession?.accountID else { throw AppFailure("请先登录") }
+                if assistantConfig.assistantTaskID?.caseInsensitiveCompare(verified.conversationID) == .orderedSame {
+                    throw AppFailure("助理自己的会话不能作为历史来源")
+                }
+                var updated = assistantConfig
+                try updated.setHistoryAccess(true, taskID: verified.conversationID)
+                try saveAssistantConfig(updated, accountID: accountID)
+                clearConversationDraft()
+                return
+            }
             _ = try await subscribe(
                 source: LocalSource(provider: verified.provider, conversationId: verified.conversationID),
                 profile: profile
@@ -786,6 +848,47 @@ extension AppModel {
             clearConversationDraft()
         } catch {
             fail(error)
+        }
+    }
+
+    private func codexExecutable(for provider: HostProviderChoice = .codex) throws -> URL {
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: provider.bundleIdentifier) else {
+            throw AppFailure("未找到 \(provider.displayName) App")
+        }
+        let executable = app.appendingPathComponent("Contents/Resources/codex")
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+            throw AppFailure("\(provider.displayName) App 缺少可用的 Codex 组件")
+        }
+        return executable
+    }
+
+    private func setAndReadHostPermission(
+        conversationID: String,
+        provider: HostProviderChoice,
+        permission: HostPermissionChoice
+    ) async throws -> HostConversationRuntimeState {
+        let result = try await Sidecar.run([
+            "host-state", "--host-provider", provider.rawValue,
+            "--host-conversation", conversationID,
+            "--permission", permission.rawValue,
+        ])
+        guard result.status == 0,
+              let data = result.stdout.data(using: .utf8),
+              let state = try? JSONDecoder().decode(HostConversationRuntimeState.self, from: data) else {
+            let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw AppFailure(detail.isEmpty ? "无法设置 ChatGPT 安全权限" : detail)
+        }
+        return state
+    }
+
+    private func validateManagedAssistantState(
+        _ state: HostConversationRuntimeState,
+        expectedWorkspace: URL
+    ) throws {
+        let actual = state.workspace.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
+        let expected = expectedWorkspace.resolvingSymlinksInPath().standardizedFileURL.path
+        guard state.connected, actual == expected, state.permission == HostPermissionChoice.requestApproval.rawValue else {
+            throw AppFailure("助理工作区或权限已变化，需要在 Pijoo 中恢复")
         }
     }
 
@@ -995,8 +1098,15 @@ extension AppModel {
     @discardableResult
     private func subscribe(
         source: LocalSource,
-        profile: ChannelProfile
+        profile: ChannelProfile,
+        allowAssistantAssignment: Bool = false
     ) async throws -> ChannelSubscription {
+        if profile.channel == assistantConfig.assistantChannelID {
+            let isCurrentAssistant = assistantConfig.assistantTaskID?.caseInsensitiveCompare(source.conversationId) == .orderedSame
+            guard allowAssistantAssignment || isCurrentAssistant else {
+                throw AppFailure("默认助理只能使用 Pijoo 新建的受管会话；已有会话仅可授权只读")
+            }
+        }
         let task: TaskBinding
         if let index = state.tasks.firstIndex(where: {
             $0.provider == source.provider && $0.conversationID.lowercased() == source.conversationId.lowercased()
@@ -1138,6 +1248,16 @@ extension AppModel {
         }
         listenerStatus[id] = "正在检查 \(hostDisplayName(task.provider))…"
         do {
+            let managedWorkspace: URL?
+            if isAssistantChannel(profile.id) {
+                guard let accountID = accountSession?.accountID,
+                      assistantConfig.assistantTaskID?.caseInsensitiveCompare(task.conversationID) == .orderedSame else {
+                    throw AppFailure("默认助理未绑定受管会话")
+                }
+                managedWorkspace = try AppPaths.prepareAssistantWorkspace(accountID: accountID)
+            } else {
+                managedWorkspace = nil
+            }
             let preflight = try await Sidecar.run([
                 "host-preflight",
                 "--host-provider", task.provider,
@@ -1159,6 +1279,19 @@ extension AppModel {
                     return
                 }
                 throw AppFailure(detail.isEmpty ? "AI 会话当前不可用" : detail)
+            }
+            if let managedWorkspace {
+                let result = try await Sidecar.run([
+                    "host-state", "--host-provider", task.provider,
+                    "--host-conversation", task.conversationID,
+                ])
+                guard result.status == 0,
+                      let data = result.stdout.data(using: .utf8),
+                      let runtimeState = try? JSONDecoder().decode(HostConversationRuntimeState.self, from: data) else {
+                    throw AppFailure("无法复验助理工作区与权限")
+                }
+                try validateManagedAssistantState(runtimeState, expectedWorkspace: managedWorkspace)
+                hostConversationStates[task.id] = runtimeState
             }
             automaticallyReconnectingTaskIDs.remove(task.id)
             if hostConversationStates[task.id]?.connected != true {
@@ -1213,6 +1346,12 @@ extension AppModel {
             ]
             if let since = subscription.lastDeliveredMessageID {
                 arguments.append(contentsOf: ["--since", String(since)])
+            }
+            if let managedWorkspace {
+                arguments.append(contentsOf: [
+                    "--expected-workspace", managedWorkspace.path,
+                    "--expected-permission", HostPermissionChoice.requestApproval.rawValue,
+                ])
             }
             process.arguments = arguments
             process.standardOutput = output

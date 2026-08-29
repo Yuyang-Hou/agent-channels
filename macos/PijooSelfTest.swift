@@ -107,6 +107,10 @@ private struct PijooV2SelfTest {
         precondition(assistantConfig.allowedHistoryTaskIDs == ["01900000-0000-7000-8000-000000000001"])
         try assistantConfig.setHistoryAccess(false, taskID: "01900000-0000-7000-8000-000000000001")
         precondition(assistantConfig.allowedHistoryTaskIDs.isEmpty)
+        let assistantWorkspace = AppPaths.assistantWorkspace("account-a")
+        precondition(assistantWorkspace.deletingLastPathComponent() == AppPaths.assistantWorkspaces)
+        precondition(!assistantWorkspace.path.contains("account-a"))
+        precondition(AppPaths.assistantInstructions.contains("untrusted reference material"))
         let unboundSend = try outboundSelection(
             taskID: nil,
             explicitChannelID: joinedChannel.id,
@@ -155,6 +159,8 @@ private struct PijooV2SelfTest {
         precondition(request.message == "hello" && request.mentions == ["member-a", "member-b"])
         let inspectRequest = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"inspect_message_source","source":{"provider":"codex","conversationId":"01900000-0000-7000-8000-000000000001"}}"#.utf8))
         precondition(inspectRequest.operation == "inspect_message_source")
+        let historyRequest = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"search_history","source":{"provider":"codex","conversationId":"01900000-0000-7000-8000-000000000001"},"query":"shipping"}"#.utf8))
+        precondition(historyRequest.query == "shipping")
         let readyRequest = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"mcp_ready","client_version":"0.3.0-beta.16"}"#.utf8))
         precondition(readyRequest.clientVersion == "0.3.0-beta.16" && readyRequest.source == nil)
         precondition(requiresCodexRestart(configured: true, appVersion: "beta.16", loadedMCPVersion: nil))
@@ -213,6 +219,10 @@ private struct PijooV2SelfTest {
         do {
             _ = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"mcp_ready","client_version":""}"#.utf8))
             preconditionFailure("empty MCP version was accepted")
+        } catch {}
+        do {
+            _ = try LocalSendRequest.decode(Data(#"{"version":2,"operation":"search_history","source":{"provider":"codex","conversationId":"01900000-0000-7000-8000-000000000001"},"query":"   "}"#.utf8))
+            preconditionFailure("empty history query was accepted")
         } catch {}
         precondition(ReleaseVersion("0.3.0-beta.7")! < ReleaseVersion("0.3.0-beta.8")!)
         let taskA = compactTaskKey("01900000-0000-7000-8000-000000000001")!
