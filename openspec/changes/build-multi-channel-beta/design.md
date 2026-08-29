@@ -201,10 +201,11 @@ Host preflight。
 不增加无意义的选择器；存在多个可用 Host 时才先选择 AI App。尚未闭环的 Claude 不展示。
 
 “转发到会话”的主路径允许用户用原生目录选择器为当前频道新建专属 Codex 会话。App 通过内嵌
-sidecar 调用已安装 ChatGPT Codex 自带的 `app-server thread/start`，显式创建持久 user task，
-并以“Pijoo · 频道名”调用 `thread/name/set` 持久化空白 task；取得 conversation id 后立即以不激活
+sidecar 调用已安装 ChatGPT Codex 自带的 `app-server thread/start`，显式创建持久 user task；随后用
+`thread/inject_items` 写入一条不触发 turn 的 developer 上下文以确保 rollout 落盘，并以“Pijoo · 频道名”
+调用 `thread/name/set` 持久化空白 task；取得 conversation id 后立即以不激活
 Host App 的方式打开 `codex://threads/<id>`。Desktop owner preflight 成功后才复用
-既有 `TaskBinding + Subscription` 流程。创建本身不发送输入或创建 turn。创建后若 Desktop 暂未
+既有 `TaskBinding + Subscription` 流程。创建本身不发送用户输入或创建 turn。创建后若 Desktop 暂未
 就绪，App 必须显示可恢复的 conversation id；搜索、id/链接连接已有会话继续作为回退。创建期间
 主操作显示不定进度，并依次说明正在创建会话、等待 Host 连接和关联频道，避免长耗时表现为无响应。
 
