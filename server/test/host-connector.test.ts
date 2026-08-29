@@ -79,4 +79,19 @@ describe("Host delivery boundary", () => {
     expect(code).toBe(1);
     expect(error.mock.calls.flat().join("\n")).toContain("Codex Desktop IPC socket not found");
   });
+
+  it("accepts approve-for-me for a managed listener", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await runListenHere([
+      "--channel", "test-channel",
+      "--token", "test-token",
+      "--session", "test-session",
+      "--host-provider", "codex",
+      "--host-conversation", THREAD_ID,
+      "--expected-workspace", "/tmp/pijoo-managed",
+      "--expected-permission", "approve-for-me",
+      "--codex-socket", "/tmp/missing-codex-ipc.sock",
+    ])).toBe(1);
+    expect(error.mock.calls.flat().join("\n")).toContain("Codex Desktop IPC socket not found or unsafe");
+  });
 });
