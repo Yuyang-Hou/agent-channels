@@ -66,7 +66,7 @@ options:
   --expected-workspace <path>
                       require this Host workspace before every delivery
   --expected-permission <p>
-                      require request-approval before every delivery
+                      require request-approval or approve-for-me before every delivery
   --codex-socket <p>  override the ChatGPT Desktop IPC socket path (diagnostics)
   --channel-name <n>  display name used for {channel_name}; defaults to channel id
   --message-template <t>
@@ -171,7 +171,7 @@ type Args = {
   hostConversation?: string;
   hostSourceConversation?: string;
   expectedWorkspace?: string;
-  expectedPermission?: "request-approval";
+  expectedPermission?: "request-approval" | "approve-for-me";
   codexSocket?: string;
   channelName?: string;
   messageTemplate?: string;
@@ -320,13 +320,15 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
   if (Boolean(expectedWorkspace) !== Boolean(expectedPermissionValue)) {
     return { error: "--expected-workspace and --expected-permission must be provided together" };
   }
-  if (expectedPermissionValue && expectedPermissionValue !== "request-approval") {
-    return { error: "--expected-permission must be request-approval" };
+  if (expectedPermissionValue && expectedPermissionValue !== "request-approval" && expectedPermissionValue !== "approve-for-me") {
+    return { error: "--expected-permission must be request-approval or approve-for-me" };
   }
   if (expectedWorkspace && !hostConversation) {
     return { error: "--expected-workspace requires --host-conversation" };
   }
-  const expectedPermission = expectedPermissionValue === "request-approval" ? expectedPermissionValue : undefined;
+  const expectedPermission = expectedPermissionValue === "request-approval" || expectedPermissionValue === "approve-for-me"
+    ? expectedPermissionValue
+    : undefined;
   return {
     channel,
     token: token ?? "",
