@@ -341,7 +341,9 @@ describe("GitHub account login", () => {
 
     const page = await app.request("/join/shared-one");
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain("Pijoo · 共享会话");
+    const html = await page.text();
+    expect(html).toContain("Pijoo · 共享会话");
+    expect(html).toContain('<div class="gate hidden" id="gate">');
   });
 
   it("restores account channel memberships and blocks banned re-entry", async () => {

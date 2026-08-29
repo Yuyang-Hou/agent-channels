@@ -25,6 +25,7 @@
 ## 5. Verification
 
 - [x] Web 登录 Cookie、幂等邀请和不重复消耗自动化
+- [x] 已登录刷新期间不短暂展示登录提示
 - [x] 全量服务端测试、typecheck、build、Swift 自测与 OpenSpec strict
 - [x] 本地页面预览
 - [ ] 真实部署环境 OAuth/邀请验收

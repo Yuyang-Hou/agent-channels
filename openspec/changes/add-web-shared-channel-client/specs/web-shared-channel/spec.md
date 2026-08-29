@@ -13,6 +13,12 @@ Web MUST 使用 Account Session 恢复所有 active Membership，并允许用户
 - **WHEN** 用户登录 Web
 - **THEN** 频道列表显示这些频道，用户可逐个切换并交流
 
+#### Scenario: 已登录用户刷新页面
+
+- **GIVEN** 浏览器已有有效 Web Account Session
+- **WHEN** 用户刷新 Web
+- **THEN** 鉴权结果返回前保持中性启动态，不短暂展示登录提示；恢复成功后直接显示频道界面
+
 #### Scenario: 撤权
 
 - **GIVEN** 用户正在查看一个频道

@@ -282,7 +282,7 @@ export function webAppHtml(accountEnabled: boolean): string {
         <div><h1 id="title">Pijoo</h1><p id="subtitle">安全地加入共享会话</p></div>
       </header>
       <div class="content" id="content">
-        <div class="gate" id="gate">
+        <div class="gate hidden" id="gate">
           <div class="empty-mark">↗</div>
           <h2 id="gateTitle">连接你的频道</h2>
           <p id="gateCopy">登录后即可恢复曾经加入的频道，或使用邀请链接加入新的共享会话。</p>
