@@ -9,11 +9,8 @@ const MAX_RESULT_TEXT = 1_200;
 const MAX_TOTAL_TEXT = 8_000;
 const MAX_FRAME_BYTES = 256 * 1024 * 1024;
 
-type AssistantConfig = {
-  version: 1;
-  assistant_task_id?: string | null;
+type ChannelHistoryConfig = {
   allowed_history_task_ids: string[];
-  reply_mode: "draft";
 };
 
 export type CodexHistoryResult = {
@@ -36,31 +33,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function parseAssistantConfig(input: string): AssistantConfig {
+export function parseChannelConfig(input: string, channelId: string): ChannelHistoryConfig {
   const value = JSON.parse(input) as unknown;
-  if (!isRecord(value) || value.version !== 1 || value.reply_mode !== "draft" || !Array.isArray(value.allowed_history_task_ids)) {
-    throw new Error("Assistant config is invalid or unsupported");
+  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.channels)) {
+    throw new Error("Channel config is invalid or unsupported");
   }
-  const allowed = [...new Set(value.allowed_history_task_ids.map((item) => {
-    if (typeof item !== "string") throw new Error("Assistant history allowlist is invalid");
+  const channel = value.channels.find((item) => isRecord(item) && item.channel_id === channelId);
+  if (!isRecord(channel) || !Array.isArray(channel.allowed_history_task_ids)) {
+    throw new Error("Channel history config is missing");
+  }
+  const allowed = [...new Set(channel.allowed_history_task_ids.map((item) => {
+    if (typeof item !== "string") throw new Error("Channel history allowlist is invalid");
     return parseCodexThreadId(item).toLowerCase();
   }))];
-  const assistant = value.assistant_task_id;
-  return {
-    version: 1,
-    assistant_task_id: assistant == null ? null : parseCodexThreadId(String(assistant)).toLowerCase(),
-    allowed_history_task_ids: allowed,
-    reply_mode: "draft",
-  };
+  return { allowed_history_task_ids: allowed };
 }
 
-export function loadAssistantConfig(path: string): AssistantConfig {
+export function loadChannelConfig(path: string, channelId: string): ChannelHistoryConfig {
   const stat = lstatSync(path);
-  if (!stat.isFile()) throw new Error("Assistant config must be a regular file");
+  if (!stat.isFile()) throw new Error("Channel config must be a regular file");
   if (process.platform !== "win32" && (stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0)) {
-    throw new Error("Assistant config must be owned by the current user without group or other access");
+    throw new Error("Channel config must be owned by the current user without group or other access");
   }
-  return parseAssistantConfig(readFileSync(path, "utf8"));
+  return parseChannelConfig(readFileSync(path, "utf8"), channelId);
 }
 
 function textItems(threadId: string, value: unknown): CodexHistoryResult[] {
@@ -95,7 +90,7 @@ function textItems(threadId: string, value: unknown): CodexHistoryResult[] {
 }
 
 export async function searchAuthorizedCodexHistory(
-  config: AssistantConfig,
+  config: ChannelHistoryConfig,
   queryInput: string,
   readThread: ReadThread,
 ): Promise<CodexHistorySearchResponse> {
@@ -131,7 +126,7 @@ export async function searchAuthorizedCodexHistory(
 }
 
 export async function searchCodexHistoryViaAppServer(options: {
-  config: AssistantConfig;
+  config: ChannelHistoryConfig;
   query: string;
   codexExecutable: string;
   timeoutMs?: number;

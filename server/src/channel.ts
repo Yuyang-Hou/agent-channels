@@ -51,6 +51,7 @@ export const MAX_ATTACHMENTS_PER_MESSAGE = 4;
  *  offline when it fired simply never sees it. Use it for "received, give me
  *  a minute" acks so the other side's UI can show a loading indicator. */
 export type MessageKind = "message" | "status";
+export type MessageAuthorKind = "human" | "channel_ai";
 
 export type MessageMention =
   | { kind: "all" }
@@ -70,6 +71,8 @@ export type Message = {
   sender_member_id: string;
   /** Stable server-derived endpoint for this member + callsign. Never client supplied. */
   sender_endpoint_id: string;
+  /** Server-bound endpoint kind. AI is an author, never a channel member. */
+  author_kind: MessageAuthorKind;
   to: string;
   text: string;
   at: number;
@@ -95,6 +98,7 @@ export type AuthenticatedSource = {
   memberId: string;
   endpointId: string;
   memberName?: string;
+  authorKind?: MessageAuthorKind;
 };
 
 export type MessageSource = {
@@ -345,6 +349,9 @@ export class Channel {
         if (currentSource.memberId !== opts.source.memberId) {
           throw new ChannelError("session belongs to a different authenticated member", "unauthorized", 401);
         }
+        if ((currentSource.authorKind ?? "human") !== (opts.source.authorKind ?? "human")) {
+          throw new ChannelError("session belongs to a different author kind", "unauthorized", 401);
+        }
         if (currentCallsign === normalized && currentSource.endpointId !== opts.source.endpointId) {
           throw new ChannelError("session endpoint does not match its authenticated callsign", "unauthorized", 401);
         }
@@ -363,7 +370,8 @@ export class Channel {
         if (opts.source && adoptedSource) {
           if (
             adoptedSource.memberId !== opts.source.memberId ||
-            adoptedSource.endpointId !== opts.source.endpointId
+            adoptedSource.endpointId !== opts.source.endpointId ||
+            (adoptedSource.authorKind ?? "human") !== (opts.source.authorKind ?? "human")
           ) {
             throw new ChannelError("callsign belongs to a different authenticated endpoint", "unauthorized", 401);
           }
@@ -430,7 +438,11 @@ export class Channel {
   ): AuthenticatedSource {
     this.ensureJoined(sessionId);
     const existing = this.sourceBySession.get(sessionId);
-    if (existing && (existing.memberId !== source.memberId || existing.endpointId !== source.endpointId)) {
+    if (existing && (
+      existing.memberId !== source.memberId ||
+      existing.endpointId !== source.endpointId ||
+      (existing.authorKind ?? "human") !== (source.authorKind ?? "human")
+    )) {
       throw new ChannelError("session is already bound to a different authenticated endpoint", "unauthorized", 401);
     }
     this.sourceBySession.set(sessionId, source);
@@ -550,6 +562,7 @@ export class Channel {
       sender_name: source.memberName || from,
       sender_member_id: source.memberId,
       sender_endpoint_id: source.endpointId,
+      author_kind: source.authorKind ?? "human",
       to: dest,
       text,
       at: now,

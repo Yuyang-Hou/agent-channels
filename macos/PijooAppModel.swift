@@ -20,7 +20,7 @@ final class AppModel: ObservableObject {
     static let shared = AppModel()
 
     @Published var state: AppStateV2
-    @Published private(set) var assistantConfig = AssistantConfig()
+    @Published private(set) var channelConfig = ChannelConfig()
     @Published var selectedChannelID: UUID?
     @Published var messages: [ChannelMessageRecord] = []
     @Published var members: [ChannelMember] = []
@@ -135,57 +135,29 @@ final class AppModel: ObservableObject {
         return state.channels.first { $0.id == selectedChannelID }
     }
 
-    func isAssistantChannel(_ channelID: UUID) -> Bool {
-        guard let channel = state.channels.first(where: { $0.id == channelID }) else { return false }
-        return channel.channel == assistantConfig.assistantChannelID
+    func isManagedChannel(_ channelID: UUID) -> Bool {
+        state.channels.first(where: { $0.id == channelID })?.role == "owner"
     }
 
-    func isSharedAssistantChannel(_ channelID: UUID) -> Bool {
-        guard let channel = state.channels.first(where: { $0.id == channelID }) else { return false }
-        return assistantConfig.sharedAssistantChannelIDs.contains(channel.channel)
-    }
-
-    func isManagedAssistantChannel(_ channelID: UUID) -> Bool {
-        isAssistantChannel(channelID) || isSharedAssistantChannel(channelID)
-    }
-
-    private func managedAssistantWorkspace(_ channel: ChannelProfile) throws -> URL? {
-        guard isManagedAssistantChannel(channel.id) else { return nil }
+    private func managedChannelWorkspace(_ channel: ChannelProfile) throws -> URL? {
+        guard isManagedChannel(channel.id) else { return nil }
         guard let accountID = accountSession?.accountID else { throw AppFailure("请先登录") }
-        return try AppPaths.prepareAssistantWorkspace(
+        let runtime = channelConfig.runtime(channelID: channel.channel)
+            ?? ChannelRuntimeConfig(channelID: channel.channel)
+        return try AppPaths.prepareChannelWorkspace(
             accountID: accountID,
-            persona: assistantConfig.persona,
-            channelID: channel.channel,
-            contact: isSharedAssistantChannel(channel.id) ? assistantContact(channel.id) : nil
+            instructions: runtime.instructions,
+            channelID: channel.channel
         )
     }
 
-    func assistantContact(_ channelID: UUID) -> AssistantContactProfile? {
-        guard let channel = state.channels.first(where: { $0.id == channelID }),
-              isSharedAssistantChannel(channelID) else { return nil }
-        return assistantConfig.contacts.first { $0.channelID == channel.channel }
-            ?? AssistantContactProfile(
-                channelID: channel.channel,
-                memberID: nil,
-                displayName: channel.peerName ?? channel.displayName,
-                relationship: "",
-                notes: ""
-            )
+    func channelRuntime(_ channelID: UUID) -> ChannelRuntimeConfig? {
+        guard let channel = state.channels.first(where: { $0.id == channelID }) else { return nil }
+        return channelConfig.runtime(channelID: channel.channel)
     }
 
     func channelTitle(_ channel: ChannelProfile) -> String {
-        if channel.channel == assistantConfig.assistantChannelID { return state.defaultCallsign }
-        return channelPresentationTitle(channel, assistantChannelID: assistantConfig.assistantChannelID)
-    }
-
-    func channelKindLabel(_ channel: ChannelProfile) -> String {
-        if isSharedAssistantChannel(channel.id) { return "好友助理" }
-        switch channelPresentationKind(channel, assistantChannelID: assistantConfig.assistantChannelID) {
-        case .assistant: return "助理"
-        case .friend: return "好友"
-        case .group: return "群聊"
-        case .channel: return "频道"
-        }
+        channel.displayName
     }
 
     var selectedSubscriptions: [ChannelSubscription] {
@@ -361,7 +333,7 @@ final class AppModel: ObservableObject {
         if loaded.defaultCallsign.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             loaded.defaultCallsign = session.displayName
         }
-        assistantConfig = AssistantConfigStore.load(accountID: session.accountID)
+        channelConfig = ChannelConfigStore.load(accountID: session.accountID)
         replaceVisibleState(loaded)
         persistState()
     }
@@ -369,123 +341,76 @@ final class AppModel: ObservableObject {
     private func lockAccountState() {
         pauseAccountChannels()
         guard state.accountID != nil || !state.channels.isEmpty else { return }
-        assistantConfig = AssistantConfig()
+        channelConfig = ChannelConfig()
         replaceVisibleState(AppStateV2(defaultCallsign: generatedLocalNickname()))
         persistState()
     }
 
-    func setAssistantHistoryAccess(_ allowed: Bool, taskID: String) {
+    func setChannelHistoryAccess(_ allowed: Bool, taskID: String, channelID: UUID) {
         guard let accountID = accountSession?.accountID else {
-            fail(AppFailure("请先登录后再管理助理历史权限"))
+            fail(AppFailure("请先登录后再管理频道历史权限"))
             return
         }
         do {
-            if allowed,
-               assistantConfig.assistantTaskID?.caseInsensitiveCompare(taskID) == .orderedSame {
-                throw AppFailure("助理自己的会话不能作为历史来源")
+            guard let channel = state.channels.first(where: { $0.id == channelID }) else {
+                throw AppFailure("频道不存在")
             }
-            var updated = assistantConfig
-            try updated.setHistoryAccess(allowed, taskID: taskID)
-            try saveAssistantConfig(updated, accountID: accountID)
+            if allowed, channelRuntime(channelID)?.taskID?.caseInsensitiveCompare(taskID) == .orderedSame {
+                throw AppFailure("频道自己的运行会话不能作为历史来源")
+            }
+            var updated = channelConfig
+            try updated.setHistoryAccess(allowed, taskID: taskID, channelID: channel.channel)
+            try saveChannelConfig(updated, accountID: accountID)
         } catch {
             fail(error)
         }
     }
 
-    func hasAssistantHistoryAccess(_ taskID: String) -> Bool {
-        assistantConfig.allowedHistoryTaskIDs.contains {
+    func hasChannelHistoryAccess(_ taskID: String, channelID: UUID) -> Bool {
+        channelRuntime(channelID)?.allowedHistoryTaskIDs.contains {
             $0.caseInsensitiveCompare(taskID) == .orderedSame
-        }
+        } == true
     }
 
-    private func saveAssistantConfig(_ config: AssistantConfig, accountID: String) throws {
-        try AssistantConfigStore.save(config, accountID: accountID)
-        assistantConfig = config
-        for channel in state.channels where isManagedAssistantChannel(channel.id) {
-            let contact = assistantContact(channel.id)
-            _ = try AppPaths.prepareAssistantWorkspace(
+    private func saveChannelConfig(_ config: ChannelConfig, accountID: String) throws {
+        try ChannelConfigStore.save(config, accountID: accountID)
+        channelConfig = config
+        for channel in state.channels where isManagedChannel(channel.id) {
+            let runtime = config.runtime(channelID: channel.channel)
+                ?? ChannelRuntimeConfig(channelID: channel.channel)
+            _ = try AppPaths.prepareChannelWorkspace(
                 accountID: accountID,
-                persona: config.persona,
-                channelID: channel.channel,
-                contact: contact
+                instructions: runtime.instructions,
+                channelID: channel.channel
             )
         }
     }
 
-    func saveAssistantPersona(_ raw: String) {
-        guard let accountID = accountSession?.accountID else { return }
-        let persona = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !persona.isEmpty, persona.count <= 4_000 else {
-            fail(AppFailure("身份卡须为 1–4000 个字符"))
-            return
-        }
-        do {
-            var updated = assistantConfig
-            updated.persona = persona
-            try saveAssistantConfig(updated, accountID: accountID)
-        } catch {
-            fail(error)
-        }
-    }
-
-    func assistantContactImpression(_ channelID: UUID) -> String {
+    func channelMemory(_ channelID: UUID) -> String {
         guard let accountID = accountSession?.accountID,
               let channel = state.channels.first(where: { $0.id == channelID }) else { return "" }
-        return AppPaths.readAssistantContactImpression(accountID, channelID: channel.channel)
+        return AppPaths.readChannelMemory(accountID, channelID: channel.channel)
     }
 
-    func saveAssistantContact(
-        _ channelID: UUID,
-        relationship rawRelationship: String,
-        notes rawNotes: String,
-        impression: String
-    ) {
+    func saveChannelContext(_ channelID: UUID, instructions rawInstructions: String, memory: String) {
         guard let accountID = accountSession?.accountID,
               let channel = state.channels.first(where: { $0.id == channelID }),
-              var contact = assistantContact(channelID) else { return }
-        let relationship = rawRelationship.trimmingCharacters(in: .whitespacesAndNewlines)
-        let notes = rawNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard relationship.count <= 64, notes.count <= 4_000, impression.count <= 8_000 else {
-            fail(AppFailure("关系最多 64 字，备注最多 4000 字，AI 印象最多 8000 字"))
+              isManagedChannel(channelID) else { return }
+        let instructions = rawInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !instructions.isEmpty, instructions.count <= 4_000, memory.count <= 8_000 else {
+            fail(AppFailure("频道指令须为 1–4000 字，频道记忆最多 8000 字"))
             return
         }
         do {
-            contact.relationship = relationship
-            contact.notes = notes
-            var updated = assistantConfig
-            updated.updateContact(contact)
-            try saveAssistantConfig(updated, accountID: accountID)
-            try AppPaths.saveAssistantContactImpression(impression, accountID: accountID, channelID: channel.channel)
+            var updated = channelConfig
+            var runtime = updated.runtime(channelID: channel.channel)
+                ?? ChannelRuntimeConfig(channelID: channel.channel)
+            runtime.instructions = instructions
+            updated.update(runtime)
+            try saveChannelConfig(updated, accountID: accountID)
+            try AppPaths.saveChannelMemory(memory, accountID: accountID, channelID: channel.channel)
         } catch {
             fail(error)
-        }
-    }
-
-    private func updateAuthenticatedAssistantContact(
-        profile: ChannelProfile,
-        memberID: String,
-        displayName: String
-    ) {
-        guard isSharedAssistantChannel(profile.id),
-              memberID != profile.memberID,
-              let accountID = accountSession?.accountID else { return }
-        var contact = assistantContact(profile.id) ?? AssistantContactProfile(
-            channelID: profile.channel,
-            memberID: nil,
-            displayName: displayName,
-            relationship: "",
-            notes: ""
-        )
-        let normalizedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard contact.memberID != memberID || (!normalizedName.isEmpty && contact.displayName != normalizedName) else { return }
-        contact.memberID = memberID
-        if !normalizedName.isEmpty { contact.displayName = normalizedName }
-        var updated = assistantConfig
-        updated.updateContact(contact)
-        do {
-            try saveAssistantConfig(updated, accountID: accountID)
-        } catch {
-            ClientLog.record("warning", "assistant_contact_update_failed", detail: error.localizedDescription)
         }
     }
 
@@ -611,20 +536,23 @@ extension AppModel {
                 ))
             case "search_history":
                 guard let accountID = accountSession?.accountID,
-                      assistantConfig.assistantTaskID?.caseInsensitiveCompare(request.sourceContext.conversationId) == .orderedSame else {
-                    throw AppFailure("只有 Pijoo 受管助理会话可以读取授权历史")
+                      let runtime = channelConfig.channels.first(where: {
+                          $0.taskID?.caseInsensitiveCompare(request.sourceContext.conversationId) == .orderedSame
+                      }) else {
+                    throw AppFailure("只有 Pijoo 频道运行会话可以读取授权历史")
                 }
                 guard let query = request.query else { throw AppFailure("query is required") }
                 let executable = try codexExecutable()
                 let result = try await Sidecar.run([
-                    "assistant-history",
-                    "--config", AppPaths.assistantConfig(accountID).path,
+                    "channel-history",
+                    "--config", AppPaths.channelConfig(accountID).path,
+                    "--channel", runtime.channelID,
                     "--query", query,
                     "--codex-executable", executable.path,
                 ])
                 guard result.status == 0,
                       let data = result.stdout.data(using: .utf8),
-                      let response = try? JSONDecoder().decode(AssistantHistorySearchResponse.self, from: data),
+                      let response = try? JSONDecoder().decode(ChannelHistorySearchResponse.self, from: data),
                       response.ok else {
                     let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
                     throw AppFailure(detail.isEmpty ? "无法读取授权历史" : detail)
@@ -657,6 +585,7 @@ extension AppModel {
                         profile: profile,
                         endpoint: endpoint,
                         source: source,
+                        authorKind: .channelAI,
                         mentions: request.mentions ?? []
                     )
                     upsertMessage(ChannelMessageRecord(
@@ -670,6 +599,7 @@ extension AppModel {
                         state: .accepted,
                         senderMemberID: receipt.memberID,
                         senderEndpointID: receipt.endpointID,
+                        authorKind: .channelAI,
                         source: source,
                         mention: receipt.mention
                     ))
@@ -697,20 +627,6 @@ extension AppModel {
                         return .failure(text, outcome: "unknown")
                     }
                 }
-            case "subscribe":
-                let profile = try resolveChannel(request.channel)
-                let subscription = try await subscribe(source: request.sourceContext, profile: profile)
-                return .success(LocalOperationResult(
-                    channel: profile.channel,
-                    settings: subscriptionSummary(subscription, profile: profile),
-                    message: "当前会话将接收 \(profile.displayName) 的消息"
-                ))
-            case "unsubscribe":
-                let profile = try resolveChannel(request.channel)
-                let subscription = try requireSubscription(source: request.sourceContext, profile: profile)
-                stopListener(subscription.id)
-                updateSubscription(subscription.id) { $0.enabled = false }
-                return .success(LocalOperationResult(channel: profile.channel, message: "已停止向当前会话转发 \(profile.displayName) 的消息"))
             case "get_settings":
                 let profile = try resolveChannel(request.channel)
                 let subscription = try requireSubscription(source: request.sourceContext, profile: profile)
@@ -864,7 +780,7 @@ extension AppModel {
             return
         }
         busy = true
-        taskCreationStatus = "正在创建专属会话，通常需要几秒…"
+        taskCreationStatus = "正在连接频道 AI，通常需要几秒…"
         defer {
             busy = false
             taskCreationStatus = ""
@@ -881,7 +797,8 @@ extension AppModel {
         try AppPaths.prepare()
         let provider = selectedHostProvider
         let executable = try codexExecutable(for: provider)
-        let workspace = try managedAssistantWorkspace(profile) ?? AppPaths.defaultWorkspace
+        guard isManagedChannel(profile.id) else { throw AppFailure("只有频道所有者可以运行频道 AI") }
+        let workspace = try managedChannelWorkspace(profile) ?? AppPaths.defaultWorkspace
         let result = try await Sidecar.run([
             "host-create",
             "--host-provider", provider.rawValue,
@@ -895,12 +812,12 @@ extension AppModel {
               response.ok,
               UUID(uuidString: response.conversationID) != nil else {
             let detail = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-            throw AppFailure(detail.isEmpty ? "无法新建 AI 会话" : detail)
+            throw AppFailure(detail.isEmpty ? "无法创建频道 AI" : detail)
         }
         let conversationID = response.conversationID.lowercased()
-        taskCreationStatus = "会话已创建，正在等待 ChatGPT 连接…"
+        taskCreationStatus = "频道 AI 已创建，正在等待 ChatGPT 连接…"
         guard let url = URL(string: "codex://threads/\(conversationID)") else {
-            throw AppFailure("会话已创建（\(conversationID)），但无法在 \(provider.displayName) 中打开")
+            throw AppFailure("频道 AI 已创建（\(conversationID)），但无法在 \(provider.displayName) 中打开")
         }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
@@ -917,21 +834,19 @@ extension AppModel {
             }
         }
         guard let verified else {
-            throw AppFailure("会话已创建（\(conversationID)），但暂时无法连接。请在 Codex 中打开后按 ID 连接。\(lastPreflightError.isEmpty ? "" : "\n\(lastPreflightError)")")
+            throw AppFailure("频道 AI 已创建（\(conversationID)），但暂时无法连接。请在 Codex 中打开后重试。\(lastPreflightError.isEmpty ? "" : "\n\(lastPreflightError)")")
         }
-        if isManagedAssistantChannel(profile.id) {
-            let safeState = try await setAndReadHostPermission(
-                conversationID: verified.conversationID,
-                provider: provider,
-                permission: .approveForMe
-            )
-            try validateManagedAssistantState(safeState, expectedWorkspace: workspace)
-        }
+        let safeState = try await setAndReadHostPermission(
+            conversationID: verified.conversationID,
+            provider: provider,
+            permission: .approveForMe
+        )
+        try validateManagedChannelState(safeState, expectedWorkspace: workspace)
         taskCreationStatus = "正在关联当前频道…"
         _ = try await subscribe(
             source: LocalSource(provider: verified.provider, conversationId: verified.conversationID),
             profile: profile,
-            allowAssistantAssignment: true
+            allowManagedAssignment: true
         )
     }
 
@@ -948,24 +863,15 @@ extension AppModel {
             let raw = draftTask.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !raw.isEmpty else { throw AppFailure("请输入 AI 会话 ID 或链接") }
             let verified = try await preflightHostConversation(raw, provider: selectedHostProvider)
-            if isAssistantChannel(profile.id) {
-                guard let accountID = accountSession?.accountID else { throw AppFailure("请先登录") }
-                if assistantConfig.assistantTaskID?.caseInsensitiveCompare(verified.conversationID) == .orderedSame {
-                    throw AppFailure("助理自己的会话不能作为历史来源")
-                }
-                var updated = assistantConfig
-                try updated.setHistoryAccess(true, taskID: verified.conversationID)
-                try saveAssistantConfig(updated, accountID: accountID)
-                clearConversationDraft()
-                return
+            guard isManagedChannel(profile.id), let accountID = accountSession?.accountID else {
+                throw AppFailure("只有频道所有者可以授权只读历史")
             }
-            if isSharedAssistantChannel(profile.id) {
-                throw AppFailure("好友助理使用自动创建的独立受管会话")
+            if channelRuntime(profile.id)?.taskID?.caseInsensitiveCompare(verified.conversationID) == .orderedSame {
+                throw AppFailure("频道自己的运行会话不能作为历史来源")
             }
-            _ = try await subscribe(
-                source: LocalSource(provider: verified.provider, conversationId: verified.conversationID),
-                profile: profile
-            )
+            var updated = channelConfig
+            try updated.setHistoryAccess(true, taskID: verified.conversationID, channelID: profile.channel)
+            try saveChannelConfig(updated, accountID: accountID)
             clearConversationDraft()
         } catch {
             fail(error)
@@ -1002,14 +908,14 @@ extension AppModel {
         return state
     }
 
-    private func validateManagedAssistantState(
+    private func validateManagedChannelState(
         _ state: HostConversationRuntimeState,
         expectedWorkspace: URL
     ) throws {
         let actual = state.workspace.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
         let expected = expectedWorkspace.resolvingSymlinksInPath().standardizedFileURL.path
         guard state.connected, actual == expected, state.permission == HostPermissionChoice.approveForMe.rawValue else {
-            throw AppFailure("助理工作区或权限已变化，需要在 Pijoo 中恢复")
+            throw AppFailure("频道 AI 工作区或权限已变化，需要在 Pijoo 中恢复")
         }
     }
 
@@ -1062,16 +968,6 @@ extension AppModel {
         } else {
             updateSubscription(id) { $0.defaultSend = false }
         }
-    }
-
-    func setSubscriptionPolicy(_ id: UUID, policy: SelfMessagePolicy) {
-        updateSubscription(id) { $0.selfMessagePolicy = policy }
-        restartListenerIfNeeded(id)
-    }
-
-    func setSubscriptionReceiveScope(_ id: UUID, scope: ReceiveScope) {
-        updateSubscription(id) { $0.receiveScope = scope }
-        restartListenerIfNeeded(id)
     }
 
     func setSubscriptionTemplate(_ id: UUID, template: String) {
@@ -1210,6 +1106,10 @@ extension AppModel {
         guard let profile = state.channels.first(where: { $0.id == selection.channelID }) else {
             throw AppFailure("发送频道不存在")
         }
+        guard isManagedChannel(profile.id),
+              channelRuntime(profile.id)?.taskID?.caseInsensitiveCompare(source.conversationId) == .orderedSame else {
+            throw AppFailure("只有该频道自己的 AI 可以向频道发送消息")
+        }
         let subscription = selection.subscriptionID.flatMap { id in
             state.subscriptions.first { $0.id == id }
         }
@@ -1220,13 +1120,14 @@ extension AppModel {
     private func subscribe(
         source: LocalSource,
         profile: ChannelProfile,
-        allowAssistantAssignment: Bool = false
+        allowManagedAssignment: Bool = false
     ) async throws -> ChannelSubscription {
-        if isManagedAssistantChannel(profile.id) {
-            let isCurrentAssistant = assistantConfig.assistantTaskID?.caseInsensitiveCompare(source.conversationId) == .orderedSame
-            guard allowAssistantAssignment || (isAssistantChannel(profile.id) && isCurrentAssistant) else {
-                throw AppFailure("默认助理只能使用 Pijoo 新建的受管会话；已有会话仅可授权只读")
-            }
+        guard isManagedChannel(profile.id) else {
+            throw AppFailure("只有频道所有者可以运行频道 AI")
+        }
+        let currentTask = channelRuntime(profile.id)?.taskID
+        guard allowManagedAssignment || currentTask?.caseInsensitiveCompare(source.conversationId) == .orderedSame else {
+            throw AppFailure("频道只能使用 Pijoo 自动创建的运行会话；已有会话仅可授权只读")
         }
         let task: TaskBinding
         if let index = state.tasks.firstIndex(where: {
@@ -1241,11 +1142,9 @@ extension AppModel {
             )
             state.tasks.append(task)
         }
-        if isManagedAssistantChannel(profile.id) {
-            let replaced = state.subscriptions.filter { $0.channelID == profile.id && $0.taskID != task.id }
-            for old in replaced { stopListener(old.id) }
-            state.subscriptions.removeAll { $0.channelID == profile.id && $0.taskID != task.id }
-        }
+        let replaced = state.subscriptions.filter { $0.channelID == profile.id && $0.taskID != task.id }
+        for old in replaced { stopListener(old.id) }
+        state.subscriptions.removeAll { $0.channelID == profile.id && $0.taskID != task.id }
         let subscription: ChannelSubscription
         if let index = state.subscriptions.firstIndex(where: { $0.taskID == task.id && $0.channelID == profile.id }) {
             guard state.subscriptions[index].uncertainMessageID == nil else {
@@ -1270,7 +1169,6 @@ extension AppModel {
                     enabled: true,
                     template: defaultMessageTemplate,
                     sentMessageTemplate: defaultSentMessageTemplate,
-                    selfMessagePolicy: .includeOtherEndpoints,
                     defaultSend: !hasDefault,
                     lastDeliveredMessageID: baseline,
                     lastDeliveredAt: nil
@@ -1279,11 +1177,13 @@ extension AppModel {
             }
         }
         persistState()
-        if profile.channel == assistantConfig.assistantChannelID,
-           let accountID = accountSession?.accountID {
-            var updated = assistantConfig
-            updated.assistantTaskID = task.conversationID
-            try saveAssistantConfig(updated, accountID: accountID)
+        if let accountID = accountSession?.accountID {
+            var updated = channelConfig
+            var runtime = updated.runtime(channelID: profile.channel)
+                ?? ChannelRuntimeConfig(channelID: profile.channel)
+            runtime.taskID = task.conversationID
+            updated.update(runtime)
+            try saveChannelConfig(updated, accountID: accountID)
         }
         await startListener(subscription.id)
         return state.subscriptions.first(where: { $0.id == subscription.id }) ?? subscription
@@ -1303,8 +1203,6 @@ extension AppModel {
             receiveEnabled: subscription.enabled,
             template: subscription.template,
             sentMessageTemplate: subscription.sentMessageTemplate ?? defaultSentMessageTemplate,
-            selfMessagePolicy: subscription.selfMessagePolicy,
-            receiveScope: subscription.receiveScope ?? .allMessages,
             defaultSend: subscription.defaultSend
         )
     }
@@ -1328,8 +1226,6 @@ extension AppModel {
         }
         if let template { state.subscriptions[index].template = template }
         if let sentMessageTemplate { state.subscriptions[index].sentMessageTemplate = sentMessageTemplate }
-        if let policy = patch.selfMessagePolicy { state.subscriptions[index].selfMessagePolicy = policy }
-        if let scope = patch.receiveScope { state.subscriptions[index].receiveScope = scope }
         if let defaultSend = patch.defaultSend {
             if defaultSend {
                 let taskID = state.subscriptions[index].taskID
@@ -1370,12 +1266,11 @@ extension AppModel {
         listenerStatus[id] = "正在检查 \(hostDisplayName(task.provider))…"
         do {
             let managedWorkspace: URL?
-            if isManagedAssistantChannel(profile.id) {
-                if isAssistantChannel(profile.id),
-                   assistantConfig.assistantTaskID?.caseInsensitiveCompare(task.conversationID) != .orderedSame {
-                    throw AppFailure("默认助理未绑定受管会话")
+            if isManagedChannel(profile.id) {
+                guard channelRuntime(profile.id)?.taskID?.caseInsensitiveCompare(task.conversationID) == .orderedSame else {
+                    throw AppFailure("频道未绑定受管运行会话")
                 }
-                managedWorkspace = try managedAssistantWorkspace(profile)
+                managedWorkspace = try managedChannelWorkspace(profile)
             } else {
                 managedWorkspace = nil
             }
@@ -1409,9 +1304,9 @@ extension AppModel {
                 guard result.status == 0,
                       let data = result.stdout.data(using: .utf8),
                       let runtimeState = try? JSONDecoder().decode(HostConversationRuntimeState.self, from: data) else {
-                    throw AppFailure("无法复验助理工作区与权限")
+                    throw AppFailure("无法复验频道 AI 工作区与权限")
                 }
-                try validateManagedAssistantState(runtimeState, expectedWorkspace: managedWorkspace)
+                try validateManagedChannelState(runtimeState, expectedWorkspace: managedWorkspace)
                 hostConversationStates[task.id] = runtimeState
             }
             automaticallyReconnectingTaskIDs.remove(task.id)
@@ -1434,12 +1329,11 @@ extension AppModel {
                 url: try channelBaseURL(profile).appendingPathComponent("join"),
                 method: "POST",
                 bearer: credential,
-                body: ["callsign": txEndpoint, "name": state.defaultCallsign]
+                body: ["callsign": txEndpoint, "name": state.defaultCallsign, "author_kind": "channel_ai"]
             )
             guard listenerCanStart(id, generation: generation) else { return }
-            guard let authenticatedMemberID = txJoin["member_id"] as? String, !authenticatedMemberID.isEmpty,
-                  let txEndpointID = txJoin["endpoint_id"] as? String, !txEndpointID.isEmpty else {
-                throw AppFailure("服务端未返回可信 task endpoint 身份")
+            guard let authenticatedMemberID = txJoin["member_id"] as? String, !authenticatedMemberID.isEmpty else {
+                throw AppFailure("服务端未返回可信频道成员身份")
             }
             let reconciledProfile = try reconcileChannelMemberIdentity(
                 profile,
@@ -1458,10 +1352,6 @@ extension AppModel {
                 "--quiet",
                 "--channel-name", reconciledProfile.displayName,
                 "--message-template", subscription.template,
-                "--receive-scope", (subscription.receiveScope ?? .allMessages).rawValue,
-                "--self-message-policy", subscription.selfMessagePolicy.rawValue,
-                "--self-endpoint-id", txEndpointID,
-                "--self-member-id", reconciledProfile.memberID,
                 "--app-socket", AppPaths.sendSocket.path,
                 "--subscription-id", subscription.id.uuidString.lowercased(),
             ]
@@ -1680,8 +1570,8 @@ extension AppModel {
                     let level = event["reason"] as? String == "railway_request_limit" ? "info" : "warning"
                     ClientLog.record(level, "listener_reconnecting", detail: clientLogField(diagnostic))
                 }
-            case "delivered": listenerStatus[id] = "已转发到会话 #\(event["messageId"] ?? "")"
-            case "filtered": listenerStatus[id] = "已过滤自消息"
+            case "delivered": listenerStatus[id] = "AI 已收到 #\(event["messageId"] ?? "")"
+            case "filtered": listenerStatus[id] = "AI 回复已记录"
             case "error":
                 let detail = (event["error"] as? String) ?? (event["kind"] as? String) ?? "未知错误"
                 let kind = (event["kind"] as? String) ?? "unknown"
@@ -1761,11 +1651,6 @@ extension AppModel {
         }
         if decision == .unresolved { return decision.rawValue }
         let senderName = event.senderName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        updateAuthenticatedAssistantContact(
-            profile: profile,
-            memberID: senderMemberID,
-            displayName: senderName.flatMap { $0.isEmpty ? nil : $0 } ?? from
-        )
         let record = ChannelMessageRecord(
             channelID: profile.id,
             messageID: key,
@@ -1777,6 +1662,7 @@ extension AppModel {
             state: .received,
             senderMemberID: senderMemberID,
             senderEndpointID: senderEndpointID,
+            authorKind: event.authorKind ?? .human,
             source: event.source,
             mention: event.mention
         )
@@ -2217,41 +2103,24 @@ extension AppModel {
             }
             let displayName = (raw["channel_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let memberName = (raw["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let peerName = (raw["peer_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             return AccountChannelSnapshot(
                 channel: channel,
                 displayName: displayName?.isEmpty == false ? displayName! : channel,
                 membershipID: membershipID,
                 role: role,
-                memberName: memberName?.isEmpty == false ? memberName! : (accountSession?.displayName ?? "Pijoo 用户"),
-                memberCount: (raw["member_count"] as? NSNumber)?.intValue,
-                peerName: peerName?.isEmpty == false ? peerName : nil
+                memberName: memberName?.isEmpty == false ? memberName! : (accountSession?.displayName ?? "Pijoo 用户")
             )
         }
         if state.channels.isEmpty, let restoredName = snapshots.first?.memberName {
             state.defaultCallsign = restoredName
             draftNickname = restoredName
         }
-        var merged = mergedAccountChannels(
+        let merged = mergedAccountChannels(
             state.channels,
             snapshots: snapshots,
             origin: defaultOrigin,
             credentialAccount: accountSessionKey
         )
-        if let assistantChannelID = assistantConfig.assistantChannelID,
-           !merged.contains(where: { $0.channel == assistantChannelID }),
-           let accountID = accountSession?.accountID {
-            var updated = assistantConfig
-            updated.assistantChannelID = nil
-            updated.assistantTaskID = nil
-            try saveAssistantConfig(updated, accountID: accountID)
-        }
-        if let assistantChannelID = assistantConfig.assistantChannelID,
-           let index = merged.firstIndex(where: { $0.channel == assistantChannelID }) {
-            var assistant = merged.remove(at: index)
-            assistant.displayName = state.defaultCallsign
-            merged.insert(assistant, at: 0)
-        }
         if merged != state.channels {
             let activeChannelIDs = Set(merged.map(\.id))
             let removedChannelIDs = Set(state.channels.map(\.id)).subtracting(activeChannelIDs)
@@ -2267,7 +2136,12 @@ extension AppModel {
             try persistStateOrThrow()
             refreshSelectedChannel()
         }
-        _ = try await ensureDefaultAssistantChannel()
+        if let accountID = accountSession?.accountID {
+            let owned = Set(merged.filter { $0.role == "owner" }.map(\.channel))
+            var updated = channelConfig
+            updated.channels.removeAll { !owned.contains($0.channelID) }
+            if updated != channelConfig { try saveChannelConfig(updated, accountID: accountID) }
+        }
         for profile in state.channels { startChannelFeed(profile.id) }
         for subscription in state.subscriptions where subscription.enabled {
             Task { await startListener(subscription.id) }
@@ -2423,7 +2297,7 @@ extension AppModel {
         }
         for subscription in state.subscriptions { try? MessageLedger.removeDeliveries(subscription.id) }
         state = AppStateV2(defaultCallsign: generatedLocalNickname())
-        assistantConfig = AssistantConfig()
+        channelConfig = ChannelConfig()
         draftNickname = state.defaultCallsign
         selectedChannelID = nil
         messages = []
@@ -2518,26 +2392,27 @@ extension AppModel {
 extension AppModel {
     func createChannel() async {
         guard !busy else { return }
+        guard ensureCodexIntegrationReadyForBinding() else { return }
+        guard selectedHostProvider.supportsForwarding else {
+            showNotice(title: "暂不支持", message: "Pijoo 目前还不能运行 Claude 频道 AI。")
+            return
+        }
         busy = true
+        taskCreationStatus = "正在创建频道与 AI…"
         defer { busy = false }
         do {
             let channelName = try normalizedDisplayName(draftChannelName, label: "频道名称")
-            _ = try await createOwnedChannel(named: channelName, assistant: false)
+            let profile = try await createOwnedChannel(named: channelName)
+            try await createTaskSubscription(for: profile)
             draftChannelName = ""
             lastError = ""
         } catch {
             fail(error)
         }
+        taskCreationStatus = ""
     }
 
-    private func ensureDefaultAssistantChannel() async throws -> ChannelProfile {
-        if let existing = state.channels.first(where: { $0.channel == assistantConfig.assistantChannelID }) {
-            return existing
-        }
-        return try await createOwnedChannel(named: state.defaultCallsign, assistant: true)
-    }
-
-    private func createOwnedChannel(named channelName: String, assistant: Bool) async throws -> ChannelProfile {
+    private func createOwnedChannel(named channelName: String) async throws -> ChannelProfile {
         let credential = try accountCredential()
         let nickname = try normalizedDisplayName(state.defaultCallsign, label: "昵称")
         let title = try normalizedDisplayName(channelName, label: "频道名称")
@@ -2566,17 +2441,14 @@ extension AppModel {
             memberID: memberID,
             role: (json["role"] as? String) ?? "owner",
             credentialAccount: accountSessionKey,
-            lastViewedMessageID: nil,
-            memberCount: 1
+            lastViewedMessageID: nil
         )
-        if assistant, let accountID = accountSession?.accountID {
-            var updated = assistantConfig
-            updated.assistantChannelID = channel
-            updated.assistantTaskID = nil
-            try saveAssistantConfig(updated, accountID: accountID)
+        if let accountID = accountSession?.accountID {
+            var updated = channelConfig
+            updated.update(ChannelRuntimeConfig(channelID: channel))
+            try saveChannelConfig(updated, accountID: accountID)
         }
-        if assistant { state.channels.insert(profile, at: 0) }
-        else { state.channels.append(profile) }
+        state.channels.append(profile)
         selectedChannelID = profile.id
         persistState()
         startChannelFeed(profile.id)
@@ -2645,51 +2517,6 @@ extension AppModel {
             try await copyInvitation(for: profile, label: normalizedLabel, maxUses: maxUses, validHours: validHours)
             await refreshInvitations()
             showNotice(title: "邀请链接已复制", message: "对方打开链接即可登录网页版并加入频道；已经加入过的账号会直接进入。")
-            return true
-        } catch {
-            fail(error)
-            return false
-        }
-    }
-
-    func shareAssistant(label: String, validHours: Int) async -> Bool {
-        guard !busy,
-              let profile = selectedChannel,
-              isAssistantChannel(profile.id),
-              profile.role == "owner",
-              ensureCodexIntegrationReadyForBinding() else { return false }
-        guard selectedHostProvider.supportsForwarding else {
-            showNotice(title: "暂不支持", message: "Pijoo 目前还不能向 Claude 会话转发消息。")
-            return false
-        }
-        let normalizedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard normalizedLabel.utf16.count <= 64, (1...720).contains(validHours) else {
-            fail(AppFailure("联系人备注最多 64 个字符，有效期为 1–720 小时"))
-            return false
-        }
-        busy = true
-        taskCreationStatus = "正在创建好友助理会话…"
-        defer {
-            busy = false
-            taskCreationStatus = ""
-        }
-        do {
-            let channel = try await createOwnedChannel(named: normalizedLabel.isEmpty ? "好友助理" : normalizedLabel, assistant: false)
-            guard let accountID = accountSession?.accountID else { throw AppFailure("请先登录") }
-            var updated = assistantConfig
-            updated.setSharedAssistantChannel(channel.channel, enabled: true)
-            updated.updateContact(AssistantContactProfile(
-                channelID: channel.channel,
-                memberID: nil,
-                displayName: normalizedLabel.isEmpty ? "等待好友加入" : normalizedLabel,
-                relationship: "",
-                notes: ""
-            ))
-            try saveAssistantConfig(updated, accountID: accountID)
-            try await createTaskSubscription(for: channel)
-            try await copyInvitation(for: channel, label: normalizedLabel, maxUses: 1, validHours: validHours)
-            await refreshInvitations()
-            showNotice(title: "助理邀请已复制", message: "每个邀请只允许一位好友加入，并使用独立的助理会话和联系人记忆。")
             return true
         } catch {
             fail(error)
@@ -2787,29 +2614,6 @@ extension AppModel {
         } catch {
             fail(error)
         }
-    }
-
-    func renameSelectedChannel() {
-        guard let selectedChannelID,
-              let index = state.channels.firstIndex(where: { $0.id == selectedChannelID }) else { return }
-        let profile = state.channels[index]
-        let field = NSTextField(string: profile.displayName == profile.channel ? "" : profile.displayName)
-        field.placeholderString = profile.channel
-        field.frame = NSRect(x: 0, y: 0, width: 320, height: 24)
-        let alert = NSAlert()
-        alert.messageText = "修改频道昵称"
-        alert.informativeText = "频道 ID：\(profile.channel)；留空恢复服务端频道名称。"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "保存")
-        alert.addButton(withTitle: "取消")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let nickname = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard nickname.count <= 64 else {
-            showNotice(title: "Pijoo", message: "频道昵称不能超过 64 个字符")
-            return
-        }
-        state.channels[index].displayName = channelDisplayName(nickname, original: profile.channel)
-        persistState()
     }
 
     private func syncChannelHistory(_ profile: ChannelProfile) async throws {
@@ -2924,15 +2728,6 @@ extension AppModel {
             let data = try JSONSerialization.data(withJSONObject: raw)
             let decoded = try JSONDecoder().decode([ChannelMember].self, from: data)
             members = decoded
-            let active = decoded.filter { $0.status == "active" }
-            if let index = state.channels.firstIndex(where: { $0.id == profile.id }) {
-                let peer = active.count == 2 ? active.first { $0.memberID != profile.memberID }?.name : nil
-                if state.channels[index].memberCount != active.count || state.channels[index].peerName != peer {
-                    state.channels[index].memberCount = active.count
-                    state.channels[index].peerName = peer
-                    persistState()
-                }
-            }
         } catch {
             guard !isCancellationError(error), !Task.isCancelled else { return }
             guard selectedChannelID == profile.id else { return }
@@ -3029,6 +2824,7 @@ extension AppModel {
         profile: ChannelProfile,
         endpoint: String,
         source: MessageSourceReference,
+        authorKind: MessageAuthorKind = .human,
         mentions: [String] = []
     ) async throws -> (id: String, callsign: String, memberID: String, endpointID: String, mention: MessageMention?) {
         guard !message.isEmpty, message.utf16.count <= maxChannelMessageLength else {
@@ -3050,7 +2846,7 @@ extension AppModel {
                 url: base.appendingPathComponent("join"),
                 method: "POST",
                 bearer: credential,
-                body: ["callsign": endpoint, "name": state.defaultCallsign]
+                body: ["callsign": endpoint, "name": state.defaultCallsign, "author_kind": authorKind.rawValue]
             )
         } catch {
             throw ChannelSendFailure.definitive("频道加入失败：\(error.localizedDescription)")
@@ -3219,6 +3015,7 @@ extension AppModel {
             state: state,
             senderMemberID: json["sender_member_id"] as? String,
             senderEndpointID: json["sender_endpoint_id"] as? String,
+            authorKind: (json["author_kind"] as? String).flatMap(MessageAuthorKind.init(rawValue:)) ?? .human,
             source: source,
             mention: messageMention(json["mention"])
         )

@@ -61,6 +61,7 @@ async function joinDetails(
   callsign: string,
   sessionId?: string,
   name?: string,
+  authorKind: "human" | "channel_ai" = "human",
 ): Promise<Joined> {
   const response = await instance.request(`/api/channels/${channelId}/join`, {
     method: "POST",
@@ -69,7 +70,7 @@ async function joinDetails(
       "content-type": "application/json",
       ...(sessionId ? { "x-session-id": sessionId } : {}),
     },
-    body: JSON.stringify({ callsign, ...(name ? { name } : {}) }),
+    body: JSON.stringify({ callsign, author_kind: authorKind, ...(name ? { name } : {}) }),
   });
   expect(response.status).toBe(200);
   const body = (await response.json()) as {
@@ -113,6 +114,28 @@ async function send(
 }
 
 describe("managed channel members", () => {
+  it("marks owner AI messages and rejects AI endpoints for other members", async () => {
+    const instance = app();
+    const channel = await createChannel(instance);
+    const member = await inviteMember(instance, channel);
+    const rejected = await instance.request(`/api/channels/${channel.id}/join`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${member.credential}`, "content-type": "application/json" },
+      body: JSON.stringify({ callsign: "peer_ai", author_kind: "channel_ai" }),
+    });
+    expect(rejected.status).toBe(403);
+
+    const ai = await joinDetails(instance, channel.id, channel.ownerCredential, "channel_ai", undefined, undefined, "channel_ai");
+    const sent = await send(instance, channel.id, channel.ownerCredential, ai.sessionId, "AI reply");
+    expect(sent.status).toBe(200);
+    expect(await sent.json()).toMatchObject({ author_kind: "channel_ai" });
+
+    const history = await instance.request(`/api/channels/${channel.id}/history?limit=1`, {
+      headers: { authorization: `Bearer ${channel.ownerCredential}` },
+    });
+    expect(await history.json()).toMatchObject({ history: [{ text: "AI reply", author_kind: "channel_ai" }] });
+  });
+
   it("returns only the owner credential and managed-channel fields for api_version 2 create", async () => {
     const instance = app();
     const response = await instance.request("/api/channels", {

@@ -21,8 +21,6 @@ type ServerCtx = {
   channelToken: string;
   alphaSession: string;
   betaSession: string;
-  betaMemberId: string;
-  betaEndpointId: string;
   tmp: string;
 };
 
@@ -75,8 +73,6 @@ async function boot(): Promise<ServerCtx> {
           channelToken,
           alphaSession: alpha.session_id,
           betaSession: beta.session_id,
-          betaMemberId: beta.member_id,
-          betaEndpointId: beta.endpoint_id,
           tmp: mkdtempSync(join(tmpdir(), "rogerthat-listen-here-")),
         });
       } catch (err) {
@@ -278,8 +274,8 @@ describe("rogerthat listen-here", () => {
     errors.mockRestore();
   });
 
-  it("filters a task's own endpoint after recording the received event", async () => {
-    const inbox = join(ctx.tmp, "rr-filtered.jsonl");
+  it("delivers every human message regardless of which member endpoint sent it", async () => {
+    const inbox = join(ctx.tmp, "rr-human.jsonl");
     const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const listener = runListener(
       [
@@ -288,56 +284,19 @@ describe("rogerthat listen-here", () => {
         "--session", ctx.alphaSession,
         "--origin", ctx.origin,
         "--status-json",
-        "--self-message-policy", "include_other_endpoints",
-        "--self-endpoint-id", ctx.betaEndpointId,
         "--inbox", inbox,
         "--quiet",
       ],
       1500,
     );
     await new Promise((resolve) => setTimeout(resolve, 200));
-    await sendFromBeta(ctx, "do-not-inject");
-    await waitFor(() => errors.mock.calls.some(([line]) => String(line).includes('"state":"filtered"')));
-    process.emit("SIGINT");
-    await listener;
-    expect(messageLineCount(inbox)).toBe(0);
-    expect(errors.mock.calls.some(([line]) => String(line).includes('"state":"received"'))).toBe(true);
-    errors.mockRestore();
-  });
-
-  it("mentions_only filters unmentioned messages but accepts another endpoint mentioning this member", async () => {
-    const inbox = join(ctx.tmp, "rr-mentions-only.jsonl");
-    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const listener = runListener(
-      [
-        "--channel", ctx.channelId,
-        "--token", ctx.channelToken,
-        "--session", ctx.alphaSession,
-        "--origin", ctx.origin,
-        "--receive-scope", "mentions_only",
-        "--self-member-id", ctx.betaMemberId,
-        "--status-json",
-        "--inbox", inbox,
-        "--quiet",
-      ],
-      2000,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    await sendFromBeta(ctx, "background");
-    await waitFor(() => errors.mock.calls.some(([line]) => String(line).includes("mention_not_matched")));
-    expect(messageLineCount(inbox)).toBe(0);
-
-    await sendFromBeta(ctx, "please handle", "alpha", undefined, undefined, [ctx.betaMemberId]);
+    await sendFromBeta(ctx, "deliver-human");
     await waitFor(() => messageLineCount(inbox) === 1);
     process.emit("SIGINT");
     await listener;
-    expect(JSON.parse(readFileSync(inbox, "utf8"))).toMatchObject({
-      text: "please handle",
-      mention: {
-        kind: "members",
-        members: [{ member_id: ctx.betaMemberId }],
-      },
-    });
+    expect(messageLineCount(inbox)).toBe(1);
+    expect(errors.mock.calls.some(([line]) => String(line).includes('"state":"received"'))).toBe(true);
+    expect(errors.mock.calls.some(([line]) => String(line).includes('"state":"filtered"'))).toBe(false);
     errors.mockRestore();
   });
 
@@ -629,6 +588,7 @@ describe("rogerthat listen-here", () => {
           at: messageId,
           sender_member_id: "member-beta",
           sender_endpoint_id: "endpoint-beta",
+          author_kind: "human",
         })}\n\n`);
         setTimeout(() => response.destroy(), 25);
         return;
