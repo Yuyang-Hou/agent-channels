@@ -64,6 +64,7 @@ export interface AccountStore {
     membershipId: string,
     status: "active" | "removed" | "banned",
   ): Promise<AccountMembership | undefined>;
+  removeChannelMemberships(channelId: string): Promise<AccountMembership[]>;
 }
 
 const MIGRATION = [
@@ -383,6 +384,16 @@ export class PostgresAccountStore implements AccountStore {
       [channelId, membershipId, status],
     );
     return result.rows[0] ? this.membershipView(result.rows[0]) : undefined;
+  }
+
+  async removeChannelMemberships(channelId: string): Promise<AccountMembership[]> {
+    const result = await this.pool.query<MembershipRow>(
+      `UPDATE pijoo_memberships SET status = 'removed', updated_at = now()
+       WHERE channel_id = $1 AND status = 'active'
+       RETURNING membership_id, account_id, channel_id, role, status, created_at, updated_at`,
+      [channelId],
+    );
+    return result.rows.map((row) => this.membershipView(row));
   }
 
   private async upsertAccount(

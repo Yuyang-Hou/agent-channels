@@ -356,6 +356,16 @@ export function listChannelMembers(channelId: string): MemberView[] {
     .sort((a, b) => a.created_at - b.created_at);
 }
 
+export function deleteManagedChannel(channelId: string): MemberView[] | undefined {
+  ensureLoaded();
+  const members = state.members.filter((member) => member.channelId === channelId);
+  if (!members.some((member) => member.role === "owner" && member.status === "active")) return undefined;
+  state.members = state.members.filter((member) => member.channelId !== channelId);
+  state.invites = state.invites.filter((invite) => invite.channelId !== channelId);
+  persist();
+  return members.map(view);
+}
+
 export function setMemberStatus(
   channelId: string,
   memberId: string,

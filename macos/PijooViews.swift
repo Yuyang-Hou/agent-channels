@@ -528,50 +528,59 @@ struct ChannelDetailView: View {
         .buttonStyle(.plain)
     }
 
+    private var channelHeader: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.channelTitle(channel))
+                    .font(.title2.bold())
+                Text("频道 · \(channel.channel) · \(model.channelStatus[channel.id] ?? "未连接")")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if channel.role == "owner" {
+                Button {
+                    showCreateInvitation = true
+                } label: {
+                    Label("邀请成员", systemImage: "person.badge.plus")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            if model.channelStatus[channel.id]?.contains("权限已撤销") == true {
+                Button("重新连接") { model.reconnectChannel(channel.id) }
+            }
+            Menu {
+                if channel.role == "owner" {
+                    Button("编辑频道 AI…") { showChannelContext = true }
+                    Divider()
+                }
+                Button("刷新") {
+                    Task {
+                        await model.refreshHistory()
+                        await model.refreshMembers()
+                        await model.refreshInvitations()
+                    }
+                }
+                if selectedTab == .messages {
+                    Button("清空本机历史", role: .destructive) { model.clearSelectedHistory() }
+                        .disabled(model.messages.isEmpty)
+                }
+                Divider()
+                Button(channel.role == "owner" ? "删除频道" : "退出频道", role: .destructive) {
+                    Task { await model.leaveSelectedChannel() }
+                }
+                .disabled(model.busy)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .help("更多频道操作")
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.channelTitle(channel))
-                        .font(.title2.bold())
-                    Text("频道 · \(channel.channel) · \(model.channelStatus[channel.id] ?? "未连接")")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if channel.role == "owner" {
-                    Button("邀请成员…") { showCreateInvitation = true }
-                }
-                if model.channelStatus[channel.id]?.contains("权限已撤销") == true {
-                    Button("重新连接") { model.reconnectChannel(channel.id) }
-                }
-                Menu {
-                    if channel.role == "owner" {
-                        Button("编辑频道 AI…") { showChannelContext = true }
-                        Divider()
-                    }
-                    Button("刷新") {
-                        Task {
-                            await model.refreshHistory()
-                            await model.refreshMembers()
-                            await model.refreshInvitations()
-                        }
-                    }
-                    if selectedTab == .messages {
-                        Button("清空本机历史", role: .destructive) { model.clearSelectedHistory() }
-                            .disabled(model.messages.isEmpty)
-                    }
-                    Divider()
-                    Button("退出频道", role: .destructive) {
-                        Task { await model.leaveSelectedChannel() }
-                    }
-                    .disabled(channel.role == "owner" || model.busy)
-                    .help(channel.role == "owner" ? "请先转移频道所有权" : "退出后需要新邀请才能重新加入")
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
             HStack(spacing: 24) {
                 tabButton("消息", tab: .messages)
                 tabButton("成员", tab: .members)
@@ -589,12 +598,22 @@ struct ChannelDetailView: View {
                 case .messages:
                     ChannelMessagesView(model: model)
                 case .members:
-                    ChannelMembersView(model: model, channel: channel)
+                    ChannelMembersView(
+                        model: model,
+                        channel: channel,
+                        onCreateInvitation: { showCreateInvitation = true }
+                    )
                 case .subscriptions:
                     ChannelSubscriptionsView(model: model)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                channelHeader
+                Divider()
+            }
         }
         .sheet(isPresented: $showCreateInvitation) {
             CreateInvitationSheet(model: model)
@@ -765,6 +784,7 @@ struct MessageRow: View {
 struct ChannelMembersView: View {
     @ObservedObject var model: AppModel
     let channel: ChannelProfile
+    let onCreateInvitation: () -> Void
 
     private func memberSummary(_ member: ChannelMember) -> String {
         let role = member.role == "owner" ? "所有者" : "成员"
@@ -796,7 +816,7 @@ struct ChannelMembersView: View {
         VStack(alignment: .leading, spacing: 0) {
             List {
                 if channel.role == "owner" {
-                    Section("邀请") {
+                    Section {
                         if model.invitations.isEmpty {
                             Text("暂无邀请")
                                 .font(.caption)
@@ -822,6 +842,17 @@ struct ChannelMembersView: View {
                                 }
                                 .padding(.vertical, 4)
                             }
+                        }
+                    } header: {
+                        HStack {
+                            Text("邀请")
+                            Spacer()
+                            Button {
+                                onCreateInvitation()
+                            } label: {
+                                Label("创建邀请", systemImage: "plus")
+                            }
+                            .buttonStyle(.borderless)
                         }
                     }
                 }

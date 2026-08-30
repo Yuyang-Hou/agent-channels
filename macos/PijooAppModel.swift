@@ -2595,21 +2595,20 @@ extension AppModel {
     func leaveSelectedChannel() async {
         guard !busy else { return }
         guard let profile = selectedChannel else { return }
-        guard profile.role != "owner" else {
-            showNotice(title: "无法退出频道", message: "请先把所有权转移给其他成员。")
-            return
-        }
+        let deleting = profile.role == "owner"
         let alert = NSAlert()
-        alert.messageText = "退出 \(profile.displayName)？"
-        alert.informativeText = "将退出该频道并停止所有会话转发，频道不再显示；以后需要新邀请才能重新加入。本机消息文件不会主动删除。"
-        alert.addButton(withTitle: "退出频道")
+        alert.messageText = "\(deleting ? "删除" : "退出") \(profile.displayName)？"
+        alert.informativeText = deleting
+            ? "将删除频道并撤销所有成员、邀请和会话连接。本机消息文件不会主动删除。"
+            : "将退出该频道并停止所有会话转发，频道不再显示；以后需要新邀请才能重新加入。本机消息文件不会主动删除。"
+        alert.addButton(withTitle: deleting ? "删除频道" : "退出频道")
         alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         busy = true
         defer { busy = false }
         do {
             let credential = try accountCredential()
-            _ = try await authorizedJSON(profile, suffix: "members/me", method: "DELETE")
+            _ = try await authorizedJSON(profile, suffix: deleting ? "" : "members/me", method: "DELETE")
             try await syncAccountChannels(credential: credential)
         } catch {
             fail(error)
