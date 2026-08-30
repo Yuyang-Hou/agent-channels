@@ -149,6 +149,21 @@ class MemoryAccountStore implements AccountStore {
     this.memberships.set(key, updated);
     return updated;
   }
+
+  async removeChannelMemberships(channelId: string) {
+    const removed: AccountMembership[] = [];
+    for (const [key, membership] of this.memberships) {
+      if (membership.channelId !== channelId || membership.status !== "active") continue;
+      const updated: AccountMembership = {
+        ...membership,
+        status: "removed",
+        updatedAt: new Date().toISOString(),
+      };
+      this.memberships.set(key, updated);
+      removed.push(updated);
+    }
+    return removed;
+  }
 }
 
 class FakeGitHub implements GitHubIdentityProvider {
@@ -417,6 +432,11 @@ describe("GitHub account login", () => {
       }],
     });
 
+    expect((await app.request(`/api/channels/${channel.channel_id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${memberCredential}` },
+    })).status).toBe(403);
+
     expect((await app.request(`/api/channels/${channel.channel_id}/members/me`, {
       method: "DELETE",
       headers: { authorization: `Bearer ${ownerCredential}` },
@@ -474,6 +494,17 @@ describe("GitHub account login", () => {
       headers: { authorization: `Bearer ${memberCredential}`, "content-type": "application/json" },
       body: JSON.stringify({ invite_token: invite.invite_token, name: "Member" }),
     })).status).toBe(403);
+
+    expect((await app.request(`/api/channels/${channel.channel_id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${ownerCredential}` },
+    })).status).toBe(200);
+    expect(await (await app.request("/v1/channels", {
+      headers: { authorization: `Bearer ${ownerCredential}` },
+    })).json()).toEqual({ channels: [] });
+    expect((await app.request(`/api/channels/${channel.channel_id}`, {
+      headers: { authorization: `Bearer ${ownerCredential}` },
+    })).status).toBe(404);
   });
 
   it("returns cancellation to the requesting app state", async () => {

@@ -755,6 +755,10 @@ export function getOrCreateChannel(id: string): Channel {
   return ch;
 }
 
+export function deleteRuntimeChannel(id: string): void {
+  channels.delete(id);
+}
+
 let gcTimer: NodeJS.Timeout | null = null;
 export function startPeriodicGc(intervalMs = 60_000): void {
   if (gcTimer) return;

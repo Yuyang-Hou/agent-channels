@@ -211,6 +211,13 @@ export function channelExists(id: string): boolean {
   return channels.has(id);
 }
 
+export function deleteChannel(id: string): boolean {
+  ensureLoaded();
+  if (channels.get(id)?.isBand === true || !channels.delete(id)) return false;
+  persist();
+  return true;
+}
+
 export function getChannelRecord(id: string): ChannelRecord | undefined {
   ensureLoaded();
   return channels.get(id);

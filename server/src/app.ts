@@ -21,12 +21,13 @@ import {
   validateAttachments,
 } from "./channel.js";
 import { adminHtml } from "./admin.js";
-import { getOrCreateChannel, listActiveChannels } from "./channel.js";
+import { deleteRuntimeChannel, getOrCreateChannel, listActiveChannels } from "./channel.js";
 import {
   authenticatedEndpointId,
   authenticateMember,
   claimMemberCallsign,
   createMemberInvite,
+  deleteManagedChannel,
   listChannelMembers,
   listMemberInvites,
   publicBandMemberId,
@@ -60,6 +61,7 @@ import {
 import {
   channelExists,
   createChannel,
+  deleteChannel,
   ensureBands,
   getChannelIsBand,
   getChannelName,
@@ -766,6 +768,22 @@ export function createApp(opts: AppOptions): Hono {
     if (!name || name.length > 64) return c.json({ error: "name must be 1-64 characters" }, 400);
     const member = updateMemberName(channelId, principal.memberId, name);
     return member ? c.json({ ok: true, member }) : c.json({ error: "active member not found" }, 404);
+  });
+
+  app.delete("/api/channels/:id", async (c) => {
+    const channelId = c.req.param("id");
+    const owner = await requireOwner(c, channelId);
+    if (owner instanceof Response) return owner;
+    return serializeMembershipMutation(async () => {
+      if (opts.accountAuth) await opts.accountAuth.store.removeChannelMemberships(channelId);
+      const members = deleteManagedChannel(channelId);
+      if (!members || !deleteChannel(channelId)) {
+        return c.json({ error: "channel could not be deleted" }, 409);
+      }
+      for (const member of members) invalidateMemberSessions(channelId, member.member_id);
+      deleteRuntimeChannel(channelId);
+      return c.json({ ok: true });
+    });
   });
 
   app.delete("/api/channels/:id/members/me", async (c) => {
