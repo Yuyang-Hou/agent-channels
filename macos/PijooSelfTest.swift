@@ -284,6 +284,8 @@ private struct PijooV2SelfTest {
             template: defaultMessageTemplate,
             defaultSend: false
         )
+        precondition(disconnectedSubscription.receiveScope == nil)
+        precondition(ReceiveScope.mentionsOnly.title == "仅回复 @我的 AI")
         let disconnectedState = HostConversationRuntimeState(connected: false, workspace: nil, permission: "unknown")
         precondition(disconnectedHostTaskIDs(
             tasks: [disconnectedTask],
@@ -350,12 +352,13 @@ private struct PijooV2SelfTest {
                 members: [
                     MentionedMember(memberID: "member-a", memberName: "张三"),
                     MentionedMember(memberID: "member-b", memberName: "李四"),
-                ]
+                ],
+                ais: [MentionedMember(memberID: "member-c", memberName: "王五")]
             )
         )
         precondition(messageA.source?.provider == "codex")
         precondition(messageA.source?.conversationID == "01900000-0000-7000-8000-000000000001")
-        precondition(messageA.mention?.displayText == "@张三、@李四")
+        precondition(messageA.mention?.displayText == "@张三、@李四、@王五的 AI")
         let delivered = SubscriptionDeliveryRecord(
             subscriptionID: subscriptionID,
             channelID: channelID,

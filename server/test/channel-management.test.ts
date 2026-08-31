@@ -135,6 +135,62 @@ describe("managed channel members", () => {
       history: [{ text: "AI reply", author_kind: "channel_ai", sender_name: "小王" }],
     });
 
+    const streamController = new AbortController();
+    const stream = await instance.request(`/api/channels/${channel.id}/stream`, {
+      headers: {
+        authorization: `Bearer ${member.credential}`,
+        "x-session-id": ai.sessionId,
+      },
+      signal: streamController.signal,
+    });
+    const streamReader = stream.body!.getReader();
+    await streamReader.read();
+
+    const members = await instance.request(`/api/channels/${channel.id}/members`, {
+      headers: { authorization: `Bearer ${channel.ownerCredential}` },
+    });
+    expect(await members.json()).toMatchObject({
+      members: expect.arrayContaining([
+        expect.objectContaining({ member_id: member.id, ai_connected: true }),
+        expect.objectContaining({ member_id: channel.ownerId, ai_connected: false }),
+      ]),
+    });
+
+    const owner = await joinDetails(instance, channel.id, channel.ownerCredential, "owner_app");
+    const mentioned = await send(
+      instance,
+      channel.id,
+      channel.ownerCredential,
+      owner.sessionId,
+      "小王的 AI 看一下",
+      [`ai:${member.id}`],
+    );
+    expect(mentioned.status).toBe(200);
+    expect(await mentioned.json()).toMatchObject({
+      mention: { kind: "members", members: [], ais: [{ member_id: member.id, member_name: "小王" }] },
+    });
+
+    const unavailable = await send(
+      instance,
+      channel.id,
+      channel.ownerCredential,
+      owner.sessionId,
+      "没有在线 AI",
+      [`ai:${channel.ownerId}`],
+    );
+    expect(unavailable.status).toBe(400);
+    streamController.abort();
+    await streamReader.cancel();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const disconnected = await instance.request(`/api/channels/${channel.id}/members`, {
+      headers: { authorization: `Bearer ${channel.ownerCredential}` },
+    });
+    expect(await disconnected.json()).toMatchObject({
+      members: expect.arrayContaining([
+        expect.objectContaining({ member_id: member.id, ai_connected: false }),
+      ]),
+    });
+
     const publicAI = await instance.request("/api/channels/general/join", {
       method: "POST",
       headers: { "content-type": "application/json" },

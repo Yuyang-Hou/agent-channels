@@ -434,11 +434,13 @@ struct LocalSource: Codable {
 struct LocalSettingsPatch: Codable {
     let template: String?
     let sentMessageTemplate: String?
+    let receiveScope: ReceiveScope?
     let defaultSend: Bool?
 
     enum CodingKeys: String, CodingKey {
         case template
         case sentMessageTemplate = "sent_message_template"
+        case receiveScope = "receive_scope"
         case defaultSend = "default_send"
     }
 }
@@ -571,12 +573,14 @@ struct LocalSubscriptionSummary: Encodable {
     let receiveEnabled: Bool
     let template: String
     let sentMessageTemplate: String
+    let receiveScope: ReceiveScope
     let defaultSend: Bool
 
     enum CodingKeys: String, CodingKey {
         case channel, template
         case sentMessageTemplate = "sent_message_template"
         case receiveEnabled = "receive_enabled"
+        case receiveScope = "receive_scope"
         case defaultSend = "default_send"
     }
 }
@@ -585,11 +589,15 @@ struct LocalMentionMemberSummary: Encodable {
     let memberID: String
     let name: String
     let isSelf: Bool
+    let aiConnected: Bool
+    let aiMention: String?
 
     enum CodingKeys: String, CodingKey {
         case name
         case memberID = "member_id"
         case isSelf = "is_self"
+        case aiConnected = "ai_connected"
+        case aiMention = "ai_mention"
     }
 }
 

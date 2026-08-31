@@ -15,6 +15,7 @@ human/Channel AI 消息作者语义。
 | 每成员/Channel 独立 Codex task/cwd | 源码已实现，待真实多成员 task 验收 |
 | Channel 指令、记忆和历史 allowlist | 源码已实现，待真实撤权验收 |
 | App/Web 人与多个成员 AI 独立展示 | 源码已实现，待真实 UI 验收 |
+| 仅在线成员 AI 可 @、按 Subscription 选择回复范围 | 源码已实现，待真实双端验收 |
 | Web 登录、邀请、恢复和收发 | 已实现，待部署环境真实账号验收 |
 
 ## 尚未完成
@@ -22,6 +23,7 @@ human/Channel AI 消息作者语义。
 - 真实账号下创建多个 Channel，验证 task、cwd、记忆和历史不串线；
 - 验证两个成员分别连接 AI 后，同一 human 消息进入两端模型，AI 回复都不回流；
 - 验证 App/Web 显示“成员名的 AI”，不同 AI 相邻回复不会合并；
+- 验证 AI @目标随接收流连接/断开出现与消失，以及两种回复范围；
 - 部署环境 GitHub OAuth、邀请与多频道切换验收；
 - E2EE 与细粒度目录/网络/脚本授权。
 

@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
-import { planReconnect, runListenHere } from "../src/listen-here.js";
+import { messageMentionsAI, planReconnect, runListenHere } from "../src/listen-here.js";
 
 type ServerCtx = {
   server: ServerType;
@@ -298,6 +298,25 @@ describe("rogerthat listen-here", () => {
     expect(errors.mock.calls.some(([line]) => String(line).includes('"state":"received"'))).toBe(true);
     expect(errors.mock.calls.some(([line]) => String(line).includes('"state":"filtered"'))).toBe(false);
     errors.mockRestore();
+  });
+
+  it("matches only @all or this AI for mentions_only", () => {
+    expect(messageMentionsAI(undefined, "member-a")).toBe(false);
+    expect(messageMentionsAI({ kind: "all" }, "member-a")).toBe(true);
+    expect(messageMentionsAI({
+      kind: "members",
+      members: [{ member_id: "member-a", member_name: "A" }],
+    }, "member-a")).toBe(false);
+    expect(messageMentionsAI({
+      kind: "members",
+      members: [],
+      ais: [{ member_id: "member-a", member_name: "A" }],
+    }, "member-a")).toBe(true);
+    expect(messageMentionsAI({
+      kind: "members",
+      members: [],
+      ais: [{ member_id: "member-b", member_name: "B" }],
+    }, "member-a")).toBe(false);
   });
 
   it("--format text: writes '[<from>] <text>' lines, newlines collapsed", async () => {
