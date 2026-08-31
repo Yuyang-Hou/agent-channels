@@ -28,6 +28,7 @@ APP_ONLY="${PIJOO_APP_ONLY:-0}"
 DEVELOPMENT="${PIJOO_DEVELOPMENT:-0}"
 SKIP_SELF_TESTS="${PIJOO_SKIP_SELF_TESTS:-0}"
 RELEASE_VERSION="${PIJOO_RELEASE_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :PijooReleaseVersion' "$INFO_PLIST")}"
+MCP_VERSION="sha256:$(shasum -a 256 "$ROOT_DIR/server/src/reply-mcp.ts" | cut -c1-12)"
 for flag in "$APP_ONLY" "$DEVELOPMENT" "$SKIP_SELF_TESTS"; do
   [[ "$flag" == "0" || "$flag" == "1" ]] || { echo "Build flags must be 0 or 1" >&2; exit 2; }
 done
@@ -144,7 +145,7 @@ fi
 echo "==> Compiling RogerThat sidecar"
 bun build --compile --target=bun-darwin-arm64 \
   --define 'process.env.PIJOO_EMBEDDED_VERSION="1.25.1-pijoo.0"' \
-  --define "process.env.PIJOO_APP_VERSION=\"$RELEASE_VERSION\"" \
+  --define "process.env.PIJOO_MCP_VERSION=\"$MCP_VERSION\"" \
   "$ROOT_DIR/server/src/cli.ts" \
   --outfile "$MACOS_DIR/rogerthat-sidecar"
 
@@ -199,6 +200,7 @@ ditto "$SKILL_SOURCE" "$RESOURCES_DIR/skills/pijoo"
 cp "$INFO_PLIST" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :PijooReleaseVersion $RELEASE_VERSION" "$CONTENTS/Info.plist"
+/usr/libexec/PlistBuddy -c "Add :PijooMCPVersion string $MCP_VERSION" "$CONTENTS/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUNDLE_VERSION" "$CONTENTS/Info.plist"
 if [[ "$DEVELOPMENT" == "1" ]]; then
   /usr/libexec/PlistBuddy -c "Add :PijooDevelopmentBuild bool true" "$CONTENTS/Info.plist"
