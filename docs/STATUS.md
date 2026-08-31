@@ -12,16 +12,16 @@ human/Channel AI 消息作者语义。
 | Account、Membership、Invite | 已复用为唯一成员模型 |
 | Channel Service、SSE、短期恢复 | 已实现 |
 | `human|channel_ai` 作者绑定 | 源码已实现，待真实验收 |
-| 每 Channel 独立 Codex task/cwd | 源码已实现，待真实 task 验收 |
+| 每成员/Channel 独立 Codex task/cwd | 源码已实现，待真实多成员 task 验收 |
 | Channel 指令、记忆和历史 allowlist | 源码已实现，待真实撤权验收 |
-| App/Web 人与 AI 独立展示 | 源码已实现，待真实 UI 验收 |
+| App/Web 人与多个成员 AI 独立展示 | 源码已实现，待真实 UI 验收 |
 | Web 登录、邀请、恢复和收发 | 已实现，待部署环境真实账号验收 |
 
 ## 尚未完成
 
 - 真实账号下创建多个 Channel，验证 task、cwd、记忆和历史不串线；
-- 验证所有者 App/Web 消息与其他成员消息同样进入模型，AI 回复不回流；
-- 验证 App/Web 相邻 human 与 AI 消息始终分开展示；
+- 验证两个成员分别连接 AI 后，同一 human 消息进入两端模型，AI 回复都不回流；
+- 验证 App/Web 显示“成员名的 AI”，不同 AI 相邻回复不会合并；
 - 部署环境 GitHub OAuth、邀请与多频道切换验收；
 - E2EE 与细粒度目录/网络/脚本授权。
 

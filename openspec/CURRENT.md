@@ -2,9 +2,11 @@
 
 当前优先产品 change：
 
-1. [`changes/fix-owner-channel-delete`](./changes/fix-owner-channel-delete/)：
+1. [`changes/add-member-channel-ai`](./changes/add-member-channel-ai/)：
+   每位 active Channel 成员都可在本机连接自己的隔离 AI；App/Web 以成员名标识 AI，并按 endpoint 分组。
+2. [`changes/fix-owner-channel-delete`](./changes/fix-owner-channel-delete/)：
    频道所有者可显式删除频道；顶部频道操作保持可见，成员页也可直接创建邀请。
-2. [`changes/unify-channel-product-model`](./changes/unify-channel-product-model/)：
+3. [`changes/unify-channel-product-model`](./changes/unify-channel-product-model/)：
    产品只保留 Channel；用户主动创建频道，owner 频道自动建立隔离的底层 Codex task。消息按可信的
    `human/channel_ai` 来源路由和展示，频道 AI 回复不再回流模型。
 

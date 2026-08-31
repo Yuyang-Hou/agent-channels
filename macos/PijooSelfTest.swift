@@ -385,7 +385,16 @@ private struct PijooV2SelfTest {
         groupedMessage.at = messageA.at + 60_000
         precondition(continuesMessageGroup(previous: messageA, current: groupedMessage))
         groupedMessage.authorKind = .channelAI
+        groupedMessage.from = "小王"
+        groupedMessage.senderEndpointID = "ai-endpoint-a"
+        precondition(channelMessageAuthorName(groupedMessage) == "小王 的 AI")
         precondition(!continuesMessageGroup(previous: messageA, current: groupedMessage))
+        var secondAIMessage = groupedMessage
+        secondAIMessage.messageID = "10"
+        secondAIMessage.at += 1_000
+        precondition(continuesMessageGroup(previous: groupedMessage, current: secondAIMessage))
+        secondAIMessage.senderEndpointID = "ai-endpoint-b"
+        precondition(!continuesMessageGroup(previous: groupedMessage, current: secondAIMessage))
         groupedMessage.authorKind = .human
         groupedMessage.at = messageA.at + 6 * 60 * 1000
         precondition(!continuesMessageGroup(previous: messageA, current: groupedMessage))

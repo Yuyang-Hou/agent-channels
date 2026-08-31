@@ -607,7 +607,7 @@ struct ChannelDetailView: View {
                     ChannelSubscriptionsView(model: model)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
@@ -732,7 +732,7 @@ struct MessageRow: View {
                 if !continuation {
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 8) {
-                            Text(message.authorKind == .channelAI ? "AI" : message.from).font(.subheadline.bold())
+                            Text(channelMessageAuthorName(message)).font(.subheadline.bold())
                             Text(DateFormatter.delivery.string(from: Date(timeIntervalSince1970: message.at / 1000)))
                                 .font(.caption2).foregroundStyle(.secondary)
                         }
@@ -910,13 +910,7 @@ struct ChannelSubscriptionsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if let channel, channel.role != "owner" {
-                EmptyStateView(
-                    title: "频道 AI 由所有者运行",
-                    systemImage: "sparkles",
-                    detail: "你的消息会与其他成员消息一样交给频道 AI。"
-                ) { EmptyView() }
-            } else if let channel {
+            if let channel {
                 VStack(alignment: .leading, spacing: 12) {
                     if !model.codexIntegrationReady {
                         Label(model.codexIntegrationBlockingTitle, systemImage: "bolt.horizontal.circle")
@@ -942,7 +936,7 @@ struct ChannelSubscriptionsView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 3) {
                                 Label(
-                                    model.selectedSubscriptions.isEmpty ? "AI 未连接" : "AI 已连接",
+                                    model.selectedSubscriptions.isEmpty ? "我的 AI 未连接" : "我的 AI 已连接",
                                     systemImage: "sparkles"
                                 )
                                 .font(.headline)
@@ -951,9 +945,13 @@ struct ChannelSubscriptionsView: View {
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button("编辑指令与记忆…") { showChannelContext = true }
+                            if model.isManagedChannel(channel.id) {
+                                Button("编辑指令与记忆…") { showChannelContext = true }
+                            }
                             if model.selectedSubscriptions.isEmpty {
-                                Button("重新连接 AI") { Task { await model.createTaskSubscription() } }
+                                Button(channel.role == "owner" ? "重新连接我的 AI" : "连接我的 AI") {
+                                    Task { await model.createTaskSubscription() }
+                                }
                                     .buttonStyle(.borderedProminent)
                                     .disabled(model.busy)
                             }

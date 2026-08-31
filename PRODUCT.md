@@ -6,8 +6,8 @@ Pijoo 只有一种产品对象：`Channel`。用户主动创建 Channel、邀请
 Channel AI 交流。人数、邀请状态和成员关系不会产生“助理频道”“好友频道”“群聊”或“联系人”等
 额外类型。
 
-每个由本机所有者创建的 Channel 都有独立的 AI 运行空间。底层 Codex task 只是 App 管理的运行句柄，
-不是用户需要选择、绑定或理解的产品对象；其他 Codex task 只能按 Channel 授权为只读历史来源。
+每位 Channel 成员都可以在自己的 Pijoo App 中连接一个隔离的 AI 运行空间。底层 Codex task 只是 App
+管理的运行句柄，不是用户需要选择、绑定或理解的产品对象；其他 Codex task 只能按 Channel 授权为只读历史来源。
 
 ## 首版体验
 
@@ -15,18 +15,18 @@ Channel AI 交流。人数、邀请状态和成员关系不会产生“助理频
 登录 -> 主动创建 Channel -> App 建立该 Channel 的隔离 AI 运行空间
   -> 在 App/Web 发送 human 消息 -> 同一条链路进入 Channel AI
   -> Channel AI 回复 -> App/Web 以独立 AI 身份展示，不再次进入模型
-  -> 邀请成员加入当前 Channel -> 所有 human 消息继续走相同处理链路
-  -> 所有者可编辑 Channel 指令和记忆，并授权只读 Codex 历史
+  -> 邀请成员加入当前 Channel -> 成员可连接自己的 AI，所有 human 消息进入每个已连接 AI
+  -> 每位成员可编辑自己本机 AI 的 Channel 指令和记忆，并授权只读 Codex 历史
 ```
 
 ## P0 范围
 
 - Channel、Membership、Invite 和消息是唯一协作模型；
 - 用户主动创建 Channel，不自动创建默认频道；
-- 每个所有者 Channel 自动建立且只使用一个隔离 Codex task；加入者不会再建立第二个 task；
+- 创建者自动连接一个隔离 Codex task；其他成员可在自己的 App 中选择连接一个本机 task；
 - 所有 human 消息按同一架构送入模型，包括所有者从 App/Web 发出的消息；
 - Channel AI 消息可靠写回 Channel，但不会再次喂给模型；
-- App/Web 始终分开显示 human 与 Channel AI，相邻消息不共用头像或分组；
+- App/Web 以“成员名的 AI”显示 Channel AI；不同 AI 的相邻消息不共用头像或分组；
 - 指令、`MEMORY.md`、工作区、只读历史 allowlist 都按 Channel ID 隔离；
 - 邀请只向当前 Channel 添加成员，不创建新 Channel；
 - Web 支持登录、邀请加入、频道恢复/切换、最近消息与纯文本收发；
@@ -53,9 +53,9 @@ Channel AI 交流。人数、邀请状态和成员关系不会产生“助理频
 ## P0 完成标准
 
 1. 新账号没有默认 Channel；用户创建后可直接在 App 中与 Channel AI 双向交流；
-2. 所有者与其他成员的 human 消息以相同格式进入同一个 Channel AI；
-3. AI 回复只显示一次，且 App/Web 与 human 消息有明确独立身份；
-4. 邀请成员不会创建额外 Channel 或 AI task；
+2. 所有 human 消息以相同格式进入每个已连接的成员 AI；
+3. AI 回复只显示一次，App/Web 显示“成员名的 AI”，不同 endpoint 不合并；
+4. 邀请成员不会自动创建额外 Channel 或 AI task，成员可主动连接自己的 AI；
 5. 每个 Channel 的指令、记忆、工作区和历史授权不串线；
 6. 未授权历史不可读，撤销后立即不可读；
 7. App 重启和短暂断线不静默丢消息、不重复发送未知结果；

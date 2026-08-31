@@ -114,26 +114,33 @@ async function send(
 }
 
 describe("managed channel members", () => {
-  it("marks owner AI messages and rejects AI endpoints for other members", async () => {
+  it("attributes AI messages to any authenticated channel member", async () => {
     const instance = app();
     const channel = await createChannel(instance);
-    const member = await inviteMember(instance, channel);
-    const rejected = await instance.request(`/api/channels/${channel.id}/join`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${member.credential}`, "content-type": "application/json" },
-      body: JSON.stringify({ callsign: "peer_ai", author_kind: "channel_ai" }),
-    });
-    expect(rejected.status).toBe(403);
-
-    const ai = await joinDetails(instance, channel.id, channel.ownerCredential, "channel_ai", undefined, undefined, "channel_ai");
-    const sent = await send(instance, channel.id, channel.ownerCredential, ai.sessionId, "AI reply");
+    const member = await inviteMember(instance, channel, "小王");
+    const ai = await joinDetails(instance, channel.id, member.credential, "peer_ai", undefined, undefined, "channel_ai");
+    const sent = await send(instance, channel.id, member.credential, ai.sessionId, "AI reply");
     expect(sent.status).toBe(200);
-    expect(await sent.json()).toMatchObject({ author_kind: "channel_ai" });
+    expect(await sent.json()).toMatchObject({
+      author_kind: "channel_ai",
+      sender_name: "小王",
+      sender_member_id: member.id,
+      sender_endpoint_id: ai.endpointId,
+    });
 
     const history = await instance.request(`/api/channels/${channel.id}/history?limit=1`, {
       headers: { authorization: `Bearer ${channel.ownerCredential}` },
     });
-    expect(await history.json()).toMatchObject({ history: [{ text: "AI reply", author_kind: "channel_ai" }] });
+    expect(await history.json()).toMatchObject({
+      history: [{ text: "AI reply", author_kind: "channel_ai", sender_name: "小王" }],
+    });
+
+    const publicAI = await instance.request("/api/channels/general/join", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ callsign: "public_ai", author_kind: "channel_ai" }),
+    });
+    expect(publicAI.status).toBe(403);
   });
 
   it("returns only the owner credential and managed-channel fields for api_version 2 create", async () => {

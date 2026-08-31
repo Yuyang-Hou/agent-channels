@@ -893,14 +893,16 @@ export function createApp(opts: AppOptions): Hono {
       return c.json({ error: "author_kind must be human or channel_ai", code: "invalid" }, 400);
     }
     const authorKind: MessageAuthorKind = rawAuthorKind;
-    if (authorKind === "channel_ai" && (principal.isPublic || principal.role !== "owner")) {
-      return c.json({ error: "only the channel owner can create a channel_ai endpoint", code: "unauthorized" }, 403);
+    if (authorKind === "channel_ai" && principal.isPublic) {
+      return c.json({ error: "public bands cannot create a channel_ai endpoint", code: "unauthorized" }, 403);
     }
     if (requestedName && !principal.isPublic) updateMemberName(channelId, principal.memberId, requestedName);
     const source = {
       memberId: sourceMemberId,
       endpointId: authenticatedEndpointId(channelId, sourceMemberId, normalizedCallsign),
-      memberName: principal.isPublic ? normalizedCallsign : (requestedName || undefined),
+      memberName: principal.isPublic
+        ? normalizedCallsign
+        : (requestedName || (authorKind === "channel_ai" ? principal.name : undefined)),
       authorKind,
     };
     if (!principal.isPublic) {

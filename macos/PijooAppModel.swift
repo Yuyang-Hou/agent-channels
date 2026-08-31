@@ -136,7 +136,8 @@ final class AppModel: ObservableObject {
     }
 
     func isManagedChannel(_ channelID: UUID) -> Bool {
-        state.channels.first(where: { $0.id == channelID })?.role == "owner"
+        guard let channel = state.channels.first(where: { $0.id == channelID }) else { return false }
+        return channel.role == "owner" || channelConfig.runtime(channelID: channel.channel) != nil
     }
 
     private func managedChannelWorkspace(_ channel: ChannelProfile) throws -> URL? {
@@ -797,7 +798,12 @@ extension AppModel {
         try AppPaths.prepare()
         let provider = selectedHostProvider
         let executable = try codexExecutable(for: provider)
-        guard isManagedChannel(profile.id) else { throw AppFailure("只有频道所有者可以运行频道 AI") }
+        guard let accountID = accountSession?.accountID else { throw AppFailure("请先登录") }
+        if channelConfig.runtime(channelID: profile.channel) == nil {
+            var updated = channelConfig
+            updated.update(ChannelRuntimeConfig(channelID: profile.channel))
+            try saveChannelConfig(updated, accountID: accountID)
+        }
         let workspace = try managedChannelWorkspace(profile) ?? AppPaths.defaultWorkspace
         let result = try await Sidecar.run([
             "host-create",
@@ -864,7 +870,7 @@ extension AppModel {
             guard !raw.isEmpty else { throw AppFailure("请输入 AI 会话 ID 或链接") }
             let verified = try await preflightHostConversation(raw, provider: selectedHostProvider)
             guard isManagedChannel(profile.id), let accountID = accountSession?.accountID else {
-                throw AppFailure("只有频道所有者可以授权只读历史")
+                throw AppFailure("请先连接当前频道的 AI")
             }
             if channelRuntime(profile.id)?.taskID?.caseInsensitiveCompare(verified.conversationID) == .orderedSame {
                 throw AppFailure("频道自己的运行会话不能作为历史来源")
@@ -1123,7 +1129,7 @@ extension AppModel {
         allowManagedAssignment: Bool = false
     ) async throws -> ChannelSubscription {
         guard isManagedChannel(profile.id) else {
-            throw AppFailure("只有频道所有者可以运行频道 AI")
+            throw AppFailure("请先连接当前频道的 AI")
         }
         let currentTask = channelRuntime(profile.id)?.taskID
         guard allowManagedAssignment || currentTask?.caseInsensitiveCompare(source.conversationId) == .orderedSame else {
@@ -2137,9 +2143,9 @@ extension AppModel {
             refreshSelectedChannel()
         }
         if let accountID = accountSession?.accountID {
-            let owned = Set(merged.filter { $0.role == "owner" }.map(\.channel))
+            let active = Set(merged.map(\.channel))
             var updated = channelConfig
-            updated.channels.removeAll { !owned.contains($0.channelID) }
+            updated.channels.removeAll { !active.contains($0.channelID) }
             if updated != channelConfig { try saveChannelConfig(updated, accountID: accountID) }
         }
         for profile in state.channels { startChannelFeed(profile.id) }

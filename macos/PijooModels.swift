@@ -595,12 +595,17 @@ func continuesMessageGroup(
 ) -> Bool {
     guard let previous else { return false }
     let interval = current.at - previous.at
-    let sameAuthor = current.authorKind == previous.authorKind && (
-        current.authorKind == .channelAI || current.senderMemberID == previous.senderMemberID
-            && current.from == previous.from
-    )
+    let sameAuthor = current.authorKind == previous.authorKind && (current.authorKind == .channelAI
+        ? current.senderMemberID == previous.senderMemberID
+            && current.senderEndpointID != nil
+            && current.senderEndpointID == previous.senderEndpointID
+        : current.senderMemberID == previous.senderMemberID && current.from == previous.from)
     return sameAuthor && current.direction == previous.direction
         && interval >= 0 && interval <= 5 * 60 * 1000
+}
+
+func channelMessageAuthorName(_ message: ChannelMessageRecord) -> String {
+    message.authorKind == .channelAI ? "\(message.from.isEmpty ? "频道成员" : message.from) 的 AI" : message.from
 }
 
 let pendingSendStatusDelayMilliseconds = 1_000.0
