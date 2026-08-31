@@ -327,11 +327,20 @@ struct ChannelSubscription: Codable, Equatable, Identifiable {
     var enabled: Bool
     var template: String
     var sentMessageTemplate: String? = nil
+    var receiveScope: ReceiveScope? = nil
     var defaultSend: Bool
     var lastDeliveredMessageID: Int64?
     var lastDeliveredAt: Double?
     var uncertainMessageID: Int64? = nil
     var uncertainDetail: String? = nil
+}
+
+enum ReceiveScope: String, Codable, CaseIterable, Identifiable {
+    case allMessages = "all_messages"
+    case mentionsOnly = "mentions_only"
+
+    var id: String { rawValue }
+    var title: String { self == .allMessages ? "回复所有消息" : "仅回复 @我的 AI" }
 }
 
 struct AppStateV2: Codable, Equatable {
@@ -439,9 +448,12 @@ struct MentionedMember: Codable, Equatable {
 struct MessageMention: Codable, Equatable {
     var kind: String
     var members: [MentionedMember]? = nil
+    var ais: [MentionedMember]? = nil
 
     var displayText: String {
-        kind == "all" ? "@所有人" : (members ?? []).map { "@\($0.memberName)" }.joined(separator: "、")
+        if kind == "all" { return "@所有人" }
+        return ((members ?? []).map { "@\($0.memberName)" }
+            + (ais ?? []).map { "@\($0.memberName)的 AI" }).joined(separator: "、")
     }
 }
 
@@ -662,12 +674,14 @@ struct ChannelMember: Codable, Equatable, Identifiable {
     let role: String
     let status: String
     let online: Bool?
+    let aiConnected: Bool?
 
     var id: String { memberID }
 
     enum CodingKeys: String, CodingKey {
         case memberID = "member_id"
         case name, role, status, online
+        case aiConnected = "ai_connected"
     }
 }
 

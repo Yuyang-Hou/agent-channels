@@ -38,6 +38,7 @@ export type ConversationSource = {
 export type ChannelSettingsPatch = {
   template?: string;
   sent_message_template?: string;
+  receive_scope?: "all_messages" | "mentions_only";
   default_send?: boolean;
 };
 
@@ -135,7 +136,7 @@ const SEND_TOOL = {
         maxItems: 100,
         uniqueItems: true,
         items: { type: "string", minLength: 1 },
-        description: "Omit for no mention; use only 'all', or member ids returned by list_channels(channel).",
+        description: "Omit for no mention; use only 'all', a member_id, or an ai_mention returned by list_channels(channel).",
       },
     },
     required: ["message"],
@@ -152,7 +153,7 @@ const SEND_TOOL = {
 const LIST_CHANNELS_TOOL = {
   name: "list_channels",
   description:
-    "List locally configured Pijoo channels and the current Codex task's subscription/default-send state. Pass any listed channel to include active mentionable members.",
+    "List locally configured Pijoo channels and the current Codex task's subscription/default-send state. Pass any listed channel to include active members and ai_mention only for currently connected Channel AIs.",
   inputSchema: {
     type: "object",
     properties: { channel: channelProperty },
@@ -223,19 +224,21 @@ const GET_SETTINGS_TOOL = {
 const UPDATE_SETTINGS_TOOL = {
   name: "update_channel_settings",
   description:
-    "Update the current Channel AI task's local message templates and default send setting. Human messages from every member endpoint are received; Channel AI messages are never fed back to the model. Omitted settings remain unchanged; an empty template restores its default.",
+    "Update the current Channel AI task's local message templates, reply scope, and default send setting. receive_scope can be all_messages or mentions_only; mentions_only accepts @all or @this member's connected AI. Channel AI messages are never fed back to the model. Omitted settings remain unchanged; an empty template restores its default.",
   inputSchema: {
     type: "object",
     properties: {
       channel: channelProperty,
       template: { type: "string", maxLength: MAX_TEMPLATE_LENGTH },
       sent_message_template: { type: "string", maxLength: MAX_TEMPLATE_LENGTH },
+      receive_scope: { type: "string", enum: ["all_messages", "mentions_only"] },
       default_send: { type: "boolean" },
     },
     required: ["channel"],
     anyOf: [
       { required: ["template"] },
       { required: ["sent_message_template"] },
+      { required: ["receive_scope"] },
       { required: ["default_send"] },
     ],
     additionalProperties: false,
@@ -457,7 +460,7 @@ function buildLocalRequest(
         channel: channelArgument(args, true)!,
       };
     case "update_channel_settings": {
-      assertOnlyKeys(args, ["channel", "template", "sent_message_template", "default_send"]);
+      assertOnlyKeys(args, ["channel", "template", "sent_message_template", "receive_scope", "default_send"]);
       const settings: ChannelSettingsPatch = {};
       if (args.template !== undefined) {
         if (typeof args.template !== "string") throw new ExplicitToolError("template must be a string");
@@ -474,6 +477,12 @@ function buildLocalRequest(
           throw new ExplicitToolError(`sent_message_template exceeds ${MAX_TEMPLATE_LENGTH} characters`);
         }
         settings.sent_message_template = args.sent_message_template;
+      }
+      if (args.receive_scope !== undefined) {
+        if (args.receive_scope !== "all_messages" && args.receive_scope !== "mentions_only") {
+          throw new ExplicitToolError("receive_scope must be all_messages or mentions_only");
+        }
+        settings.receive_scope = args.receive_scope;
       }
       if (args.default_send !== undefined) {
         if (typeof args.default_send !== "boolean") {

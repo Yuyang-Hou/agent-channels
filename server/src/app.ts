@@ -92,7 +92,7 @@ export type AppOptions = {
 function resolveMessageMention(channelId: string, input: unknown): MessageMention | undefined {
   if (input === undefined) return undefined;
   if (!Array.isArray(input) || input.length === 0 || input.length > 100) {
-    throw new ChannelError("mentions must contain 1-100 member ids, or only 'all'", "invalid", 400);
+    throw new ChannelError("mentions must contain 1-100 member ids or ai:<member id>, or only 'all'", "invalid", 400);
   }
   if (!input.every((value) => typeof value === "string" && value.trim().length > 0)) {
     throw new ChannelError("mentions must contain non-empty strings", "invalid", 400);
@@ -112,13 +112,21 @@ function resolveMessageMention(channelId: string, input: unknown): MessageMentio
       .filter((member) => member.status === "active")
       .map((member) => [member.member_id, member]),
   );
-  const members = ids.map((id) => activeMembers.get(id));
-  if (members.some((member) => !member)) {
+  const aiMemberIds = new Set(getOrCreateChannel(channelId).activeAIMemberIds());
+  const members = ids.filter((id) => !id.startsWith("ai:")).map((id) => activeMembers.get(id));
+  const ais = ids.filter((id) => id.startsWith("ai:")).map((id) => {
+    const memberId = id.slice(3);
+    return aiMemberIds.has(memberId) ? activeMembers.get(memberId) : undefined;
+  });
+  if ([...members, ...ais].some((member) => !member)) {
     throw new ChannelError("mentions contain a member who is not active in this channel", "invalid", 400);
   }
   return {
     kind: "members",
     members: members.map((member) => ({ member_id: member!.member_id, member_name: member!.name })),
+    ...(ais.length ? {
+      ais: ais.map((member) => ({ member_id: member!.member_id, member_name: member!.name })),
+    } : {}),
   };
 }
 
@@ -744,10 +752,13 @@ export function createApp(opts: AppOptions): Hono {
     const channelId = c.req.param("id");
     const principal = await requireChannelPrincipal(c, channelId);
     if (principal instanceof Response) return principal;
-    const online = new Set(getOrCreateChannel(channelId).roster());
+    const channel = getOrCreateChannel(channelId);
+    const online = new Set(channel.roster());
+    const aiConnected = new Set(channel.activeAIMemberIds());
     const members = listChannelMembers(channelId).map((member) => ({
       ...member,
       online: member.callsigns.some((callsign) => online.has(callsign)),
+      ai_connected: aiConnected.has(member.member_id),
     }));
     return c.json({ channel_id: channelId, members });
   });

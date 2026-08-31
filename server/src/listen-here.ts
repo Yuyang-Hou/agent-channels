@@ -72,6 +72,10 @@ options:
   --message-template <t>
                       render {channel_name}, {sender_name}, {message_source},
                       {message_text}, {mentions}, and {message_id} as the complete Host input
+  --receive-scope <p> all_messages (default) or mentions_only
+  --self-member-id <id>
+                      authenticated member owning this Channel AI
+  --author-kind <k>   human (default) or channel_ai for auto-join
   --app-socket <p>    private Pijoo App socket used to durably record a
                       message before Host delivery (requires --subscription-id)
   --subscription-id <uuid>
@@ -131,6 +135,7 @@ examples:
 `;
 
 type Format = "jsonl" | "text";
+type ReceiveScope = "all_messages" | "mentions_only";
 
 type Priority = "min" | "low" | "default" | "high" | "urgent";
 
@@ -165,6 +170,9 @@ type Args = {
   codexSocket?: string;
   channelName?: string;
   messageTemplate?: string;
+  receiveScope: ReceiveScope;
+  selfMemberId?: string;
+  authorKind: "human" | "channel_ai";
   appSocket?: string;
   subscriptionId?: string;
   statusJson: boolean;
@@ -206,6 +214,9 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
         "codex-socket": { type: "string" },
         "channel-name": { type: "string" },
         "message-template": { type: "string" },
+        "receive-scope": { type: "string" },
+        "self-member-id": { type: "string" },
+        "author-kind": { type: "string" },
         "app-socket": { type: "string" },
         "subscription-id": { type: "string" },
         "status-json": { type: "boolean" },
@@ -268,6 +279,17 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
     if (!Number.isFinite(n) || n <= 0) return { error: "--heartbeat must be a positive number of seconds" };
     heartbeat = n;
   }
+  const receiveScope = parsed.values["receive-scope"] ?? "all_messages";
+  if (receiveScope !== "all_messages" && receiveScope !== "mentions_only") {
+    return { error: "--receive-scope must be all_messages|mentions_only" };
+  }
+  if (receiveScope === "mentions_only" && !parsed.values["self-member-id"]) {
+    return { error: "--receive-scope mentions_only requires --self-member-id" };
+  }
+  const authorKind = parsed.values["author-kind"] ?? "human";
+  if (authorKind !== "human" && authorKind !== "channel_ai") {
+    return { error: "--author-kind must be human|channel_ai" };
+  }
   const appSocket = parsed.values["app-socket"];
   const subscriptionId = parsed.values["subscription-id"];
   if (Boolean(appSocket) !== Boolean(subscriptionId)) {
@@ -316,6 +338,9 @@ function parseFlags(argv: string[]): Args | { help: true } | { error: string } {
     codexSocket: parsed.values["codex-socket"],
     channelName: parsed.values["channel-name"],
     messageTemplate: parsed.values["message-template"],
+    receiveScope,
+    selfMemberId: parsed.values["self-member-id"],
+    authorKind,
     appSocket,
     subscriptionId,
     statusJson: parsed.values["status-json"] === true,
@@ -621,6 +646,12 @@ async function recordWithApp(
   return message === "already_processed" || message === "unresolved" ? message : "recorded";
 }
 
+export function messageMentionsAI(mention: MessageMention | undefined, memberId: string | undefined): boolean {
+  return mention?.kind === "all" || (
+    mention?.kind === "members" && mention.ais?.some((ai) => ai.member_id === memberId) === true
+  );
+}
+
 async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDelivery): Promise<void> {
   // --min-priority filter: drop messages below the threshold entirely (no
   // inbox write, no hook spawn, no stdout). Missing priority counts as
@@ -675,6 +706,11 @@ async function dispatch(args: Args, msg: IncomingMessage, hostDelivery?: HostDel
   if (msg.author_kind === "channel_ai") {
     await recordWithApp(args, "record_outcome", { id: msg.id, state: "filtered", error: "channel_ai" });
     emitStatus(args, "filtered", { messageId: msg.id, reason: "channel_ai" });
+    return;
+  }
+  if (args.receiveScope === "mentions_only" && !messageMentionsAI(msg.mention, args.selfMemberId)) {
+    await recordWithApp(args, "record_outcome", { id: msg.id, state: "filtered", error: "mention_not_matched" });
+    emitStatus(args, "filtered", { messageId: msg.id, reason: "mention_not_matched" });
     return;
   }
   if (hostDelivery && msg.kind !== "status") {
@@ -951,6 +987,7 @@ function joinForSession(args: Args): Promise<{ sessionId: string; memberId: stri
   const url = new URL(`${args.origin.replace(/\/$/, "")}/api/channels/${args.channel}/join`);
   const payload = JSON.stringify({
     callsign: args.identityKey,
+    author_kind: args.authorKind,
     ...(args.ownerPassword ? { owner_password: args.ownerPassword } : {}),
   });
   return new Promise((resolve, reject) => {

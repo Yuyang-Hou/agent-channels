@@ -58,6 +58,7 @@ export type MessageMention =
   | {
     kind: "members";
     members: Array<{ member_id: string; member_name: string }>;
+    ais?: Array<{ member_id: string; member_name: string }>;
   };
 
 export type Message = {
@@ -701,6 +702,14 @@ export class Channel {
 
   roster(): string[] {
     return [...this.sessionByCallsign.keys()].sort();
+  }
+
+  activeAIMemberIds(): string[] {
+    return [...new Set(
+      [...this.sourceBySession.entries()]
+        .filter(([sessionId, source]) => this.streamersBySession.has(sessionId) && source.authorKind === "channel_ai")
+        .map(([, source]) => source.memberId),
+    )].sort();
   }
 
   rosterWithIndex(): Array<{ idx: number; callsign: string; joined_at: number }> {

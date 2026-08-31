@@ -675,6 +675,17 @@ struct ChannelMessagesView: View {
                             )
                         }
                     }
+                    if !model.activeMentionAIMembers.isEmpty {
+                        Divider()
+                        ForEach(model.activeMentionAIMembers) { member in
+                            Button { model.toggleComposerMentionAI(member.memberID) } label: {
+                                Label(
+                                    member.name + "的 AI",
+                                    systemImage: model.composerMentionAIMemberIDs.contains(member.memberID) ? "checkmark" : "sparkles"
+                                )
+                            }
+                        }
+                    }
                 } label: {
                     if model.composerMentionLabel.isEmpty { Image(systemName: "at") }
                     else { Label(model.composerMentionLabel, systemImage: "at") }
@@ -955,6 +966,17 @@ struct ChannelSubscriptionsView: View {
                                     .buttonStyle(.borderedProminent)
                                     .disabled(model.busy)
                             }
+                        }
+
+                        if let subscription = model.selectedSubscriptions.first {
+                            Picker("回复范围", selection: Binding(
+                                get: { subscription.receiveScope ?? .allMessages },
+                                set: { model.setSubscriptionReceiveScope(subscription.id, scope: $0) }
+                            )) {
+                                ForEach(ReceiveScope.allCases) { scope in Text(scope.title).tag(scope) }
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(maxWidth: 360)
                         }
 
                         Divider()

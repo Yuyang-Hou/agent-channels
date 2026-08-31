@@ -55,6 +55,7 @@ final class AppModel: ObservableObject {
     @Published var composerText = ""
     @Published var composerMentionAll = false
     @Published var composerMentionMemberIDs: [String] = []
+    @Published var composerMentionAIMemberIDs: [String] = []
     @Published var showAddChannel = false
     @Published var oldBetaDataDetected = FileManager.default.fileExists(atPath: AppPaths.legacyBinding.path)
     @Published private(set) var accountFeatureAvailable = false
@@ -167,16 +168,20 @@ final class AppModel: ObservableObject {
     }
 
     var activeMentionMembers: [ChannelMember] { members.filter { $0.status == "active" } }
+    var activeMentionAIMembers: [ChannelMember] { activeMentionMembers.filter { $0.aiConnected == true } }
     var composerMentionLabel: String {
         if composerMentionAll { return "所有人" }
-        let selected = composerMentionMemberIDs.compactMap { id in activeMentionMembers.first { $0.memberID == id } }
-        if selected.count == 1 { return selected[0].name }
-        if selected.count > 1 { return "\(selected[0].name)等\(selected.count)人" }
-        return composerMentionMemberIDs.isEmpty ? "" : "已选 \(composerMentionMemberIDs.count) 人"
+        let people = composerMentionMemberIDs.compactMap { id in activeMentionMembers.first { $0.memberID == id }?.name }
+        let ais = composerMentionAIMemberIDs.compactMap { id in activeMentionAIMembers.first { $0.memberID == id }?.name }
+            .map { "\($0)的 AI" }
+        let selected = people + ais
+        if selected.count == 1 { return selected[0] }
+        if selected.count > 1 { return "\(selected[0])等\(selected.count)个" }
+        return ""
     }
 
     private var composerMentions: [String] {
-        composerMentionAll ? ["all"] : composerMentionMemberIDs
+        composerMentionAll ? ["all"] : composerMentionMemberIDs + composerMentionAIMemberIDs.map { "ai:\($0)" }
     }
 
     private var composerMentionSnapshot: MessageMention? {
@@ -186,25 +191,41 @@ final class AppModel: ObservableObject {
                 MentionedMember(memberID: $0.memberID, memberName: $0.name)
             }
         }
-        return selected.isEmpty ? nil : MessageMention(kind: "members", members: selected)
+        let ais = composerMentionAIMemberIDs.compactMap { id in
+            activeMentionAIMembers.first(where: { $0.memberID == id }).map {
+                MentionedMember(memberID: $0.memberID, memberName: $0.name)
+            }
+        }
+        return selected.isEmpty && ais.isEmpty ? nil : MessageMention(kind: "members", members: selected, ais: ais)
     }
 
     func clearComposerMentions() {
         composerMentionAll = false
         composerMentionMemberIDs = []
+        composerMentionAIMemberIDs = []
     }
 
     func toggleComposerMentionAll() {
         composerMentionAll.toggle()
         composerMentionMemberIDs = []
+        composerMentionAIMemberIDs = []
     }
 
     func toggleComposerMention(_ memberID: String) {
         composerMentionAll = false
         if let index = composerMentionMemberIDs.firstIndex(of: memberID) {
             composerMentionMemberIDs.remove(at: index)
-        } else if composerMentionMemberIDs.count < 100 {
+        } else if composerMentionMemberIDs.count + composerMentionAIMemberIDs.count < 100 {
             composerMentionMemberIDs.append(memberID)
+        }
+    }
+
+    func toggleComposerMentionAI(_ memberID: String) {
+        composerMentionAll = false
+        if let index = composerMentionAIMemberIDs.firstIndex(of: memberID) {
+            composerMentionAIMemberIDs.remove(at: index)
+        } else if composerMentionMemberIDs.count + composerMentionAIMemberIDs.count < 100 {
+            composerMentionAIMemberIDs.append(memberID)
         }
     }
 
@@ -487,7 +508,9 @@ extension AppModel {
                         .map { LocalMentionMemberSummary(
                             memberID: $0.memberID,
                             name: $0.name,
-                            isSelf: $0.memberID == profile.memberID
+                            isSelf: $0.memberID == profile.memberID,
+                            aiConnected: $0.aiConnected == true,
+                            aiMention: $0.aiConnected == true ? "ai:\($0.memberID)" : nil
                         ) }
                     return .success(LocalOperationResult(
                         channel: profile.channel,
@@ -1209,6 +1232,7 @@ extension AppModel {
             receiveEnabled: subscription.enabled,
             template: subscription.template,
             sentMessageTemplate: subscription.sentMessageTemplate ?? defaultSentMessageTemplate,
+            receiveScope: subscription.receiveScope ?? .allMessages,
             defaultSend: subscription.defaultSend
         )
     }
@@ -1232,6 +1256,7 @@ extension AppModel {
         }
         if let template { state.subscriptions[index].template = template }
         if let sentMessageTemplate { state.subscriptions[index].sentMessageTemplate = sentMessageTemplate }
+        if let receiveScope = patch.receiveScope { state.subscriptions[index].receiveScope = receiveScope }
         if let defaultSend = patch.defaultSend {
             if defaultSend {
                 let taskID = state.subscriptions[index].taskID
@@ -1358,6 +1383,9 @@ extension AppModel {
                 "--quiet",
                 "--channel-name", reconciledProfile.displayName,
                 "--message-template", subscription.template,
+                "--receive-scope", (subscription.receiveScope ?? .allMessages).rawValue,
+                "--self-member-id", reconciledProfile.memberID,
+                "--author-kind", "channel_ai",
                 "--app-socket", AppPaths.sendSocket.path,
                 "--subscription-id", subscription.id.uuidString.lowercased(),
             ]
@@ -1762,6 +1790,11 @@ extension AppModel {
         } catch {
             fail(error)
         }
+    }
+
+    func setSubscriptionReceiveScope(_ id: UUID, scope: ReceiveScope) {
+        updateSubscription(id) { $0.receiveScope = scope }
+        restartListenerIfNeeded(id)
     }
 }
 
@@ -2883,8 +2916,9 @@ extension AppModel {
                 throw ChannelSendFailure.unknown("频道发送结果未知：服务端未返回有效回执")
             }
             let mention = messageMention(json["mention"])
-            let confirmedMentions = mention?.kind == "all" ? ["all"] : mention?.members?.map(\.memberID) ?? []
-            guard confirmedMentions == mentions else {
+            let confirmedMentions = mention?.kind == "all" ? ["all"] :
+                (mention?.members?.map(\.memberID) ?? []) + (mention?.ais?.map { "ai:\($0.memberID)" } ?? [])
+            guard Set(confirmedMentions) == Set(mentions), confirmedMentions.count == mentions.count else {
                 throw ChannelSendFailure.unknown("频道已接收消息，但没有确认完整的 @ 成员")
             }
             if let id = json["id"] as? String { return (id, endpoint, memberID, endpointID, mention) }

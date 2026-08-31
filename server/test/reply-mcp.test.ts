@@ -97,6 +97,7 @@ describe("channel MCP", () => {
         required: ["channel"],
         properties: {
           sent_message_template: { type: "string" },
+          receive_scope: { type: "string", enum: ["all_messages", "mentions_only"] },
           default_send: { type: "boolean" },
         },
       },
@@ -223,6 +224,7 @@ describe("channel MCP", () => {
       channel: "frontend",
       template: "服务端说：{{message}}",
       sent_message_template: "已发到频道：{message_text}",
+      receive_scope: "mentions_only",
       default_send: true,
     }));
 
@@ -238,6 +240,7 @@ describe("channel MCP", () => {
         settings: {
           template: "服务端说：{{message}}",
           sent_message_template: "已发到频道：{message_text}",
+          receive_scope: "mentions_only",
           default_send: true,
         },
       },
