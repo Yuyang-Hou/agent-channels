@@ -3,9 +3,9 @@
 ## P0：统一 Channel
 
 - 用户主动创建 Channel，不自动创建或派生任何频道类型；
-- 每个 owner Channel 自动拥有隔离 AI 运行空间；
+- 创建者自动连接隔离 AI，其他成员可主动连接自己的本机 AI；
 - 所有 human 消息统一投递，Channel AI 回复可靠写回且不回流；
-- App/Web 明确区分 human 与 AI；
+- App/Web 以成员名区分 human 与多个 AI；
 - Channel 指令、记忆和只读历史授权按 Channel 隔离；
 - 邀请、恢复、撤权和真实端到端收发完成验收。
 

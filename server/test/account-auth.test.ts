@@ -360,7 +360,7 @@ describe("GitHub account login", () => {
     expect(html).toContain("Pijoo · 频道");
     expect(html).toContain('<div class="gate hidden" id="gate">');
     expect(html).toContain('message.author_kind === "channel_ai"');
-    expect(html).toContain('isAI ? "AI"');
+    expect(html).toContain('isAI ? senderName + " 的 AI"');
   });
 
   it("restores account channel memberships and blocks banned re-entry", async () => {

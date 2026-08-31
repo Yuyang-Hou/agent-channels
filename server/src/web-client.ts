@@ -512,7 +512,8 @@ export function webAppHtml(accountEnabled: boolean): string {
         const head = document.createElement("div");
         head.className = "message-head";
         const sender = document.createElement("span");
-        sender.textContent = isAI ? "AI" : message.sender_name || message.from || "频道成员";
+        const senderName = message.sender_name || message.from || "频道成员";
+        sender.textContent = isAI ? senderName + " 的 AI" : senderName;
         const time = document.createElement("time");
         time.textContent = new Date(message.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
         const text = document.createElement("div");

@@ -23,19 +23,19 @@ Channel
 ## 消息链路
 
 ```text
-App/Web/成员 human 消息 -> Channel Service -> App SSE/账本
-  -> 该 Channel 的 Codex task -> send_to_channel(channel_ai)
+App/Web/成员 human 消息 -> Channel Service -> 各成员 App SSE/账本
+  -> 每个已连接的成员 Codex task -> send_to_channel(channel_ai)
   -> Channel Service -> App/Web 时间线
   -> listener 按 author_kind 过滤，不再投递给 Codex
 ```
 
-服务端将 endpoint 的 `author_kind` 绑定在认证会话上。只有 Channel owner 能建立 `channel_ai`
-endpoint；客户端提交消息时不能覆盖作者。所有 human 消息使用同一投递链路，不再按 member id 或
-“本账户”过滤。
+服务端将 endpoint 的 `author_kind` 绑定在认证会话上。每个 active Membership 都能建立自己的
+`channel_ai` endpoint，公开 band 不能；客户端提交消息时不能覆盖作者。所有 human 消息使用同一投递
+链路，不再按 member id 或“本账户”过滤。
 
 ## 本机运行边界
 
-App 为每个本机 owner Channel 创建一个 Codex task，cwd 固定为：
+App 为本机创建的 Channel 自动连接 Codex task；加入者可主动连接自己的一个 Codex task。cwd 固定为：
 
 ```text
 ~/Pijoo/accounts/<account-digest>/channels/<channel-id>/
@@ -44,8 +44,8 @@ App 为每个本机 owner Channel 创建一个 Codex task，cwd 固定为：
 ```
 
 `AGENTS.md` 组合用户编辑的 Channel 指令与固定安全规则；`MEMORY.md` 是该 Channel 的可编辑记忆。
-App 在监听和投递前复验 task id、cwd 与受管权限。不匹配时停止投递。加入者不创建第二个 task，
-用户也不能选择已有 task 作为运行 task。
+App 在监听和投递前复验 task id、cwd 与受管权限。不匹配时停止投递。每个本机账号在一个 Channel 中
+最多连接一个运行 task，用户也不能选择已有 task 作为运行 task。
 
 ## 历史读取
 
@@ -58,8 +58,8 @@ App 在监听和投递前复验 task id、cwd 与受管权限。不匹配时停�
 ## Web
 
 Web 与 API 同源托管，复用 Account Session、Membership、Invite、History 和 send/stream 接口。
-邀请 token 放在 URL Fragment，登录后只在尚未加入时兑换。Web 依据 `author_kind` 分别展示本人、
-其他 human 与 Channel AI；AI 消息永远不使用 human 的头像或连续分组。
+邀请 token 放在 URL Fragment，登录后只在尚未加入时兑换。Web 依据 `author_kind` 分别展示 human 与
+“成员名的 AI”；AI 消息永远不使用 human 的头像，不同 endpoint 不连续分组。
 
 ## 权限边界
 
