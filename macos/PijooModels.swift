@@ -96,8 +96,8 @@ func isCancellationError(_ error: Error) -> Bool {
     return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
 }
 
-func requiresCodexRestart(configured: Bool, appVersion: String, loadedMCPVersion: String?) -> Bool {
-    configured && loadedMCPVersion != appVersion
+func requiresCodexRestart(configured: Bool, expectedMCPVersion: String, loadedMCPVersion: String?) -> Bool {
+    configured && loadedMCPVersion != expectedMCPVersion
 }
 
 func generatedLocalNickname(id: UUID = UUID()) -> String {
@@ -155,10 +155,10 @@ enum CodexIntegrationReadiness: Equatable {
     case ready
 }
 
-func codexIntegrationReadiness(configured: Bool, appVersion: String, loadedMCPVersion: String?) -> CodexIntegrationReadiness {
+func codexIntegrationReadiness(configured: Bool, expectedMCPVersion: String, loadedMCPVersion: String?) -> CodexIntegrationReadiness {
     guard configured else { return .notConfigured }
     guard let loadedMCPVersion else { return .awaitingRestart }
-    return loadedMCPVersion == appVersion ? .ready : .versionMismatch
+    return loadedMCPVersion == expectedMCPVersion ? .ready : .versionMismatch
 }
 
 struct ChannelProfile: Codable, Equatable, Identifiable {

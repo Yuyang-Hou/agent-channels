@@ -1162,9 +1162,9 @@ struct PijooSettingsView: View {
                                 }
                                 .disabled(refreshingCodexIntegration)
                             }
-                            Text(model.loadedCodexMCPVersion.map {
-                                "ChatGPT 仍在使用 MCP \($0)，当前 App 为 \(model.currentVersion)。重启后会自动确认。"
-                            } ?? "尚未检测到 MCP \(model.currentVersion)。重启后会自动确认。")
+                            Text(model.loadedCodexMCPVersion == nil
+                                ? "尚未检测到新 MCP。重启后会自动确认。"
+                                : "ChatGPT 仍在使用旧 MCP。重启后会自动确认。")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

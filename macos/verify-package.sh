@@ -55,7 +55,7 @@ printf '{}\n' > "$CONFIG"
 REQUEST='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"release-check","version":"1"}}}'
 RESPONSE="$(printf '%s\n' "$REQUEST" | "$SIDECAR" reply-mcp --config "$CONFIG")"
 MCP_VERSION="$(printf '%s' "$RESPONSE" | plutil -extract result.serverInfo.version raw -o - -)"
-[[ "$MCP_VERSION" == "$VERSION" ]]
+[[ "$MCP_VERSION" == "$(/usr/libexec/PlistBuddy -c 'Print :PijooMCPVersion' "$INFO")" ]]
 
 if [[ "$MODE" == "--notarized" ]]; then
   spctl --assess --type execute --verbose=2 "$APP"

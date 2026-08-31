@@ -131,6 +131,10 @@ final class AppModel: ObservableObject {
             ?? "0.0.0"
     }
 
+    var currentMCPVersion: String {
+        (Bundle.main.object(forInfoDictionaryKey: "PijooMCPVersion") as? String) ?? "dev"
+    }
+
     var selectedChannel: ChannelProfile? {
         guard let selectedChannelID else { return nil }
         return state.channels.first { $0.id == selectedChannelID }
@@ -250,7 +254,7 @@ final class AppModel: ObservableObject {
     var codexReadiness: CodexIntegrationReadiness {
         codexIntegrationReadiness(
             configured: codexIntegrationConfigured,
-            appVersion: currentVersion,
+            expectedMCPVersion: currentMCPVersion,
             loadedMCPVersion: loadedCodexMCPVersion
         )
     }
@@ -263,9 +267,9 @@ final class AppModel: ObservableObject {
         case .notConfigured:
             return "连接 AI 会话前，需要先安装 Pijoo MCP 与 Skill。"
         case .awaitingRestart:
-            return "配置已写入。请完全退出并重新打开 ChatGPT，加载 Pijoo MCP \(currentVersion) 后再连接会话。"
+            return "配置已写入。请完全退出并重新打开 ChatGPT，加载新 MCP 后再连接会话。"
         case .versionMismatch:
-            return "ChatGPT 仍在使用 MCP \(loadedCodexMCPVersion ?? "未知版本")。请完全退出并重新打开 ChatGPT，加载 \(currentVersion) 后再连接会话。"
+            return "ChatGPT 仍在使用旧 MCP。请完全退出并重新打开 ChatGPT，加载新 MCP 后再连接会话。"
         case .ready:
             return ""
         }
@@ -2097,15 +2101,15 @@ extension AppModel {
         codexIntegrationConfigured = mcp && skill
         codexIntegrationNeedsRestart = requiresCodexRestart(
             configured: codexIntegrationConfigured,
-            appVersion: currentVersion,
+            expectedMCPVersion: currentMCPVersion,
             loadedMCPVersion: loadedCodexMCPVersion
         )
         switch (mcp, skill) {
         case (true, true) where codexIntegrationNeedsRestart:
-            codexIntegrationStatus = loadedCodexMCPVersion.map {
-                "已配置，ChatGPT 仍在使用 MCP \($0)"
-            } ?? "已配置，等待 ChatGPT 加载 MCP \(currentVersion)"
-        case (true, true): codexIntegrationStatus = "MCP \(currentVersion) 已加载，Skill 已配置"
+            codexIntegrationStatus = loadedCodexMCPVersion == nil
+                ? "已配置，等待 ChatGPT 加载 MCP"
+                : "已配置，ChatGPT 仍在使用旧 MCP"
+        case (true, true): codexIntegrationStatus = "MCP 已加载，Skill 已配置"
         case (true, false): codexIntegrationStatus = "MCP 已配置，Skill 待修复"
         case (false, true): codexIntegrationStatus = "Skill 已配置，MCP 待修复"
         case (false, false): codexIntegrationStatus = "未启用"
@@ -2114,13 +2118,13 @@ extension AppModel {
 
     private func showCodexRestartNoticeIfNeeded() {
         guard codexIntegrationNeedsRestart,
-              UserDefaults.standard.string(forKey: shownCodexRestartVersionKey) != currentVersion else { return }
-        UserDefaults.standard.set(currentVersion, forKey: shownCodexRestartVersionKey)
+              UserDefaults.standard.string(forKey: shownCodexRestartVersionKey) != currentMCPVersion else { return }
+        UserDefaults.standard.set(currentMCPVersion, forKey: shownCodexRestartVersionKey)
         DispatchQueue.main.async { [weak self] in
             guard let self, self.codexIntegrationNeedsRestart else { return }
             self.showNotice(
                 title: "需要重启 ChatGPT",
-                message: "请完全退出并重新打开 ChatGPT，加载 Pijoo MCP \(self.currentVersion)。此提示会在新 MCP 连接后自动消失。"
+                message: "请完全退出并重新打开 ChatGPT，加载新 Pijoo MCP。此提示会在新 MCP 连接后自动消失。"
             )
         }
     }
@@ -2214,7 +2218,7 @@ extension AppModel {
             )
             loadedCodexMCPVersion = nil
             UserDefaults.standard.removeObject(forKey: loadedCodexMCPVersionKey)
-            UserDefaults.standard.set(currentVersion, forKey: shownCodexRestartVersionKey)
+            UserDefaults.standard.set(currentMCPVersion, forKey: shownCodexRestartVersionKey)
             showNotice(title: "Codex 集成已启用", message: "请完全退出并重新打开 ChatGPT，让所有 task 加载 Pijoo MCP。")
         } catch {
             fail(error)
