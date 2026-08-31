@@ -15,6 +15,11 @@ Channel Service MUST 仅允许 active owner 删除 Channel。删除 MUST 撤销�
 - **AND** 原频道地址返回不存在
 - **AND** App 保留本机消息文件
 
+#### Scenario: App 向频道根路径发送删除请求
+
+- **WHEN** owner 在 macOS App 确认删除 Channel
+- **THEN** App MUST 向频道根路径发送删除请求且不因空子路径退出
+
 #### Scenario: 普通成员尝试删除频道
 
 - **WHEN** active member 请求删除 Channel

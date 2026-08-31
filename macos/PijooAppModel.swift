@@ -2899,15 +2899,7 @@ extension AppModel {
     ) async throws -> [String: Any] {
         guard let credential = try KeychainStore.get(service: keychainService, account: profile.credentialAccount),
               !credential.isEmpty else { throw AppFailure("Keychain 中没有频道成员凭证") }
-        let base = try channelBaseURL(profile)
-        let components = suffix.split(separator: "?", maxSplits: 1).map(String.init)
-        var url = base
-        for segment in components[0].split(separator: "/") { url.appendPathComponent(String(segment)) }
-        if components.count == 2 {
-            var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            urlComponents?.percentEncodedQuery = components[1]
-            if let resolved = urlComponents?.url { url = resolved }
-        }
+        let url = channelRequestURL(base: try channelBaseURL(profile), suffix: suffix)
         return try await requestJSON(url: url, method: method, bearer: credential, body: body)
     }
 

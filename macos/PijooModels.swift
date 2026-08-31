@@ -495,6 +495,20 @@ func channelListenURL(base: URL, cursor: Int64?) -> URL {
     return components?.url ?? base.appendingPathComponent("listen")
 }
 
+func channelRequestURL(base: URL, suffix: String) -> URL {
+    let components = suffix.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+    var url = base
+    if let path = components.first {
+        for segment in path.split(separator: "/") { url.appendPathComponent(String(segment)) }
+    }
+    if components.count == 2 {
+        var urlComponents = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        urlComponents?.percentEncodedQuery = String(components[1])
+        if let resolved = urlComponents?.url { url = resolved }
+    }
+    return url
+}
+
 func pendingRecoveryMessages(after cursor: Int64?, records: [ChannelMessageRecord]) -> [ChannelMessageRecord] {
     records.filter { (Int64($0.messageID) ?? 0) > (cursor ?? 0) }
 }

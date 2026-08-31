@@ -196,6 +196,12 @@ private struct PijooV2SelfTest {
             cursor: 123
         )
         precondition(listenURL.absoluteString == "https://example.com/api/channels/test/listen?timeout=30&since=123")
+        let requestBaseURL = URL(string: "https://example.com/api/channels/test")!
+        precondition(channelRequestURL(base: requestBaseURL, suffix: "") == requestBaseURL)
+        precondition(
+            channelRequestURL(base: requestBaseURL, suffix: "history?limit=100").absoluteString
+                == "https://example.com/api/channels/test/history?limit=100"
+        )
         let sentTemplate = try validateMessageTemplate(
             "> **{channel_name}** · {message_source} · #{message_id}\n>\n> {message_text}",
             defaultTemplate: defaultSentMessageTemplate
